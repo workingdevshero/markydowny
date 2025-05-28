@@ -6,9 +6,13 @@ A simple, beautiful static web app for rendering markdown files via drag and dro
 
 ## Features
 
-- 📤 **Drag & Drop**: Simply drag your markdown files into the drop zone
+- 📤 **Drag & Drop**: Simply drag your markdown files or folders into the drop zone
+- 📁 **Folder Support**: Drop entire folders containing markdown files
+- 📄 **Multiple File Selection**: When multiple markdown files are found, choose which one to view
 - 🖱️ **Click to Browse**: Alternative file selection via clicking
 - 🎨 **Beautiful Rendering**: Clean, readable markdown output with syntax highlighting
+- 🖼️ **Image Support**: Relative image paths in markdown are automatically resolved from folders
+- ⛶ **Fullscreen Mode**: Expand content for distraction-free reading
 - 📱 **Responsive Design**: Works great on desktop and mobile
 - ↩️ **Easy Reset**: Go back to drop zone to load another file
 
@@ -17,9 +21,12 @@ A simple, beautiful static web app for rendering markdown files via drag and dro
 1. Open `index.html` in your web browser
 2. Either:
    - Drag and drop a `.md` or `.markdown` file into the drop zone
+   - Drag and drop a folder containing markdown files
    - Click the "Choose File" button to browse for a file
-3. Watch your markdown render beautifully!
-4. Click the "← Back to Drop Zone" button to load another file
+3. If you dropped a folder with multiple markdown files, select which one you want to view from the list
+4. Watch your markdown render beautifully!
+5. Use the fullscreen button (⛶) for distraction-free reading
+6. Click the "← Back to Drop Zone" button to load another file
 
 ## Supported File Types
 
