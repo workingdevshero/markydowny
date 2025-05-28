@@ -1,3 +1,5 @@
+<img src="marky.png" style="width:200px">
+
 # Markydowny
 
 A simple, beautiful static web app for rendering markdown files via drag and drop.
