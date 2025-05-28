@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markydowny</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .container.fullscreen {
+            max-width: 100%;
+            height: 100vh;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            opacity: 0.8;
+        }
+
+        .drop-zone {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 400px;
+            border: 3px dashed #e1e8ed;
+            margin: 40px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .drop-zone:hover {
+            border-color: #667eea;
+            background: #f0f2ff;
+        }
+
+        .drop-zone.dragover {
+            border-color: #667eea;
+            background: #f0f2ff;
+            transform: scale(1.02);
+        }
+
+        .mascot {
+            width: 120px;
+            height: 120px;
+            margin-bottom: 20px;
+            transition: transform 0.3s ease;
+        }
+
+        .drop-zone:hover .mascot {
+            transform: scale(1.1);
+        }
+
+        .drop-zone.dragover .mascot {
+            transform: scale(1.15) rotate(5deg);
+        }
+
+        .drop-text {
+            font-size: 1.25rem;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .drop-subtext {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+
+        .markdown-content {
+            display: none;
+            padding: 40px;
+            line-height: 1.6;
+            color: #2c3e50;
+            position: relative;
+        }
+
+        .container.fullscreen .markdown-content {
+            padding: 60px;
+            height: calc(100vh - 80px);
+            overflow-y: auto;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3,
+        .markdown-content h4,
+        .markdown-content h5,
+        .markdown-content h6 {
+            margin-bottom: 16px;
+            margin-top: 24px;
+            color: #2c3e50;
+        }
+
+        .markdown-content h1 {
+            border-bottom: 2px solid #e1e8ed;
+            padding-bottom: 8px;
+        }
+
+        .markdown-content p {
+            margin-bottom: 16px;
+        }
+
+        .markdown-content code {
+            background: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        .markdown-content pre {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 16px;
+        }
+
+        .markdown-content blockquote {
+            border-left: 4px solid #667eea;
+            padding-left: 16px;
+            margin: 16px 0;
+            color: #6c757d;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin-bottom: 16px;
+            padding-left: 24px;
+        }
+
+        .markdown-content li {
+            margin-bottom: 8px;
+        }
+
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: none;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .back-button:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .fullscreen-button {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 50%;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: none;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fullscreen-button:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .container.fullscreen .fullscreen-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+
+        .container.fullscreen .header {
+            display: none;
+        }
+
+        .container.fullscreen body {
+            padding: 0;
+        }
+
+        .footer {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .footer-links {
+            margin-top: 10px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: #667eea;
+            text-decoration: none;
+            transition: color 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .footer-icon {
+            width: 20px;
+            height: 20px;
+            filter: brightness(0) saturate(100%) invert(47%) sepia(99%) saturate(1613%) hue-rotate(225deg) brightness(96%) contrast(91%);
+            transition: filter 0.3s ease;
+        }
+
+        .footer-links a:hover .footer-icon {
+            filter: brightness(0) saturate(100%) invert(42%) sepia(93%) saturate(1352%) hue-rotate(225deg) brightness(119%) contrast(119%);
+        }
+
+        .footer-links a:hover {
+            color: #5a67d8;
+        }
+
+        .container.fullscreen .footer {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            .footer-links {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: background 0.3s ease;
+        }
+
+        .upload-button:hover {
+            background: #5a67d8;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+            
+            .drop-zone {
+                margin: 20px;
+                min-height: 300px;
+            }
+            
+            .markdown-content {
+                padding: 20px;
+            }
+
+            .container.fullscreen .markdown-content {
+                padding: 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📝 Markydowny</h1>
+            <p>Drag and drop your markdown files to see them beautifully rendered</p>
+        </div>
+        
+        <div class="drop-zone" id="dropZone">
+            <img src="marky.png" alt="Marky Downy" class="mascot" />
+            <div class="drop-text">Drop your markdown file here</div>
+            <div class="drop-subtext">or click to browse files</div>
+            <button class="upload-button" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+                Choose File
+            </button>
+        </div>
+        
+        <div class="markdown-content" id="markdownContent">
+            <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
+                ⛶
+            </button>
+        </div>
+        
+        <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
+        
+        <div class="footer">
+            <div>&copy; Working Dev's Hero LLC</div>
+            <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">
+                    <img src="web.svg" alt="Website" class="footer-icon" />
+                    Website
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer">
+                    <img src="discord.svg" alt="Discord" class="footer-icon" />
+                    Discord
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer">
+                    <img src="github.svg" alt="GitHub" class="footer-icon" />
+                    GitHub
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer">
+                    <img src="x.svg" alt="X" class="footer-icon" />
+                    X
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <button class="back-button" id="backButton">
+        ← Back to Drop Zone
+    </button>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const markdownContent = document.getElementById('markdownContent');
+        const backButton = document.getElementById('backButton');
+        const fileInput = document.getElementById('fileInput');
+        const fullscreenButton = document.getElementById('fullscreenButton');
+        const container = document.querySelector('.container');
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        // Highlight drop area when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        // Handle dropped files
+        dropZone.addEventListener('drop', handleDrop, false);
+        
+        // Handle file input change
+        fileInput.addEventListener('change', handleFileSelect, false);
+        
+        // Handle click on drop zone
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // Back button functionality
+        backButton.addEventListener('click', showDropZone);
+
+        // Fullscreen button functionality
+        fullscreenButton.addEventListener('click', toggleFullscreen);
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function highlight(e) {
+            dropZone.classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                const file = files[0];
+                
+                // Check if it's a text file (markdown, txt, etc.)
+                if (file.type === 'text/markdown' || 
+                    file.type === 'text/plain' || 
+                    file.name.endsWith('.md') || 
+                    file.name.endsWith('.markdown') ||
+                    file.type === '' || // Some systems don't set MIME type for .md files
+                    file.type.startsWith('text/')) {
+                    
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const markdownText = e.target.result;
+                        renderMarkdown(markdownText);
+                    };
+                    reader.readAsText(file);
+                } else {
+                    alert('Please select a markdown (.md) or text file.');
+                }
+            }
+        }
+
+        function renderMarkdown(markdownText) {
+            try {
+                const html = marked.parse(markdownText);
+                markdownContent.innerHTML = `
+                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
+                        ⛶
+                    </button>
+                    ${html}
+                `;
+                // Re-attach event listener to the new button
+                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
+                showMarkdownContent();
+            } catch (error) {
+                console.error('Error parsing markdown:', error);
+                markdownContent.innerHTML = `
+                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
+                        ⛶
+                    </button>
+                    <div style="padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24;">
+                        <h3>Error parsing markdown</h3>
+                        <p>There was an error parsing the markdown file. Here's the raw content:</p>
+                        <pre style="background: white; padding: 10px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap;">${markdownText}</pre>
+                    </div>
+                `;
+                // Re-attach event listener to the new button
+                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
+                showMarkdownContent();
+            }
+        }
+
+        function showMarkdownContent() {
+            dropZone.style.display = 'none';
+            markdownContent.style.display = 'block';
+            backButton.style.display = 'block';
+            fullscreenButton.style.display = 'flex';
+        }
+
+        function showDropZone() {
+            dropZone.style.display = 'flex';
+            markdownContent.style.display = 'none';
+            backButton.style.display = 'none';
+            fullscreenButton.style.display = 'none';
+            
+            // Exit fullscreen if active
+            if (container.classList.contains('fullscreen')) {
+                container.classList.remove('fullscreen');
+                document.body.style.padding = '20px';
+            }
+            
+            // Reset file input
+            fileInput.value = '';
+        }
+
+        function toggleFullscreen() {
+            const isFullscreen = container.classList.contains('fullscreen');
+            
+            if (isFullscreen) {
+                // Exit fullscreen
+                container.classList.remove('fullscreen');
+                document.body.style.padding = '20px';
+                fullscreenButton.innerHTML = '⛶';
+                fullscreenButton.title = 'Enter Fullscreen';
+            } else {
+                // Enter fullscreen
+                container.classList.add('fullscreen');
+                document.body.style.padding = '0';
+                fullscreenButton.innerHTML = '✕';
+                fullscreenButton.title = 'Exit Fullscreen';
+            }
+        }
+    </script>
+</body>
+</html> 
