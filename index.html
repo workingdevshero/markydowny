@@ -343,6 +343,33 @@
             margin-bottom: 20px;
         }
 
+        .container.fullscreen.file-selector-active .file-list {
+            max-height: 300px;
+        }
+
+        .container.fullscreen.file-selector-active .file-selector {
+            padding: 60px 60px 30px 60px;
+        }
+
+        .container.file-selector-active .file-selector {
+            border-bottom: 1px solid #e1e8ed;
+        }
+
+        .container.file-selector-active .file-list {
+            max-height: 250px;
+        }
+
+        .container.fullscreen.file-selector-active {
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .container.fullscreen.file-selector-active .markdown-content {
+            padding: 30px 60px 60px 60px;
+            height: auto;
+            overflow-y: visible;
+        }
+
         .file-item {
             padding: 12px 16px;
             border-bottom: 1px solid #e1e8ed;
@@ -355,6 +382,11 @@
 
         .file-item:hover {
             background: #f8f9fa;
+        }
+
+        .file-item.selected {
+            background: #e3f2fd;
+            border-left: 4px solid #667eea;
         }
 
         .file-item:last-child {
@@ -729,7 +761,16 @@
 
         function showMarkdownContent() {
             dropZone.style.display = 'none';
-            markdownContent.style.display = 'block';
+            // Keep file selector visible if we came from file selection
+            if (container.classList.contains('file-selector-active')) {
+                // Don't hide file selector, show content below it
+                markdownContent.style.display = 'block';
+            } else {
+                // Single file case - hide file selector
+                fileSelector.style.display = 'none';
+                container.classList.remove('file-selector-active');
+                markdownContent.style.display = 'block';
+            }
             backButton.style.display = 'block';
             fullscreenButton.style.display = 'flex';
         }
@@ -738,6 +779,7 @@
             dropZone.style.display = 'flex';
             markdownContent.style.display = 'none';
             fileSelector.style.display = 'none';
+            container.classList.remove('file-selector-active');
             backButton.style.display = 'none';
             fullscreenButton.style.display = 'none';
             
@@ -745,6 +787,8 @@
             if (container.classList.contains('fullscreen')) {
                 container.classList.remove('fullscreen');
                 document.body.style.padding = '20px';
+                // Reset container display
+                container.style.display = '';
             }
             
             // Clear folder data
@@ -832,6 +876,7 @@
             // Hide drop zone and show file selector
             dropZone.style.display = 'none';
             fileSelector.style.display = 'block';
+            container.classList.add('file-selector-active');
             
             // Clear previous file list
             fileList.innerHTML = '';
@@ -849,6 +894,12 @@
                 `;
                 
                 fileItem.addEventListener('click', () => {
+                    // Add visual feedback for selected file
+                    document.querySelectorAll('.file-item').forEach(item => {
+                        item.classList.remove('selected');
+                    });
+                    fileItem.classList.add('selected');
+                    
                     loadMarkdownFile(file, path);
                 });
                 
