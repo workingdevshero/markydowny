@@ -3,9 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Markydowny</title>
+    <title>Markydowny - Drag & Drop Markdown Viewer</title>
+    <meta name="description" content="Markydowny is a beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers who want to preview their markdown files instantly.">
+    <meta name="keywords" content="markdown viewer, drag and drop, markdown renderer, markdown preview, markdown files, folder support, markdown editor, static site, web app, developer tools">
+    <meta name="author" content="Working Devs Hero">
+    <meta name="robots" content="index, follow">
+    <meta name="language" content="English">
+    <meta name="revisit-after" content="7 days">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://markydowny.com/">
+    <meta property="og:title" content="Markydowny - Drag & Drop Markdown Viewer">
+    <meta property="og:description" content="A beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://markydowny.com/">
+    <meta property="twitter:title" content="Markydowny - Drag & Drop Markdown Viewer">
+    <meta property="twitter:description" content="A beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers.">
+    <meta property="twitter:image" content="https://markydowny.com/og-image.png">
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://markydowny.com/">
+
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="apple-touch-icon" href="marky.png">
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Markydowny",
+        "description": "A beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers who want to preview their markdown files instantly.",
+        "url": "https://markydowny.com/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web Browser",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+        },
+        "featureList": [
+            "Drag & Drop Interface",
+            "Folder Support",
+            "Image Rendering",
+            "Fullscreen Mode",
+            "Mobile Responsive",
+            "Markdown Syntax Highlighting"
+        ],
+        "author": {
+            "@type": "Organization",
+            "name": "Working Devs Hero",
+            "url": "https://workingdevshero.com"
+        },
+        "screenshot": "https://markydowny.com/og-image.png",
+        "softwareVersion": "1.0.0",
+        "fileFormat": "text/markdown",
+        "programmingLanguage": "JavaScript"
+    }
+    </script>
+
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/marked/marked.min.js" as="script">
+    <link rel="dns-prefetch" href="//cdn.jsdelivr.net">
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
     <style>
         * {
             margin: 0;
@@ -94,6 +160,10 @@
 
         .drop-zone.dragover .mascot {
             transform: scale(1.15) rotate(5deg);
+        }
+
+        .mascot {
+            will-change: transform;
         }
 
         .drop-text {
@@ -282,6 +352,10 @@
             box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
         }
 
+        .back-button {
+            will-change: transform;
+        }
+
         .fullscreen-button {
             position: absolute;
             top: 20px;
@@ -307,6 +381,10 @@
             background: #5a67d8;
             transform: translateY(-2px);
             box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        }
+
+        .fullscreen-button {
+            will-change: transform;
         }
 
         .container.fullscreen .fullscreen-button {
@@ -526,42 +604,44 @@
 </head>
 <body>
     <div class="container">
-        <div class="header">
+        <header class="header">
             <h1>📝 Markydowny</h1>
             <p>Drag and drop your markdown files to see them beautifully rendered</p>
-        </div>
-        
-        <div class="drop-zone" id="dropZone">
+        </header>
+
+        <main>
+            <div class="drop-zone" id="dropZone">
             <img src="marky.png" alt="Marky Downy" class="mascot" />
             <div class="drop-text">Drop your markdown file or folder here</div>
             <div class="drop-subtext">or click to browse files</div>
             <button class="upload-button" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
                 Choose File
             </button>
-        </div>
-        
-        <div class="file-selector" id="fileSelector">
-            <h2>📁 Multiple Markdown Files Found</h2>
-            <p style="text-align: center; color: #6c757d; margin-bottom: 20px;">
-                Choose which markdown file you'd like to view:
-            </p>
-            <div class="file-list" id="fileList"></div>
-            <div class="selector-buttons">
-                <button class="selector-button secondary" onclick="showDropZone()">
-                    Cancel
+            </div>
+
+            <div class="file-selector" id="fileSelector">
+                <h2>📁 Multiple Markdown Files Found</h2>
+                <p style="text-align: center; color: #6c757d; margin-bottom: 20px;">
+                    Choose which markdown file you'd like to view:
+                </p>
+                <div class="file-list" id="fileList"></div>
+                <div class="selector-buttons">
+                    <button class="selector-button secondary" onclick="showDropZone()">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+
+            <div class="markdown-content" id="markdownContent">
+                <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
+                    ⛶
                 </button>
             </div>
-        </div>
 
-        <div class="markdown-content" id="markdownContent">
-            <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                ⛶
-            </button>
-        </div>
+            <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
+        </main>
         
-        <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
-        
-        <div class="footer">
+        <footer class="footer">
             <div class="footer-links">
                 <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">
                     <img src="web.svg" alt="Website" class="footer-icon" />
@@ -580,7 +660,7 @@
                     X
                 </a>
             </div>
-        </div>
+        </footer>
     </div>
     
     <!-- Lightbox for image expansion -->

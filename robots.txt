@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Allow all content
+Allow: /
+
+# Sitemap location
+Sitemap: https://markydowny.com/sitemap.xml
