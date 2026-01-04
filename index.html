@@ -188,7 +188,7 @@
 
         .container.fullscreen .markdown-content {
             padding: 60px;
-            height: calc(100vh - 80px);
+            height: 100vh;
             overflow-y: auto;
         }
 
@@ -527,7 +527,7 @@
         }
 
         .footer-links a {
-            color: #667eea;
+            color: #ffffff;
             text-decoration: none;
             transition: color 0.3s ease;
             display: flex;
@@ -538,16 +538,16 @@
         .footer-icon {
             width: 20px;
             height: 20px;
-            filter: brightness(0) saturate(100%) invert(47%) sepia(99%) saturate(1613%) hue-rotate(225deg) brightness(96%) contrast(91%);
+            filter: brightness(0) invert(1);
             transition: filter 0.3s ease;
         }
 
         .footer-links a:hover .footer-icon {
-            filter: brightness(0) saturate(100%) invert(42%) sepia(93%) saturate(1352%) hue-rotate(225deg) brightness(119%) contrast(119%);
+            filter: brightness(0) invert(1) drop-shadow(0 0 3px rgba(255, 255, 255, 0.5));
         }
 
         .footer-links a:hover {
-            color: #5a67d8;
+            color: rgba(255, 255, 255, 0.8);
         }
 
         .container.fullscreen .footer {
