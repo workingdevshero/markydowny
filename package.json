@@ -1,0 +1,19 @@
+{
+  "name": "markydowny",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A simple, beautiful markdown viewer for the web and macOS",
+  "scripts": {
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "node --test tests/*.test.js && cargo test --manifest-path src-tauri/Cargo.toml",
+    "symbols": "symbol-upload -a Markydowny -v $npm_package_version -d src-tauri/target/release -f markydowny.dSYM -m"
+  },
+  "devDependencies": {
+    "@bugsplat/symbol-upload": "^11.0.1",
+    "@tauri-apps/cli": "^2.12.4",
+    "marked": "^18.1.2"
+  }
+}

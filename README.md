@@ -2,7 +2,7 @@
 
 # Markydowny
 
-A simple, beautiful static web app for rendering markdown files via drag and drop.
+A simple, beautiful markdown viewer — on the web at [markydowny.com](https://markydowny.com), and as a native macOS app that opens `.md` files when you double-click them.
 
 ## Features
 
@@ -35,30 +35,83 @@ A simple, beautiful static web app for rendering markdown files via drag and dro
 - `.txt` (Plain text)
 - Any other text file
 
+## Desktop App (macOS)
+
+The same viewer ships as a small native app built with [Tauri](https://tauri.app).
+
+- 🖱️ **Double-click to open**: registers as a viewer for `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`
+- 🪟 **One window per document**: open several files at once, or follow a link to another `.md` file
+- 🖼️ **Local images just work**: relative image paths resolve from the file's location on disk
+- ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
+- 🌙 **Dark mode**: follows your macOS appearance
+- 🔗 **Links** open in your default browser
+
+### Install
+
+```bash
+npm install
+npm run build
+```
+
+Then drag `src-tauri/target/release/bundle/macos/Markydowny.app` into `/Applications` (a `.dmg` is built next to it too).
+
+To make it the default for markdown files: in Finder, select any `.md` file → **Get Info** (⌘I) → **Open with:** Markydowny → **Change All…**
+
+### Develop
+
+```bash
+npm run dev                   # launch the app
+npm run dev -- -- README.md   # launch with a file
+npm test                      # JS + Rust tests
+```
+
+Requirements: Node 18+, Rust (the version is pinned in `rust-toolchain.toml`, so rustup installs it automatically), and Xcode command line tools.
+
+### Crash reporting
+
+The desktop app reports crashes to [BugSplat](https://www.bugsplat.com) with
+[bugsplat-rs](https://github.com/BugSplat-Git/bugsplat-rs): native crashes and Rust panics
+(minidumps, symbolicated server-side) and JavaScript errors from the viewer windows.
+
+- Set `BUGSPLAT_DATABASE` when building. Builds without it run without crash reporting.
+- Building needs CMake and Ninja (`brew install cmake ninja`) for bugsplat-native.
+- Release builds keep line tables in a `.dSYM`; upload it after `npm run build` with
+  `npm run symbols` (reads `BUGSPLAT_DATABASE`, `SYMBOL_UPLOAD_CLIENT_ID` and
+  `SYMBOL_UPLOAD_CLIENT_SECRET` from the environment).
+- Debug builds have a **Crash Test** menu (native crash, Rust panic, JavaScript error). Set
+  `MARKYDOWNY_CRASH_MENU=1` to show it in a release build, and `MARKYDOWNY_BUGSPLAT_QUIET=1` to
+  upload without the crash dialog.
+
+## Project Layout
+
+```
+index.html, js/, *.svg, *.png   The web app (served as-is by GitHub Pages from the repo root)
+js/core.js                      Pure helpers shared by web + desktop (unit tested)
+js/app.js                       UI; detects Tauri and switches to native file handling
+js/vendor/marked.umd.js         Vendored markdown parser (refresh with `npm run vendor`)
+src-tauri/                      Desktop shell: file associations, window routing, file access, crash reporting
+scripts/build-frontend.mjs      Copies the web app into dist/ for the desktop build
+tests/                          JS unit tests (node --test)
+```
+
 ## Technical Details
 
-- Pure HTML, CSS, and JavaScript - no build process needed
-- Uses [marked.js](https://marked.js.org/) from CDN for markdown parsing
-- Fully static - works offline after initial load
+- Pure HTML, CSS, and JavaScript — no build process needed for the website
+- Uses [marked.js](https://marked.js.org/) (vendored) for markdown parsing
+- Fully static — works offline
 - Mobile-responsive design
+- Desktop app runs with a strict Content Security Policy, so scripts embedded in markdown files never execute
 
-## Running the App
+## Running the Web App
 
 Simply open `index.html` in any modern web browser. No server or installation required!
 
 For development, you can also serve it with a simple HTTP server:
 
 ```bash
-# Python 3
-python -m http.server 8000
-
-# Python 2
-python -m SimpleHTTPServer 8000
-
-# Node.js (if you have npx)
+python3 -m http.server 8000
+# or
 npx serve .
-
-# Or any other static file server
 ```
 
-Then open `http://localhost:8000` in your browser. 
+Then open `http://localhost:8000` in your browser.

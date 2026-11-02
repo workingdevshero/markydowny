@@ -41,7 +41,7 @@
         "description": "A beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers who want to preview their markdown files instantly.",
         "url": "https://markydowny.com/",
         "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Web Browser",
+        "operatingSystem": "Web Browser, macOS",
         "offers": {
             "@type": "Offer",
             "price": "0",
@@ -67,11 +67,6 @@
     }
     </script>
 
-    <!-- Preload critical resources -->
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/marked/marked.min.js" as="script">
-    <link rel="dns-prefetch" href="//cdn.jsdelivr.net">
-
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
     <style>
         * {
             margin: 0;
@@ -600,6 +595,154 @@
                 padding: 30px;
             }
         }
+
+        .render-error {
+            padding: 20px;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 4px;
+            color: #721c24;
+        }
+
+        .render-error pre {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            margin-bottom: 16px;
+            display: block;
+            overflow-x: auto;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid #e1e8ed;
+            padding: 6px 13px;
+        }
+
+        .markdown-content hr {
+            border: none;
+            border-top: 2px solid #e1e8ed;
+            margin: 24px 0;
+        }
+
+        .markdown-content a {
+            color: #5a67d8;
+        }
+
+        /* ---------- Desktop app (body.desktop is set when running in Tauri) ---------- */
+
+        body.desktop {
+            display: block;
+            padding: 0 !important;
+            background: #ffffff;
+        }
+
+        body.desktop .container {
+            max-width: none;
+            min-height: 100vh;
+            border-radius: 0;
+            box-shadow: none;
+            overflow: visible;
+            background: transparent;
+        }
+
+        body.desktop .header,
+        body.desktop .footer,
+        body.desktop .back-button,
+        body.desktop .fullscreen-button {
+            display: none !important;
+        }
+
+        body.desktop .drop-zone {
+            margin: 24px;
+            min-height: calc(100vh - 48px);
+        }
+
+        body.desktop .markdown-content,
+        body.desktop .file-selector {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        body.desktop .markdown-content {
+            padding: 40px 48px 80px;
+        }
+
+        body.desktop .markdown-content img {
+            max-height: 70vh;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body.desktop {
+                background: #1e1f22;
+                color-scheme: dark;
+            }
+
+            body.desktop .markdown-content,
+            body.desktop .markdown-content h1,
+            body.desktop .markdown-content h2,
+            body.desktop .markdown-content h3,
+            body.desktop .markdown-content h4,
+            body.desktop .markdown-content h5,
+            body.desktop .markdown-content h6,
+            body.desktop .drop-text,
+            body.desktop .file-selector h2 {
+                color: #dcdfe4;
+            }
+
+            body.desktop .markdown-content code,
+            body.desktop .markdown-content pre {
+                background: #2b2d31;
+            }
+
+            body.desktop .markdown-content h1,
+            body.desktop .markdown-content hr,
+            body.desktop .markdown-content th,
+            body.desktop .markdown-content td,
+            body.desktop .file-list,
+            body.desktop .file-item {
+                border-color: #3a3d44;
+            }
+
+            body.desktop .markdown-content blockquote,
+            body.desktop .drop-subtext,
+            body.desktop .file-path {
+                color: #9aa0a9;
+            }
+
+            body.desktop .markdown-content a {
+                color: #8ea2ff;
+            }
+
+            body.desktop .drop-zone {
+                background: #26282c;
+                border-color: #3a3d44;
+            }
+
+            body.desktop .drop-zone:hover,
+            body.desktop .drop-zone.dragover {
+                background: #2a2d3d;
+                border-color: #667eea;
+            }
+
+            body.desktop .file-selector {
+                background: transparent;
+            }
+
+            body.desktop .file-item:hover {
+                background: #2b2d31;
+            }
+
+            body.desktop .file-item.selected {
+                background: #2a2d3d;
+            }
+        }
     </style>
 </head>
 <body>
@@ -614,7 +757,7 @@
             <img src="marky.png" alt="Marky Downy" class="mascot" />
             <div class="drop-text">Drop your markdown file or folder here</div>
             <div class="drop-subtext">or click to browse files</div>
-            <button class="upload-button" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+            <button class="upload-button" id="uploadButton" type="button">
                 Choose File
             </button>
             </div>
@@ -626,7 +769,7 @@
                 </p>
                 <div class="file-list" id="fileList"></div>
                 <div class="selector-buttons">
-                    <button class="selector-button secondary" onclick="showDropZone()">
+                    <button class="selector-button secondary" id="cancelSelector" type="button">
                         Cancel
                     </button>
                 </div>
@@ -676,411 +819,8 @@
         ← Back to Drop Zone
     </button>
 
-    <script>
-        const dropZone = document.getElementById('dropZone');
-        const markdownContent = document.getElementById('markdownContent');
-        const backButton = document.getElementById('backButton');
-        const fileInput = document.getElementById('fileInput');
-        const fullscreenButton = document.getElementById('fullscreenButton');
-        const container = document.querySelector('.container');
-        const fileSelector = document.getElementById('fileSelector');
-        const fileList = document.getElementById('fileList');
-        const lightbox = document.getElementById('lightbox');
-        const lightboxImage = document.getElementById('lightboxImage');
-        const lightboxClose = document.getElementById('lightboxClose');
-        const lightboxInfo = document.getElementById('lightboxInfo');
-        
-        // Store folder contents for image resolution
-        let folderFiles = new Map();
-        let currentFolderPath = '';
-
-        // Prevent default drag behaviors
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, preventDefaults, false);
-            document.body.addEventListener(eventName, preventDefaults, false);
-        });
-
-        // Highlight drop area when item is dragged over it
-        ['dragenter', 'dragover'].forEach(eventName => {
-            dropZone.addEventListener(eventName, highlight, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, unhighlight, false);
-        });
-
-        // Handle dropped files
-        dropZone.addEventListener('drop', handleDrop, false);
-        
-        // Handle file input change
-        fileInput.addEventListener('change', handleFileSelect, false);
-        
-        // Handle click on drop zone
-        dropZone.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        // Back button functionality
-        backButton.addEventListener('click', showDropZone);
-
-        // Fullscreen button functionality
-        fullscreenButton.addEventListener('click', toggleFullscreen);
-
-        // Lightbox functionality
-        lightboxClose.addEventListener('click', closeLightbox);
-        lightbox.addEventListener('click', (e) => {
-            if (e.target === lightbox) {
-                closeLightbox();
-            }
-        });
-
-        // Close lightbox with Escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && lightbox.style.display === 'block') {
-                closeLightbox();
-            }
-        });
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
-        function highlight(e) {
-            dropZone.classList.add('dragover');
-        }
-
-        function unhighlight(e) {
-            dropZone.classList.remove('dragover');
-        }
-
-        function handleDrop(e) {
-            const dt = e.dataTransfer;
-            const items = dt.items;
-            
-            // Check if we have items (for folder support)
-            if (items && items.length > 0) {
-                const item = items[0];
-                
-                // Check if it's a folder
-                if (item.webkitGetAsEntry) {
-                    const entry = item.webkitGetAsEntry();
-                    if (entry.isDirectory) {
-                        handleFolder(entry);
-                        return;
-                    }
-                }
-            }
-            
-            // Fallback to regular file handling
-            const files = dt.files;
-            handleFiles(files);
-        }
-
-        function handleFileSelect(e) {
-            const files = e.target.files;
-            handleFiles(files);
-        }
-
-        function handleFiles(files) {
-            if (files.length > 0) {
-                const file = files[0];
-                
-                // Check if it's a text file (markdown, txt, etc.)
-                if (file.type === 'text/markdown' || 
-                    file.type === 'text/plain' || 
-                    file.name.endsWith('.md') || 
-                    file.name.endsWith('.markdown') ||
-                    file.type === '' || // Some systems don't set MIME type for .md files
-                    file.type.startsWith('text/')) {
-                    
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const markdownText = e.target.result;
-                        renderMarkdown(markdownText);
-                    };
-                    reader.readAsText(file);
-                } else {
-                    alert('Please select a markdown (.md) or text file.');
-                }
-            }
-        }
-
-        function renderMarkdown(markdownText) {
-            try {
-                const html = marked.parse(markdownText);
-                markdownContent.innerHTML = `
-                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                        ⛶
-                    </button>
-                    ${html}
-                `;
-                // Re-attach event listener to the new button
-                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
-                
-                // Add click handlers to all images for lightbox
-                setupImageLightbox();
-                
-                showMarkdownContent();
-            } catch (error) {
-                console.error('Error parsing markdown:', error);
-                markdownContent.innerHTML = `
-                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                        ⛶
-                    </button>
-                    <div style="padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24;">
-                        <h3>Error parsing markdown</h3>
-                        <p>There was an error parsing the markdown file. Here's the raw content:</p>
-                        <pre style="background: white; padding: 10px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap;">${markdownText}</pre>
-                    </div>
-                `;
-                // Re-attach event listener to the new button
-                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
-                showMarkdownContent();
-            }
-        }
-
-        function showMarkdownContent() {
-            dropZone.style.display = 'none';
-            // Keep file selector visible if we came from file selection
-            if (container.classList.contains('file-selector-active')) {
-                // Don't hide file selector, show content below it
-                markdownContent.style.display = 'block';
-            } else {
-                // Single file case - hide file selector
-                fileSelector.style.display = 'none';
-                container.classList.remove('file-selector-active');
-                markdownContent.style.display = 'block';
-            }
-            backButton.style.display = 'block';
-            fullscreenButton.style.display = 'flex';
-        }
-
-        function showDropZone() {
-            dropZone.style.display = 'flex';
-            markdownContent.style.display = 'none';
-            fileSelector.style.display = 'none';
-            container.classList.remove('file-selector-active');
-            backButton.style.display = 'none';
-            fullscreenButton.style.display = 'none';
-            
-            // Exit fullscreen if active
-            if (container.classList.contains('fullscreen')) {
-                container.classList.remove('fullscreen');
-                document.body.style.padding = '20px';
-                // Reset container display
-                container.style.display = '';
-            }
-            
-            // Clear folder data
-            folderFiles.clear();
-            currentFolderPath = '';
-            
-            // Reset file input
-            fileInput.value = '';
-        }
-
-        function toggleFullscreen() {
-            const isFullscreen = container.classList.contains('fullscreen');
-            
-            if (isFullscreen) {
-                // Exit fullscreen
-                container.classList.remove('fullscreen');
-                document.body.style.padding = '20px';
-                fullscreenButton.innerHTML = '⛶';
-                fullscreenButton.title = 'Enter Fullscreen';
-            } else {
-                // Enter fullscreen
-                container.classList.add('fullscreen');
-                document.body.style.padding = '0';
-                fullscreenButton.innerHTML = '✕';
-                fullscreenButton.title = 'Exit Fullscreen';
-            }
-        }
-
-        async function handleFolder(folderEntry) {
-            try {
-                currentFolderPath = folderEntry.name;
-                folderFiles.clear();
-                
-                // Recursively read all files from the folder
-                await readFolderRecursively(folderEntry, '');
-                
-                // Find all markdown files
-                const markdownFiles = Array.from(folderFiles.entries())
-                    .filter(([path, file]) => 
-                        path.toLowerCase().endsWith('.md') || 
-                        path.toLowerCase().endsWith('.markdown')
-                    );
-                
-                if (markdownFiles.length === 0) {
-                    alert('No markdown files found in this folder. Please select a folder containing .md or .markdown files.');
-                    return;
-                }
-                
-                if (markdownFiles.length === 1) {
-                    // Only one markdown file, load it directly
-                    const [path, file] = markdownFiles[0];
-                    loadMarkdownFile(file, path);
-                } else {
-                    // Multiple markdown files, show selector
-                    showFileSelector(markdownFiles);
-                }
-                
-            } catch (error) {
-                console.error('Error reading folder:', error);
-                alert('Error reading folder contents. Please try again.');
-            }
-        }
-
-        async function readFolderRecursively(entry, path) {
-            if (entry.isFile) {
-                // It's a file, read it
-                const file = await new Promise((resolve, reject) => {
-                    entry.file(resolve, reject);
-                });
-                folderFiles.set(path + entry.name, file);
-            } else if (entry.isDirectory) {
-                // It's a directory, read its contents
-                const reader = entry.createReader();
-                const entries = await new Promise((resolve, reject) => {
-                    reader.readEntries(resolve, reject);
-                });
-                
-                for (const childEntry of entries) {
-                    await readFolderRecursively(childEntry, path + entry.name + '/');
-                }
-            }
-        }
-
-        function showFileSelector(markdownFiles) {
-            // Hide drop zone and show file selector
-            dropZone.style.display = 'none';
-            fileSelector.style.display = 'block';
-            container.classList.add('file-selector-active');
-            
-            // Clear previous file list
-            fileList.innerHTML = '';
-            
-            // Add each markdown file to the list
-            markdownFiles.forEach(([path, file]) => {
-                const fileItem = document.createElement('div');
-                fileItem.className = 'file-item';
-                fileItem.innerHTML = `
-                    <span class="file-icon">📄</span>
-                    <div>
-                        <div>${file.name}</div>
-                        <div class="file-path">${path}</div>
-                    </div>
-                `;
-                
-                fileItem.addEventListener('click', () => {
-                    // Add visual feedback for selected file
-                    document.querySelectorAll('.file-item').forEach(item => {
-                        item.classList.remove('selected');
-                    });
-                    fileItem.classList.add('selected');
-                    
-                    loadMarkdownFile(file, path);
-                });
-                
-                fileList.appendChild(fileItem);
-            });
-        }
-
-        async function loadMarkdownFile(file, filePath) {
-            try {
-                const text = await file.text();
-                
-                // Process the markdown to handle image references
-                const processedMarkdown = await processMarkdownImages(text, filePath);
-                
-                renderMarkdown(processedMarkdown);
-            } catch (error) {
-                console.error('Error loading markdown file:', error);
-                alert('Error loading the markdown file. Please try again.');
-            }
-        }
-
-        async function processMarkdownImages(markdownText, markdownPath) {
-            // Get the directory of the markdown file
-            const markdownDir = markdownPath.substring(0, markdownPath.lastIndexOf('/') + 1);
-            
-            // Regular expression to find image references
-            const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-            
-            let processedText = markdownText;
-            const matches = [...markdownText.matchAll(imageRegex)];
-            
-            for (const match of matches) {
-                const [fullMatch, altText, imagePath] = match;
-                
-                // Skip if it's already a URL
-                if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
-                    continue;
-                }
-                
-                // Resolve the image path relative to the markdown file
-                let resolvedPath = imagePath;
-                if (imagePath.startsWith('./')) {
-                    resolvedPath = markdownDir + imagePath.substring(2);
-                } else if (imagePath.startsWith('../')) {
-                    // Handle relative paths going up directories
-                    const parts = markdownDir.split('/').filter(p => p);
-                    const imageParts = imagePath.split('/');
-                    
-                    let upCount = 0;
-                    for (const part of imageParts) {
-                        if (part === '..') {
-                            upCount++;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    const remainingParts = imageParts.slice(upCount);
-                    const baseParts = parts.slice(0, -upCount);
-                    resolvedPath = baseParts.concat(remainingParts).join('/');
-                } else if (!imagePath.startsWith('/')) {
-                    resolvedPath = markdownDir + imagePath;
-                }
-                
-                // Find the image file in our folder files
-                const imageFile = folderFiles.get(resolvedPath);
-                if (imageFile) {
-                    // Create a blob URL for the image
-                    const blobUrl = URL.createObjectURL(imageFile);
-                    const newImageRef = `![${altText}](${blobUrl})`;
-                    processedText = processedText.replace(fullMatch, newImageRef);
-                }
-            }
-            
-            return processedText;
-        }
-
-        function setupImageLightbox() {
-            const images = markdownContent.querySelectorAll('img');
-            images.forEach(img => {
-                img.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    openLightbox(img.src, img.alt || 'Image');
-                });
-            });
-        }
-
-        function openLightbox(imageSrc, imageAlt) {
-            lightboxImage.src = imageSrc;
-            lightboxImage.alt = imageAlt;
-            lightboxInfo.textContent = imageAlt || 'Click anywhere to close';
-            lightbox.style.display = 'block';
-            document.body.style.overflow = 'hidden'; // Prevent background scrolling
-        }
-
-        function closeLightbox() {
-            lightbox.style.display = 'none';
-            document.body.style.overflow = ''; // Restore scrolling
-            lightboxImage.src = '';
-        }
-    </script>
+    <script src="js/vendor/marked.umd.js"></script>
+    <script src="js/core.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html> 
