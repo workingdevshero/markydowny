@@ -124,4 +124,15 @@ mod tests {
         assert_eq!(conf["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(conf["productName"], APPLICATION);
     }
+
+    #[test]
+    fn macos_minimum_is_at_least_crashpads() {
+        // bugsplat-native links a Crashpad prebuilt built with mac_deployment_target=12.0
+        // (it uses kIOMainPortDefault), so the app can't promise to run on anything older.
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let minimum = conf["bundle"]["macOS"]["minimumSystemVersion"].as_str().unwrap();
+        let major: u32 = minimum.split('.').next().unwrap().parse().unwrap();
+        assert!(major >= 12, "minimumSystemVersion {minimum} is below Crashpad's macOS 12.0");
+    }
 }
