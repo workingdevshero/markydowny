@@ -20,6 +20,7 @@
     const fileInput = $('fileInput');
     const uploadButton = $('uploadButton');
     const fullscreenButton = $('fullscreenButton');
+    const docTitle = $('docTitle');
     const fileSelector = $('fileSelector');
     const fileList = $('fileList');
     const cancelSelectorButton = $('cancelSelector');
@@ -48,6 +49,12 @@
 
     fileInput.addEventListener('change', (e) => handleFiles(e.target.files), false);
     dropZone.addEventListener('click', chooseFile);
+    dropZone.addEventListener('keydown', (e) => {
+        if (e.target === dropZone && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault();
+            chooseFile();
+        }
+    });
     uploadButton.addEventListener('click', (e) => {
         e.stopPropagation();
         chooseFile();
@@ -284,7 +291,7 @@
             nodes = [renderError(markdownText)];
         }
 
-        markdownContent.replaceChildren(fullscreenButton, ...nodes);
+        markdownContent.replaceChildren(...nodes);
         showMarkdownContent(source.title);
         markdownContent.scrollTop = 0;
         window.scrollTo(0, 0);
@@ -414,8 +421,9 @@
             fileSelector.style.display = 'none';
         }
         markdownContent.style.display = 'block';
-        backButton.style.display = 'block';
-        fullscreenButton.style.display = 'flex';
+        backButton.style.display = 'inline-flex';
+        fullscreenButton.style.display = 'inline-flex';
+        docTitle.textContent = title || '';
         document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
         setDocumentOpen(true, title);
     }
@@ -440,6 +448,7 @@
         revokeBlobUrls();
         currentSource = null;
         fileInput.value = '';
+        docTitle.textContent = '';
         document.title = DEFAULT_TITLE;
         setDocumentOpen(false);
     }
@@ -447,9 +456,8 @@
     function toggleFullscreen() {
         const entering = !container.classList.contains('fullscreen');
         container.classList.toggle('fullscreen', entering);
-        document.body.style.padding = entering ? '0' : '';
-        fullscreenButton.textContent = entering ? '✕' : '⛶';
         fullscreenButton.title = entering ? 'Exit Fullscreen' : 'Enter Fullscreen';
+        fullscreenButton.setAttribute('aria-pressed', String(entering));
     }
 
     /** entries: [{ name, display, load }] */
@@ -464,9 +472,9 @@
             const item = document.createElement('div');
             item.className = 'file-item';
             item.innerHTML = `
-                <span class="file-icon">📄</span>
+                <span class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
                 <div>
-                    <div>${core.escapeHtml(entry.name)}</div>
+                    <div class="file-name">${core.escapeHtml(entry.name)}</div>
                     <div class="file-path">${core.escapeHtml(entry.display)}</div>
                 </div>
             `;
