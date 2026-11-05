@@ -1,3 +1,0 @@
-[net]
-# bugsplat-rs and its bugsplat-native submodule are private; use the git CLI and its credentials.
-git-fetch-with-cli = true

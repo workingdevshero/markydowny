@@ -70,7 +70,8 @@ Requirements: Node 18+, Rust (the version is pinned in `rust-toolchain.toml`, so
 ### Crash reporting
 
 The desktop app reports crashes to [BugSplat](https://www.bugsplat.com) with
-[bugsplat-rs](https://github.com/BugSplat-Git/bugsplat-rs): native crashes and Rust panics
+the [`bugsplat`](https://crates.io/crates/bugsplat) and
+[`tauri-plugin-bugsplat`](https://crates.io/crates/tauri-plugin-bugsplat) crates: native crashes and Rust panics
 (minidumps, symbolicated server-side) and JavaScript errors from the viewer windows.
 
 - Set `BUGSPLAT_DATABASE` when building. Builds without it run without crash reporting.
