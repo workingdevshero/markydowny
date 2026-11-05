@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for Markydowny viewer windows",
+  "windows": ["*"],
+  "permissions": ["core:default", "opener:default", "bugsplat:default"]
+}

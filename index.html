@@ -41,7 +41,7 @@
         "description": "A beautiful, easy-to-use drag and drop markdown viewer with folder support and image rendering. Perfect for developers and writers who want to preview their markdown files instantly.",
         "url": "https://markydowny.com/",
         "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Web Browser",
+        "operatingSystem": "Web Browser, macOS",
         "offers": {
             "@type": "Offer",
             "price": "0",
@@ -67,129 +67,375 @@
     }
     </script>
 
-    <!-- Preload critical resources -->
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/marked/marked.min.js" as="script">
-    <link rel="dns-prefetch" href="//cdn.jsdelivr.net">
-
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
     <style>
-        * {
+        :root {
+            color-scheme: light dark;
+            --bg: #f5f4f0;
+            --surface: #ffffff;
+            --surface-2: #f4f5f7;
+            --text: #1d2635;
+            --text-muted: #5d6879;
+            --border: #e2e4e9;
+            --accent: #2f5aa8;
+            --accent-hover: #264b8f;
+            --accent-soft: #e9effa;
+            --accent-text: #ffffff;
+            --coral: #ef7f63;
+            --code-bg: #f4f5f7;
+            --shadow: 0 1px 2px rgba(29, 38, 53, 0.04), 0 8px 24px rgba(29, 38, 53, 0.06);
+            --radius: 16px;
+            --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #12151a;
+                --surface: #191d24;
+                --surface-2: #20252e;
+                --text: #e5e9f0;
+                --text-muted: #9aa4b4;
+                --border: #2b313b;
+                --accent: #7ea3f7;
+                --accent-hover: #9ab7fa;
+                --accent-soft: rgba(126, 163, 247, 0.12);
+                --accent-text: #0f1626;
+                --coral: #f2957d;
+                --code-bg: #20252e;
+                --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+            }
+        }
+
+        *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--text);
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        :focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+            border-radius: 6px;
         }
 
         .container {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        main {
+            flex: 1;
             width: 100%;
-            max-width: 800px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 32px 24px 48px;
+        }
+
+        /* ---------- Buttons ---------- */
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font: inherit;
+            font-size: 0.9rem;
+            font-weight: 600;
+            line-height: 1;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+
+        .btn svg {
+            width: 18px;
+            height: 18px;
+            flex: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--accent-text);
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-muted);
+            border-color: var(--border);
+        }
+
+        .btn-ghost:hover {
+            color: var(--text);
+            background: var(--surface-2);
+        }
+
+        .btn-icon {
+            padding: 8px;
+        }
+
+        /* ---------- Top bar ---------- */
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: grid;
+            grid-template-columns: 1fr minmax(0, auto) 1fr;
+            align-items: center;
+            gap: 16px;
+            height: 60px;
+            padding: 0 24px;
+            background: color-mix(in srgb, var(--bg) 82%, transparent);
+            backdrop-filter: saturate(160%) blur(12px);
+            -webkit-backdrop-filter: saturate(160%) blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 1.05rem;
+            letter-spacing: -0.01em;
+        }
+
+        .brand-mark {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: var(--accent-soft);
+            object-fit: contain;
+            padding: 2px;
+        }
+
+        .doc-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            white-space: nowrap;
             overflow: hidden;
-            transition: all 0.3s ease;
-        }
-
-        .container.fullscreen {
-            max-width: 100%;
-            height: 100vh;
-            border-radius: 0;
-            box-shadow: none;
-        }
-
-        .header {
-            background: #2c3e50;
-            color: white;
-            padding: 20px;
+            text-overflow: ellipsis;
             text-align: center;
         }
 
-        .header h1 {
-            font-size: 2rem;
-            margin-bottom: 8px;
+        .topbar-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
         }
 
-        .header p {
-            opacity: 0.8;
+        /* Shown by app.js once a document is open. */
+        .back-button,
+        .fullscreen-button {
+            display: none;
         }
+
+        .fullscreen-button .icon-collapse,
+        .container.fullscreen .fullscreen-button .icon-expand {
+            display: none;
+        }
+
+        .container.fullscreen .fullscreen-button .icon-collapse {
+            display: block;
+        }
+
+        /* ---------- Drop zone ---------- */
 
         .drop-zone {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 400px;
-            border: 3px dashed #e1e8ed;
-            margin: 40px;
-            border-radius: 8px;
-            background: #f8f9fa;
-            transition: all 0.3s ease;
+            text-align: center;
+            min-height: min(560px, calc(100vh - 220px));
+            padding: 48px 24px;
+            background: var(--surface);
+            border: 2px dashed var(--border);
+            border-radius: 24px;
+            box-shadow: var(--shadow);
             cursor: pointer;
+            transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
         }
 
         .drop-zone:hover {
-            border-color: #667eea;
-            background: #f0f2ff;
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
         }
 
         .drop-zone.dragover {
-            border-color: #667eea;
-            background: #f0f2ff;
-            transform: scale(1.02);
+            border-color: var(--accent);
+            background: var(--accent-soft);
+            transform: scale(1.01);
         }
 
         .mascot {
-            width: 120px;
-            height: 120px;
-            margin-bottom: 20px;
+            width: 132px;
+            height: 132px;
+            margin-bottom: 24px;
             transition: transform 0.3s ease;
-        }
-
-        .drop-zone:hover .mascot {
-            transform: scale(1.1);
-        }
-
-        .drop-zone.dragover .mascot {
-            transform: scale(1.15) rotate(5deg);
-        }
-
-        .mascot {
             will-change: transform;
         }
 
+        .drop-zone:hover .mascot {
+            transform: translateY(-4px) rotate(-3deg);
+        }
+
+        .drop-zone.dragover .mascot {
+            transform: scale(1.1) rotate(4deg);
+        }
+
+        .drop-title {
+            font-size: clamp(1.6rem, 3vw, 2.1rem);
+            font-weight: 750;
+            letter-spacing: -0.025em;
+            line-height: 1.15;
+            margin-bottom: 10px;
+        }
+
         .drop-text {
-            font-size: 1.25rem;
-            color: #2c3e50;
-            margin-bottom: 8px;
-            font-weight: 600;
+            font-size: 1.05rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
         }
 
         .drop-subtext {
-            color: #6c757d;
             font-size: 0.9rem;
+            color: var(--text-muted);
+            opacity: 0.85;
         }
+
+        .upload-button {
+            margin-top: 24px;
+            padding: 12px 20px;
+            font-size: 0.95rem;
+        }
+
+        .drop-hint {
+            margin-top: 16px;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            opacity: 0.75;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* ---------- File selector ---------- */
+
+        .file-selector {
+            display: none;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .file-selector h2 {
+            font-size: 1.15rem;
+            letter-spacing: -0.01em;
+            margin-bottom: 4px;
+        }
+
+        .file-selector-hint {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 18px;
+        }
+
+        .file-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 360px;
+            overflow-y: auto;
+            margin-bottom: 18px;
+        }
+
+        .container.file-selector-active .file-list {
+            max-height: 240px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
+        }
+
+        .file-item:hover {
+            background: var(--surface-2);
+        }
+
+        .file-item.selected {
+            background: var(--accent-soft);
+            border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+        }
+
+        .file-icon {
+            display: flex;
+            color: var(--accent);
+        }
+
+        .file-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .file-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .file-path {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .selector-buttons {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        /* ---------- Rendered markdown ---------- */
 
         .markdown-content {
             display: none;
-            padding: 40px;
-            line-height: 1.6;
-            color: #2c3e50;
-            position: relative;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 56px 64px;
+            font-size: 1.0625rem;
+            line-height: 1.7;
+            overflow-wrap: break-word;
         }
 
-        .container.fullscreen .markdown-content {
-            padding: 60px;
-            height: 100vh;
-            overflow-y: auto;
+        .markdown-content > :first-child {
+            margin-top: 0;
         }
 
         .markdown-content h1,
@@ -198,79 +444,315 @@
         .markdown-content h4,
         .markdown-content h5,
         .markdown-content h6 {
-            margin-bottom: 16px;
-            margin-top: 24px;
-            color: #2c3e50;
+            line-height: 1.25;
+            letter-spacing: -0.02em;
+            margin: 1.8em 0 0.6em;
+            scroll-margin-top: 80px;
         }
 
         .markdown-content h1 {
-            border-bottom: 2px solid #e1e8ed;
-            padding-bottom: 8px;
+            font-size: 2.25rem;
+            letter-spacing: -0.03em;
+            margin-top: 0;
         }
 
-        .markdown-content p {
-            margin-bottom: 16px;
+        .markdown-content h2 {
+            font-size: 1.5rem;
+            padding-bottom: 0.35em;
+            border-bottom: 1px solid var(--border);
         }
 
-        .markdown-content code {
-            background: #f8f9fa;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        .markdown-content h3 { font-size: 1.2rem; }
+        .markdown-content h4 { font-size: 1.05rem; }
+        .markdown-content h5,
+        .markdown-content h6 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
         }
 
-        .markdown-content pre {
-            background: #f8f9fa;
-            padding: 16px;
-            border-radius: 8px;
-            overflow-x: auto;
-            margin-bottom: 16px;
-        }
-
-        .markdown-content blockquote {
-            border-left: 4px solid #667eea;
-            padding-left: 16px;
-            margin: 16px 0;
-            color: #6c757d;
+        .markdown-content p,
+        .markdown-content ul,
+        .markdown-content ol,
+        .markdown-content blockquote,
+        .markdown-content pre,
+        .markdown-content table {
+            margin-bottom: 1.1em;
         }
 
         .markdown-content ul,
         .markdown-content ol {
-            margin-bottom: 16px;
-            padding-left: 24px;
+            padding-left: 1.5em;
         }
 
-        .markdown-content li {
-            margin-bottom: 8px;
+        .markdown-content li + li {
+            margin-top: 0.3em;
+        }
+
+        .markdown-content li > ul,
+        .markdown-content li > ol {
+            margin: 0.3em 0 0;
+        }
+
+        .markdown-content li::marker {
+            color: var(--text-muted);
+        }
+
+        .markdown-content li:has(> input[type="checkbox"]) {
+            list-style: none;
+            margin-left: -1.5em;
+        }
+
+        /* marked renders task boxes disabled, which browsers grey out, so they are drawn here. */
+        .markdown-content input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            display: inline-grid;
+            place-content: center;
+            width: 1.05em;
+            height: 1.05em;
+            margin-right: 0.55em;
+            vertical-align: -0.15em;
+            border: 1.5px solid color-mix(in srgb, var(--text-muted) 70%, transparent);
+            border-radius: 5px;
+            background: var(--surface);
+        }
+
+        .markdown-content input[type="checkbox"]:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .markdown-content input[type="checkbox"]:checked::before {
+            content: "";
+            width: 0.6em;
+            height: 0.6em;
+            background: var(--accent-text);
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+
+        .markdown-content li:has(> input[type="checkbox"]:checked) {
+            color: var(--text-muted);
+        }
+
+        .markdown-content a {
+            color: var(--accent);
+            text-decoration: underline;
+            text-decoration-thickness: 1px;
+            text-underline-offset: 3px;
+            text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+        }
+
+        .markdown-content a:hover {
+            text-decoration-color: var(--accent);
+        }
+
+        .markdown-content strong {
+            font-weight: 650;
+        }
+
+        .markdown-content code {
+            font-family: var(--font-mono);
+            font-size: 0.875em;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            padding: 0.1em 0.4em;
+            border-radius: 6px;
+        }
+
+        .markdown-content pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            overflow-x: auto;
+            line-height: 1.55;
+        }
+
+        .markdown-content pre code {
+            background: none;
+            border: 0;
+            padding: 0;
+            font-size: 0.85em;
+        }
+
+        .markdown-content blockquote {
+            border-left: 3px solid var(--coral);
+            background: color-mix(in srgb, var(--coral) 7%, transparent);
+            border-radius: 0 10px 10px 0;
+            padding: 12px 18px;
+            color: var(--text-muted);
+        }
+
+        .markdown-content blockquote > :last-child {
+            margin-bottom: 0;
+        }
+
+        .markdown-content table {
+            display: block;
+            width: max-content;
+            max-width: 100%;
+            overflow-x: auto;
+            border-collapse: separate;
+            border-spacing: 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 0.95em;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .markdown-content th + th,
+        .markdown-content td + td {
+            border-left: 1px solid var(--border);
+        }
+
+        .markdown-content tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .markdown-content th {
+            background: var(--surface-2);
+            font-weight: 650;
+            text-align: left;
+        }
+
+        .markdown-content tbody tr:nth-child(even) {
+            background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+        }
+
+        .markdown-content hr {
+            border: 0;
+            height: 1px;
+            background: var(--border);
+            margin: 2.2em 0;
         }
 
         .markdown-content img {
+            display: block;
             max-width: 100%;
             height: auto;
-            max-height: 400px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            display: block;
-            margin: 16px auto;
+            max-height: 480px;
+            margin: 1.5em auto;
+            border-radius: 12px;
+            cursor: zoom-in;
+            transition: transform 0.2s ease;
         }
 
         .markdown-content img:hover {
-            transform: scale(1.02);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+            transform: scale(1.01);
         }
+
+        .render-error {
+            padding: 20px;
+            border: 1px solid color-mix(in srgb, #d14343 40%, transparent);
+            background: color-mix(in srgb, #d14343 8%, transparent);
+            border-radius: 12px;
+        }
+
+        .render-error pre {
+            margin-top: 12px;
+            white-space: pre-wrap;
+        }
+
+        /* ---------- Fullscreen: chrome steps back, the page fills the window ---------- */
+
+        .container.fullscreen main {
+            max-width: none;
+            padding: 0;
+        }
+
+        .container.fullscreen .brand {
+            visibility: hidden;
+        }
+
+        .container.fullscreen .footer {
+            display: none;
+        }
+
+        .container.fullscreen .markdown-content {
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+            min-height: calc(100vh - 60px);
+            padding: 56px max(64px, calc((100vw - 860px) / 2));
+        }
+
+        .container.fullscreen .file-selector {
+            border-radius: 0;
+            border-width: 0 0 1px;
+            box-shadow: none;
+            margin: 0;
+            padding: 28px max(64px, calc((100vw - 860px) / 2));
+        }
+
+        /* ---------- Footer ---------- */
+
+        .footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            width: 100%;
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 20px 24px 32px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .footer-credit a {
+            color: inherit;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 4px;
+        }
+
+        .footer-links a {
+            display: flex;
+            padding: 8px;
+            border-radius: 8px;
+            opacity: 0.7;
+            transition: opacity 0.15s ease, background-color 0.15s ease;
+        }
+
+        .footer-links a:hover {
+            opacity: 1;
+            background: var(--surface-2);
+        }
+
+        .footer-icon {
+            width: 18px;
+            height: 18px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .footer-icon {
+                filter: invert(1);
+            }
+        }
+
+        /* ---------- Lightbox ---------- */
 
         .lightbox {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.9);
+            inset: 0;
+            background: rgba(10, 12, 16, 0.86);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
             z-index: 2000;
-            cursor: pointer;
+            cursor: zoom-out;
         }
 
         .lightbox-content {
@@ -278,809 +760,235 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            max-width: 95%;
-            max-height: 95%;
-            border-radius: 8px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 94%;
+            max-height: 90%;
         }
 
         .lightbox-image {
-            width: 100%;
-            height: 100%;
+            display: block;
+            max-width: 94vw;
+            max-height: 86vh;
             object-fit: contain;
-            border-radius: 8px;
+            border-radius: 12px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
         }
 
         .lightbox-close {
             position: absolute;
             top: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            border: none;
+            z-index: 2001;
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            font-size: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: background 0.3s ease;
-            z-index: 2001;
+            transition: background-color 0.15s ease;
         }
 
         .lightbox-close:hover {
-            background: rgba(0, 0, 0, 0.9);
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .lightbox-close svg {
+            width: 18px;
+            height: 18px;
         }
 
         .lightbox-info {
             position: absolute;
-            bottom: 20px;
+            bottom: 24px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 0.9rem;
             max-width: 80%;
+            padding: 8px 16px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #fff;
+            font-size: 0.85rem;
             text-align: center;
             z-index: 2001;
         }
 
-        .back-button {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 25px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            display: none;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-            transition: all 0.3s ease;
+        /* ---------- Small screens ---------- */
+
+        @media (max-width: 700px) {
+            .topbar {
+                padding: 0 16px;
+                grid-template-columns: auto minmax(0, 1fr) auto;
+            }
+
+            .doc-title {
+                text-align: left;
+            }
+
+            .brand-name {
+                display: none;
+            }
+
+            .back-button-label {
+                display: none;
+            }
+
+            main {
+                padding: 16px 12px 32px;
+            }
+
+            .markdown-content {
+                padding: 28px 22px;
+                font-size: 1rem;
+            }
+
+            .markdown-content h1 {
+                font-size: 1.8rem;
+            }
+
+            .container.fullscreen .markdown-content,
+            .container.fullscreen .file-selector {
+                padding-left: 22px;
+                padding-right: 22px;
+            }
+
+            .footer {
+                justify-content: center;
+                text-align: center;
+            }
         }
 
-        .back-button:hover {
-            background: #5a67d8;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                transition: none !important;
+            }
         }
 
-        .back-button {
-            will-change: transform;
+        /* ---------- Desktop app (body.desktop is set when running in Tauri) ---------- */
+
+        body.desktop .topbar,
+        body.desktop .footer {
+            display: none !important;
         }
 
-        .fullscreen-button {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 50%;
-            font-size: 1.2rem;
-            cursor: pointer;
-            display: none;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-            transition: all 0.3s ease;
-            width: 44px;
-            height: 44px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .fullscreen-button:hover {
-            background: #5a67d8;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
-        }
-
-        .fullscreen-button {
-            will-change: transform;
-        }
-
-        .container.fullscreen .fullscreen-button {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-        }
-
-        .container.fullscreen .header {
-            display: none;
-        }
-
-        .container.fullscreen body {
+        body.desktop main {
+            max-width: none;
             padding: 0;
         }
 
-        .file-selector {
-            display: none;
-            padding: 40px;
-            background: white;
+        body.desktop .drop-zone {
+            margin: 20px;
+            min-height: calc(100vh - 40px);
+            box-shadow: none;
         }
 
-        .file-selector h2 {
-            color: #2c3e50;
-            margin-bottom: 20px;
-            text-align: center;
+        body.desktop .markdown-content,
+        body.desktop .file-selector {
+            max-width: 900px;
+            margin: 0 auto;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent;
         }
 
-        .file-list {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid #e1e8ed;
-            border-radius: 8px;
-            margin-bottom: 20px;
+        body.desktop .markdown-content {
+            padding: 40px 48px 80px;
         }
 
-        .container.fullscreen.file-selector-active .file-list {
-            max-height: 300px;
+        body.desktop .file-selector {
+            border-bottom: 1px solid var(--border);
         }
 
-        .container.fullscreen.file-selector-active .file-selector {
-            padding: 60px 60px 30px 60px;
-        }
-
-        .container.file-selector-active .file-selector {
-            border-bottom: 1px solid #e1e8ed;
-        }
-
-        .container.file-selector-active .file-list {
-            max-height: 250px;
-        }
-
-        .container.fullscreen.file-selector-active {
-            height: 100vh;
-            overflow-y: auto;
-        }
-
-        .container.fullscreen.file-selector-active .markdown-content {
-            padding: 30px 60px 60px 60px;
-            height: auto;
-            overflow-y: visible;
-        }
-
-        .file-item {
-            padding: 12px 16px;
-            border-bottom: 1px solid #e1e8ed;
-            cursor: pointer;
-            transition: background 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .file-item:hover {
-            background: #f8f9fa;
-        }
-
-        .file-item.selected {
-            background: #e3f2fd;
-            border-left: 4px solid #667eea;
-        }
-
-        .file-item:last-child {
-            border-bottom: none;
-        }
-
-        .file-icon {
-            font-size: 1.2rem;
-        }
-
-        .file-path {
-            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-            font-size: 0.9rem;
-            color: #6c757d;
-        }
-
-        .selector-buttons {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-        }
-
-        .selector-button {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background 0.3s ease;
-        }
-
-        .selector-button:hover {
-            background: #5a67d8;
-        }
-
-        .selector-button.secondary {
-            background: #6c757d;
-        }
-
-        .selector-button.secondary:hover {
-            background: #5a6268;
-        }
-
-        .footer {
-            background: #2c3e50;
-            color: white;
-            padding: 20px;
-            text-align: center;
-            font-size: 0.9rem;
-        }
-
-        .footer-links {
-            margin-top: 10px;
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-
-        .footer-links a {
-            color: #ffffff;
-            text-decoration: none;
-            transition: color 0.3s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .footer-icon {
-            width: 20px;
-            height: 20px;
-            filter: brightness(0) invert(1);
-            transition: filter 0.3s ease;
-        }
-
-        .footer-links a:hover .footer-icon {
-            filter: brightness(0) invert(1) drop-shadow(0 0 3px rgba(255, 255, 255, 0.5));
-        }
-
-        .footer-links a:hover {
-            color: rgba(255, 255, 255, 0.8);
-        }
-
-        .container.fullscreen .footer {
-            display: none;
-        }
-
-        @media (max-width: 600px) {
-            .footer-links {
-                flex-direction: column;
-                gap: 10px;
-            }
-        }
-
-        .file-input {
-            display: none;
-        }
-
-        .upload-button {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            margin-top: 16px;
-            transition: background 0.3s ease;
-        }
-
-        .upload-button:hover {
-            background: #5a67d8;
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                margin: 10px;
-            }
-            
-            .drop-zone {
-                margin: 20px;
-                min-height: 300px;
-            }
-            
-            .markdown-content {
-                padding: 20px;
-            }
-
-            .container.fullscreen .markdown-content {
-                padding: 30px;
-            }
+        body.desktop .markdown-content img {
+            max-height: 70vh;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <header class="header">
-            <h1>📝 Markydowny</h1>
-            <p>Drag and drop your markdown files to see them beautifully rendered</p>
+        <header class="topbar">
+            <div class="brand">
+                <img src="marky.png" alt="" class="brand-mark" />
+                <span class="brand-name">Markydowny</span>
+            </div>
+            <div class="doc-title" id="docTitle"></div>
+            <div class="topbar-actions">
+                <button class="btn btn-ghost back-button" id="backButton" type="button" title="Close document">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+                    <span class="back-button-label">Open another</span>
+                </button>
+                <button class="btn btn-ghost btn-icon fullscreen-button" id="fullscreenButton" type="button" title="Enter Fullscreen" aria-label="Toggle fullscreen" aria-pressed="false">
+                    <svg class="icon-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                    <svg class="icon-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+                </button>
+            </div>
         </header>
 
         <main>
-            <div class="drop-zone" id="dropZone">
-            <img src="marky.png" alt="Marky Downy" class="mascot" />
-            <div class="drop-text">Drop your markdown file or folder here</div>
-            <div class="drop-subtext">or click to browse files</div>
-            <button class="upload-button" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
-                Choose File
-            </button>
+            <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Choose a markdown file to view">
+                <img src="marky.png" alt="Marky Downy, the Markydowny mascot" class="mascot" />
+                <h1 class="drop-title">Markdown, beautifully rendered</h1>
+                <p class="drop-text">Drop a markdown file or a whole folder here</p>
+                <p class="drop-subtext">Images, tables, code and task lists just work. Your files never leave your device.</p>
+                <button class="btn btn-primary upload-button" id="uploadButton" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
+                    Choose File
+                </button>
+                <p class="drop-hint">.md · .markdown · .txt</p>
             </div>
 
-            <div class="file-selector" id="fileSelector">
-                <h2>📁 Multiple Markdown Files Found</h2>
-                <p style="text-align: center; color: #6c757d; margin-bottom: 20px;">
-                    Choose which markdown file you'd like to view:
-                </p>
+            <section class="file-selector" id="fileSelector">
+                <h2>Multiple markdown files found</h2>
+                <p class="file-selector-hint">Choose the one you'd like to read.</p>
                 <div class="file-list" id="fileList"></div>
                 <div class="selector-buttons">
-                    <button class="selector-button secondary" onclick="showDropZone()">
-                        Cancel
-                    </button>
+                    <button class="btn btn-ghost" id="cancelSelector" type="button">Cancel</button>
                 </div>
-            </div>
+            </section>
 
-            <div class="markdown-content" id="markdownContent">
-                <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                    ⛶
-                </button>
-            </div>
+            <article class="markdown-content" id="markdownContent"></article>
 
             <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
         </main>
-        
+
         <footer class="footer">
+            <div class="footer-credit">
+                Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+            </div>
             <div class="footer-links">
-                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
                     <img src="web.svg" alt="Website" class="footer-icon" />
-                    Website
                 </a>
-                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer">
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
                     <img src="discord.svg" alt="Discord" class="footer-icon" />
-                    Discord
                 </a>
-                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer">
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
                     <img src="github.svg" alt="GitHub" class="footer-icon" />
-                    GitHub
                 </a>
-                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer">
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
                     <img src="x.svg" alt="X" class="footer-icon" />
-                    X
                 </a>
             </div>
         </footer>
     </div>
-    
+
     <!-- Lightbox for image expansion -->
     <div class="lightbox" id="lightbox">
-        <button class="lightbox-close" id="lightboxClose">✕</button>
+        <button class="lightbox-close" id="lightboxClose" type="button" aria-label="Close image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
         <div class="lightbox-content">
             <img class="lightbox-image" id="lightboxImage" alt="">
         </div>
         <div class="lightbox-info" id="lightboxInfo"></div>
     </div>
-    
-    <button class="back-button" id="backButton">
-        ← Back to Drop Zone
-    </button>
 
-    <script>
-        const dropZone = document.getElementById('dropZone');
-        const markdownContent = document.getElementById('markdownContent');
-        const backButton = document.getElementById('backButton');
-        const fileInput = document.getElementById('fileInput');
-        const fullscreenButton = document.getElementById('fullscreenButton');
-        const container = document.querySelector('.container');
-        const fileSelector = document.getElementById('fileSelector');
-        const fileList = document.getElementById('fileList');
-        const lightbox = document.getElementById('lightbox');
-        const lightboxImage = document.getElementById('lightboxImage');
-        const lightboxClose = document.getElementById('lightboxClose');
-        const lightboxInfo = document.getElementById('lightboxInfo');
-        
-        // Store folder contents for image resolution
-        let folderFiles = new Map();
-        let currentFolderPath = '';
-
-        // Prevent default drag behaviors
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, preventDefaults, false);
-            document.body.addEventListener(eventName, preventDefaults, false);
-        });
-
-        // Highlight drop area when item is dragged over it
-        ['dragenter', 'dragover'].forEach(eventName => {
-            dropZone.addEventListener(eventName, highlight, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, unhighlight, false);
-        });
-
-        // Handle dropped files
-        dropZone.addEventListener('drop', handleDrop, false);
-        
-        // Handle file input change
-        fileInput.addEventListener('change', handleFileSelect, false);
-        
-        // Handle click on drop zone
-        dropZone.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        // Back button functionality
-        backButton.addEventListener('click', showDropZone);
-
-        // Fullscreen button functionality
-        fullscreenButton.addEventListener('click', toggleFullscreen);
-
-        // Lightbox functionality
-        lightboxClose.addEventListener('click', closeLightbox);
-        lightbox.addEventListener('click', (e) => {
-            if (e.target === lightbox) {
-                closeLightbox();
-            }
-        });
-
-        // Close lightbox with Escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && lightbox.style.display === 'block') {
-                closeLightbox();
-            }
-        });
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
-        function highlight(e) {
-            dropZone.classList.add('dragover');
-        }
-
-        function unhighlight(e) {
-            dropZone.classList.remove('dragover');
-        }
-
-        function handleDrop(e) {
-            const dt = e.dataTransfer;
-            const items = dt.items;
-            
-            // Check if we have items (for folder support)
-            if (items && items.length > 0) {
-                const item = items[0];
-                
-                // Check if it's a folder
-                if (item.webkitGetAsEntry) {
-                    const entry = item.webkitGetAsEntry();
-                    if (entry.isDirectory) {
-                        handleFolder(entry);
-                        return;
-                    }
-                }
-            }
-            
-            // Fallback to regular file handling
-            const files = dt.files;
-            handleFiles(files);
-        }
-
-        function handleFileSelect(e) {
-            const files = e.target.files;
-            handleFiles(files);
-        }
-
-        function handleFiles(files) {
-            if (files.length > 0) {
-                const file = files[0];
-                
-                // Check if it's a text file (markdown, txt, etc.)
-                if (file.type === 'text/markdown' || 
-                    file.type === 'text/plain' || 
-                    file.name.endsWith('.md') || 
-                    file.name.endsWith('.markdown') ||
-                    file.type === '' || // Some systems don't set MIME type for .md files
-                    file.type.startsWith('text/')) {
-                    
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const markdownText = e.target.result;
-                        renderMarkdown(markdownText);
-                    };
-                    reader.readAsText(file);
-                } else {
-                    alert('Please select a markdown (.md) or text file.');
-                }
-            }
-        }
-
-        function renderMarkdown(markdownText) {
-            try {
-                const html = marked.parse(markdownText);
-                markdownContent.innerHTML = `
-                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                        ⛶
-                    </button>
-                    ${html}
-                `;
-                // Re-attach event listener to the new button
-                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
-                
-                // Add click handlers to all images for lightbox
-                setupImageLightbox();
-                
-                showMarkdownContent();
-            } catch (error) {
-                console.error('Error parsing markdown:', error);
-                markdownContent.innerHTML = `
-                    <button class="fullscreen-button" id="fullscreenButton" title="Toggle Fullscreen">
-                        ⛶
-                    </button>
-                    <div style="padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24;">
-                        <h3>Error parsing markdown</h3>
-                        <p>There was an error parsing the markdown file. Here's the raw content:</p>
-                        <pre style="background: white; padding: 10px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap;">${markdownText}</pre>
-                    </div>
-                `;
-                // Re-attach event listener to the new button
-                document.getElementById('fullscreenButton').addEventListener('click', toggleFullscreen);
-                showMarkdownContent();
-            }
-        }
-
-        function showMarkdownContent() {
-            dropZone.style.display = 'none';
-            // Keep file selector visible if we came from file selection
-            if (container.classList.contains('file-selector-active')) {
-                // Don't hide file selector, show content below it
-                markdownContent.style.display = 'block';
-            } else {
-                // Single file case - hide file selector
-                fileSelector.style.display = 'none';
-                container.classList.remove('file-selector-active');
-                markdownContent.style.display = 'block';
-            }
-            backButton.style.display = 'block';
-            fullscreenButton.style.display = 'flex';
-        }
-
-        function showDropZone() {
-            dropZone.style.display = 'flex';
-            markdownContent.style.display = 'none';
-            fileSelector.style.display = 'none';
-            container.classList.remove('file-selector-active');
-            backButton.style.display = 'none';
-            fullscreenButton.style.display = 'none';
-            
-            // Exit fullscreen if active
-            if (container.classList.contains('fullscreen')) {
-                container.classList.remove('fullscreen');
-                document.body.style.padding = '20px';
-                // Reset container display
-                container.style.display = '';
-            }
-            
-            // Clear folder data
-            folderFiles.clear();
-            currentFolderPath = '';
-            
-            // Reset file input
-            fileInput.value = '';
-        }
-
-        function toggleFullscreen() {
-            const isFullscreen = container.classList.contains('fullscreen');
-            
-            if (isFullscreen) {
-                // Exit fullscreen
-                container.classList.remove('fullscreen');
-                document.body.style.padding = '20px';
-                fullscreenButton.innerHTML = '⛶';
-                fullscreenButton.title = 'Enter Fullscreen';
-            } else {
-                // Enter fullscreen
-                container.classList.add('fullscreen');
-                document.body.style.padding = '0';
-                fullscreenButton.innerHTML = '✕';
-                fullscreenButton.title = 'Exit Fullscreen';
-            }
-        }
-
-        async function handleFolder(folderEntry) {
-            try {
-                currentFolderPath = folderEntry.name;
-                folderFiles.clear();
-                
-                // Recursively read all files from the folder
-                await readFolderRecursively(folderEntry, '');
-                
-                // Find all markdown files
-                const markdownFiles = Array.from(folderFiles.entries())
-                    .filter(([path, file]) => 
-                        path.toLowerCase().endsWith('.md') || 
-                        path.toLowerCase().endsWith('.markdown')
-                    );
-                
-                if (markdownFiles.length === 0) {
-                    alert('No markdown files found in this folder. Please select a folder containing .md or .markdown files.');
-                    return;
-                }
-                
-                if (markdownFiles.length === 1) {
-                    // Only one markdown file, load it directly
-                    const [path, file] = markdownFiles[0];
-                    loadMarkdownFile(file, path);
-                } else {
-                    // Multiple markdown files, show selector
-                    showFileSelector(markdownFiles);
-                }
-                
-            } catch (error) {
-                console.error('Error reading folder:', error);
-                alert('Error reading folder contents. Please try again.');
-            }
-        }
-
-        async function readFolderRecursively(entry, path) {
-            if (entry.isFile) {
-                // It's a file, read it
-                const file = await new Promise((resolve, reject) => {
-                    entry.file(resolve, reject);
-                });
-                folderFiles.set(path + entry.name, file);
-            } else if (entry.isDirectory) {
-                // It's a directory, read its contents
-                const reader = entry.createReader();
-                const entries = await new Promise((resolve, reject) => {
-                    reader.readEntries(resolve, reject);
-                });
-                
-                for (const childEntry of entries) {
-                    await readFolderRecursively(childEntry, path + entry.name + '/');
-                }
-            }
-        }
-
-        function showFileSelector(markdownFiles) {
-            // Hide drop zone and show file selector
-            dropZone.style.display = 'none';
-            fileSelector.style.display = 'block';
-            container.classList.add('file-selector-active');
-            
-            // Clear previous file list
-            fileList.innerHTML = '';
-            
-            // Add each markdown file to the list
-            markdownFiles.forEach(([path, file]) => {
-                const fileItem = document.createElement('div');
-                fileItem.className = 'file-item';
-                fileItem.innerHTML = `
-                    <span class="file-icon">📄</span>
-                    <div>
-                        <div>${file.name}</div>
-                        <div class="file-path">${path}</div>
-                    </div>
-                `;
-                
-                fileItem.addEventListener('click', () => {
-                    // Add visual feedback for selected file
-                    document.querySelectorAll('.file-item').forEach(item => {
-                        item.classList.remove('selected');
-                    });
-                    fileItem.classList.add('selected');
-                    
-                    loadMarkdownFile(file, path);
-                });
-                
-                fileList.appendChild(fileItem);
-            });
-        }
-
-        async function loadMarkdownFile(file, filePath) {
-            try {
-                const text = await file.text();
-                
-                // Process the markdown to handle image references
-                const processedMarkdown = await processMarkdownImages(text, filePath);
-                
-                renderMarkdown(processedMarkdown);
-            } catch (error) {
-                console.error('Error loading markdown file:', error);
-                alert('Error loading the markdown file. Please try again.');
-            }
-        }
-
-        async function processMarkdownImages(markdownText, markdownPath) {
-            // Get the directory of the markdown file
-            const markdownDir = markdownPath.substring(0, markdownPath.lastIndexOf('/') + 1);
-            
-            // Regular expression to find image references
-            const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-            
-            let processedText = markdownText;
-            const matches = [...markdownText.matchAll(imageRegex)];
-            
-            for (const match of matches) {
-                const [fullMatch, altText, imagePath] = match;
-                
-                // Skip if it's already a URL
-                if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
-                    continue;
-                }
-                
-                // Resolve the image path relative to the markdown file
-                let resolvedPath = imagePath;
-                if (imagePath.startsWith('./')) {
-                    resolvedPath = markdownDir + imagePath.substring(2);
-                } else if (imagePath.startsWith('../')) {
-                    // Handle relative paths going up directories
-                    const parts = markdownDir.split('/').filter(p => p);
-                    const imageParts = imagePath.split('/');
-                    
-                    let upCount = 0;
-                    for (const part of imageParts) {
-                        if (part === '..') {
-                            upCount++;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    const remainingParts = imageParts.slice(upCount);
-                    const baseParts = parts.slice(0, -upCount);
-                    resolvedPath = baseParts.concat(remainingParts).join('/');
-                } else if (!imagePath.startsWith('/')) {
-                    resolvedPath = markdownDir + imagePath;
-                }
-                
-                // Find the image file in our folder files
-                const imageFile = folderFiles.get(resolvedPath);
-                if (imageFile) {
-                    // Create a blob URL for the image
-                    const blobUrl = URL.createObjectURL(imageFile);
-                    const newImageRef = `![${altText}](${blobUrl})`;
-                    processedText = processedText.replace(fullMatch, newImageRef);
-                }
-            }
-            
-            return processedText;
-        }
-
-        function setupImageLightbox() {
-            const images = markdownContent.querySelectorAll('img');
-            images.forEach(img => {
-                img.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    openLightbox(img.src, img.alt || 'Image');
-                });
-            });
-        }
-
-        function openLightbox(imageSrc, imageAlt) {
-            lightboxImage.src = imageSrc;
-            lightboxImage.alt = imageAlt;
-            lightboxInfo.textContent = imageAlt || 'Click anywhere to close';
-            lightbox.style.display = 'block';
-            document.body.style.overflow = 'hidden'; // Prevent background scrolling
-        }
-
-        function closeLightbox() {
-            lightbox.style.display = 'none';
-            document.body.style.overflow = ''; // Restore scrolling
-            lightboxImage.src = '';
-        }
-    </script>
+    <script src="js/vendor/marked.umd.js"></script>
+    <script src="js/core.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html> 
