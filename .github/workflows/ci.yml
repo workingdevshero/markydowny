@@ -23,7 +23,7 @@ jobs:
     # The app is macOS-only (Crashpad's prebuilt needs macOS 12+).
     runs-on: macos-latest
     # A cold build takes a while; a hung one should fail long before GitHub's 6-hour limit.
-    timeout-minutes: 40
+    timeout-minutes: 60
     # The first run's runner died mid-build ("lost communication": CPU or memory starvation).
     # No debug info and no incremental artifacts keep linking light, and two jobs leave headroom
     # on the 3-core, 7 GB runner.
