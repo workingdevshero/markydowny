@@ -22,6 +22,15 @@ jobs:
   desktop:
     # The app is macOS-only (Crashpad's prebuilt needs macOS 12+).
     runs-on: macos-latest
+    # A cold build takes a while; a hung one should fail long before GitHub's 6-hour limit.
+    timeout-minutes: 40
+    # The first run's runner died mid-build ("lost communication": CPU or memory starvation).
+    # No debug info and no incremental artifacts keep linking light, and two jobs leave headroom
+    # on the 3-core, 7 GB runner.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
