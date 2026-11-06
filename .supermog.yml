@@ -1,0 +1,13 @@
+# supermog config — schema documented in workingdevshero/supermog (README, Verification).
+#
+# The website is a static page at the repository root (GitHub Pages serves main from /), so
+# verification serves the checkout over HTTP and drives it in a real browser. The macOS app can't
+# run on the fleet's Linux boxes; its Rust is covered by CI (.github/workflows/ci.yml), which is
+# supermog's check gate.
+verify:
+  # In a dot-directory so GitHub Pages' Jekyll build doesn't publish it as a page.
+  notes: .supermog/VERIFY.md
+  # Only what the browser renders. The desktop app (src-tauri/**), tests and build scripts never
+  # change the website, so a PR touching only those isn't verified in a browser.
+  paths: ["index.html", "js/**", "*.svg", "*.png", "favicon.ico"]
+  evidence: both
