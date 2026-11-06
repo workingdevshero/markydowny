@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The tests need nothing from node_modules: marked is checked in under js/vendor/.
+      - run: node --test tests/*.test.js
+
+  desktop:
+    # The app is macOS-only (Crashpad's prebuilt needs macOS 12+).
+    runs-on: macos-latest
+    # A cold build takes a while; a hung one should fail long before GitHub's 6-hour limit.
+    timeout-minutes: 60
+    # The first run's runner died mid-build ("lost communication": CPU or memory starvation).
+    # No debug info and no incremental artifacts keep linking light, and two jobs leave headroom
+    # on the 3-core, 7 GB runner.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            src-tauri/target
+            .crashpad-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      # tauri::generate_context! embeds dist/ at compile time, so it has to exist first.
+      - run: node scripts/build-frontend.mjs
+      # Built without BUGSPLAT_DATABASE, so this build has crash reporting turned off.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+        env:
+          BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
