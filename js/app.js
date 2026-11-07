@@ -28,12 +28,45 @@
     const lightboxImage = $('lightboxImage');
     const lightboxClose = $('lightboxClose');
     const lightboxInfo = $('lightboxInfo');
+    const liveNotice = $('liveNotice');
+    const followButton = $('followButton');
+    const followLabel = $('followLabel');
+    const liveStatus = $('liveStatus');
+    const watchFolderButton = $('watchFolderButton');
+
+    const BLOCK_MARK = 'markydowny-block:';
+    const FOLLOW_KEY = 'markydowny.follow';
+    const HIGHLIGHT_FADE_MS = 2400;
+    const HIGHLIGHT_STATIC_MS = 4000;
+    const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
     let blobUrls = [];
-    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title }
+    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title, path?, markdown }
     let currentSource = null;
+    // Bumped by every render, so a slow render can't overwrite a newer one.
+    let renderSeq = 0;
+    // While a reload's images load, keep re-applying its scroll anchor (until the reader scrolls).
+    let anchorHold = null;
+    // The blocks on screen: { blocks: [{ raw, nodes }], linksKey }.
+    let rendered = null;
+    // Headings whose id we generated (as opposed to ids in the markdown's own HTML).
+    const autoHeadingIds = new WeakSet();
+    const highlightTimers = new Map();
+    // Live mode: the document on screen is watched (desktop, or a file handle on the web).
+    let isLive = false;
+    let follow = { mode: loadFollowPreference() ? 'following' : 'off', target: null };
+    let updatedAt = null;
+    let updatedTimer = null;
+    // Desktop: the folder behind the file list, { root, name, following }. While following,
+    // the window shows whichever markdown file in it changed last.
+    let desktopFolder = null;
+    // Web: live reload through the File System Access API, where the browser has it
+    // (Chromium). Elsewhere every flag is false and nothing below is wired.
+    const webWatch = isDesktop ? core.fileWatchSupport(null) : core.fileWatchSupport(window);
+    // The handle being watched: { handle, poller, observer }.
+    let webWatched = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -71,10 +104,23 @@
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && lightbox.style.display === 'block') closeLightbox();
     });
+    followButton.addEventListener('click', toggleFollow);
+    watchFolderButton.addEventListener('click', toggleWatchFolder);
+    ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(type => {
+        window.addEventListener(type, onUserInput, { passive: true });
+    });
+    renderFollowButton();
 
     if (isDesktop) {
         initDesktop().catch(err => console.error('Desktop init failed:', err));
     }
+    document.addEventListener('visibilitychange', () => {
+        if (webWatched) webWatched.poller.setVisible(!document.hidden);
+    });
+
+    // For tests and verification: open a FileSystemFileHandle (e.g. one from the Origin Private
+    // File System) as if it had been picked.
+    window.MarkyApp = Object.freeze({ openFileHandle });
 
     function preventDefaults(e) {
         e.preventDefault();
@@ -92,6 +138,8 @@
     function chooseFile() {
         if (isDesktop) {
             invoke('show_open_dialog').catch(console.error);
+        } else if (webWatch.picker) {
+            pickFileHandle();
         } else {
             fileInput.click();
         }
@@ -106,6 +154,10 @@
 
         // Finder / Dock / File > Open… route documents to a window and ping it.
         await tauri.event.listen('document-pending', loadPendingDocument);
+
+        // Live reload: the window's watch reports changes to the document it shows.
+        await tauri.event.listen('document-changed', (event) => onDocumentChanged(event.payload));
+        await tauri.event.listen('document-missing', (event) => onDocumentMissing(event.payload));
 
         // Native drag & drop gives real file paths (HTML5 drops don't in the app).
         await tauri.webview.getCurrentWebview().onDragDropEvent((event) => {
@@ -125,11 +177,22 @@
 
     async function loadPendingDocument() {
         try {
-            const doc = await invoke('take_pending_document');
-            if (doc) {
-                closeFileSelector();
-                await showDesktopDocument(doc);
+            const pending = await invoke('take_pending_document');
+            if (!pending) return;
+            if (pending.folder) {
+                // A folder opened from Finder or `open -a`: offer its files, and watching it.
+                await handleDesktopDrop([pending.folder]);
+                return;
             }
+            if (isFollowingFolder() && isInFolder(pending.path)) {
+                // Opened from inside the folder this window follows: switch to it, keep following.
+                await showFolderFile(pending, null);
+                return;
+            }
+            closeFileSelector();
+            desktopFolder = null;
+            renderWatchFolderButton();
+            await showDesktopDocument(pending);
         } catch (err) {
             showDropZone();
             alert(String(err));
@@ -145,17 +208,26 @@
         }
         if (entries.length === 1) {
             closeFileSelector();
+            desktopFolder = null;
+            renderWatchFolderButton();
             await loadDesktopPath(entries[0].path);
             return;
         }
+        // One dropped item with several files in it is a folder, which can be watched.
+        const root = paths.length === 1 ? paths[0].replace(/\/+$/, '') : null;
+        desktopFolder = root ? { root, name: core.basename(root), following: false } : null;
         showFileSelector(entries.map(entry => ({
             name: core.basename(entry.path),
             display: entry.display,
+            path: entry.path,
             load: () => loadDesktopPath(entry.path),
         })));
     }
 
+    /** Shows a file picked by hand. In a watched folder this pins it: the window stops switching. */
     async function loadDesktopPath(path) {
+        if (desktopFolder) desktopFolder.following = false;
+        renderWatchFolderButton();
         try {
             await showDesktopDocument(await invoke('read_document', { path }));
         } catch (err) {
@@ -165,7 +237,140 @@
 
     async function showDesktopDocument(doc) {
         folderFiles.clear();
-        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name });
+        const title = desktopFolder ? folderTitle(doc) : doc.name;
+        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title, path: doc.path });
+        setLive(true);
+        selectFileInList(doc.path);
+        await watchDesktopDocument(doc.path);
+    }
+
+    /** Starts live reload for the document on screen, catching up if it changed meanwhile. */
+    async function watchDesktopDocument(path) {
+        try {
+            const now = await invoke('watch_document', { path });
+            if (!isShowingPath(path)) return;
+            if (now) {
+                onDocumentChanged(now);
+            } else {
+                showMissingNotice();
+            }
+        } catch (err) {
+            console.error('Live reload unavailable:', err);
+        }
+    }
+
+    function isShowingPath(path) {
+        return Boolean(currentSource && currentSource.kind === 'desktop' && currentSource.path === path);
+    }
+
+    /**
+     * A watched document changed. In a followed folder, a change to another file switches to
+     * it (highlighting its edit against the content it had before).
+     */
+    function onDocumentChanged(doc) {
+        if (!currentSource || currentSource.kind !== 'desktop') return;
+        if (doc.path !== currentSource.path) {
+            if (isFollowingFolder() && isInFolder(doc.path)) {
+                showFolderFile(doc, typeof doc.previous === 'string' ? doc.previous : '');
+            }
+            return;
+        }
+        hideMissingNotice();
+        if (doc.content === currentSource.markdown) {
+            // Already showing this content, but switched to without knowing what changed
+            // (opened while following): the watch's report still has the edit to highlight.
+            if (currentSource.unhighlighted && typeof doc.previous === 'string' && doc.previous !== doc.content) {
+                renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true, previous: doc.previous });
+            }
+            return;
+        }
+        renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true });
+    }
+
+    function onDocumentMissing(payload) {
+        if (isShowingPath(payload.path)) showMissingNotice();
+    }
+
+    // ------------------------------------------------------------------
+    // Desktop: following a folder
+    // ------------------------------------------------------------------
+
+    function isFollowingFolder() {
+        return Boolean(desktopFolder && desktopFolder.following);
+    }
+
+    function isInFolder(path) {
+        return Boolean(desktopFolder && path && path.startsWith(desktopFolder.root + '/'));
+    }
+
+    function folderTitle(doc) {
+        return `${desktopFolder.name} › ${doc.name}`;
+    }
+
+    /** Watch this folder (follow whichever file changes), or stop and stay on the current file. */
+    async function toggleWatchFolder() {
+        if (!desktopFolder) return;
+        if (desktopFolder.following) {
+            desktopFolder.following = false;
+            renderWatchFolderButton();
+            if (currentSource && currentSource.path) await watchDesktopDocument(currentSource.path);
+            return;
+        }
+        try {
+            const result = await invoke('watch_folder', { path: desktopFolder.root });
+            desktopFolder = { root: result.root, name: result.name, following: true };
+            renderWatchFolderButton();
+            if (result.document) {
+                await showFolderFile(result.document, null, { fresh: true });
+            }
+        } catch (err) {
+            alert(String(err));
+        }
+    }
+
+    /**
+     * Shows a file of the followed folder. `previous` is its earlier content (to highlight the
+     * edit), or null when unknown; `fresh` starts it as a new document.
+     */
+    async function showFolderFile(doc, previous, { fresh = false } = {}) {
+        // Already on screen as it is (the watch got there first): keep its highlight.
+        if (!fresh && isShowingPath(doc.path) && doc.content === currentSource.markdown) return;
+        folderFiles.clear();
+        const source = {
+            kind: 'desktop',
+            dir: doc.dir,
+            title: folderTitle(doc),
+            path: doc.path,
+            unhighlighted: previous === null,
+        };
+        if (fresh || !rendered || currentSource === null) {
+            await renderMarkdown(doc.content, source);
+            setLive(true);
+        } else {
+            await renderMarkdown(doc.content, source, {
+                reload: true,
+                previous: previous === null ? doc.content : previous,
+            });
+        }
+        selectFileInList(doc.path);
+    }
+
+    function renderWatchFolderButton() {
+        const show = Boolean(isDesktop && desktopFolder);
+        watchFolderButton.hidden = !show;
+        if (!show) return;
+        const on = desktopFolder.following;
+        watchFolderButton.setAttribute('aria-pressed', String(on));
+        watchFolderButton.textContent = on ? 'Watching folder' : 'Watch this folder';
+        watchFolderButton.title = on
+            ? 'Showing whichever markdown file changes. Click to stay on this file.'
+            : 'Show whichever markdown file in this folder changes next';
+    }
+
+    function selectFileInList(path) {
+        for (const item of fileList.querySelectorAll('.file-item')) {
+            item.classList.toggle('selected', item.dataset.path === path);
+        }
     }
 
     function setDocumentOpen(open, title) {
@@ -179,14 +384,29 @@
 
     function handleDrop(e) {
         const items = e.dataTransfer.items;
-        if (items && items.length > 0 && items[0].webkitGetAsEntry) {
-            const entry = items[0].webkitGetAsEntry();
+        const files = Array.from(e.dataTransfer.files || []);
+        // Everything from the DataTransfer has to be taken now: it's emptied once this
+        // handler returns, so the handle is requested before any await.
+        const item = items && items.length > 0 ? items[0] : null;
+        const handlePromise = item && item.kind === 'file' && webWatch.dropHandles
+            ? item.getAsFileSystemHandle()
+            : null;
+        if (item && item.webkitGetAsEntry) {
+            const entry = item.webkitGetAsEntry();
             if (entry && entry.isDirectory) {
+                // Folders are read once, as before.
                 handleFolder(entry);
                 return;
             }
         }
-        handleFiles(e.dataTransfer.files);
+        if (handlePromise) {
+            handlePromise.then(
+                handle => (handle && handle.kind === 'file' ? openFileHandle(handle) : handleFiles(files)),
+                () => handleFiles(files)
+            );
+            return;
+        }
+        handleFiles(files);
     }
 
     function handleFiles(files) {
@@ -196,6 +416,7 @@
             alert('Please select a markdown (.md) or text file.');
             return;
         }
+        stopWebWatch();
         folderFiles.clear();
         file.text().then(
             text => renderMarkdown(text, { kind: 'file', dir: '', title: file.name }),
@@ -205,6 +426,7 @@
 
     async function handleFolder(folderEntry) {
         try {
+            stopWebWatch();
             folderFiles.clear();
             await readFolderRecursively(folderEntry, '');
 
@@ -229,6 +451,115 @@
             console.error('Error reading folder:', error);
             alert('Error reading folder contents. Please try again.');
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Web: files opened through a handle, reloaded when they change
+    // ------------------------------------------------------------------
+
+    const PICKER_TYPES = [{
+        description: 'Markdown or text',
+        accept: { 'text/markdown': core.MARKDOWN_EXTENSIONS, 'text/plain': ['.txt'] },
+    }];
+
+    async function pickFileHandle() {
+        let handles;
+        try {
+            handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: false });
+        } catch (err) {
+            if (err && err.name === 'AbortError') return; // the picker was cancelled
+            console.error('File picker unavailable, using the file input:', err);
+            fileInput.click();
+            return;
+        }
+        if (handles && handles[0]) await openFileHandle(handles[0]);
+    }
+
+    /** Shows the file behind a FileSystemFileHandle and reloads it when it changes. */
+    async function openFileHandle(handle) {
+        let file;
+        try {
+            file = await handle.getFile();
+        } catch (err) {
+            console.error('Error opening file:', err);
+            alert('Error loading the markdown file. Please try again.');
+            return;
+        }
+        if (!core.isTextFile(file)) {
+            alert('Please select a markdown (.md) or text file.');
+            return;
+        }
+        stopWebWatch();
+        folderFiles.clear();
+        let text;
+        try {
+            text = await file.text();
+        } catch (_) {
+            alert('Error loading the markdown file. Please try again.');
+            return;
+        }
+        const source = { kind: 'file', dir: '', title: file.name };
+        await renderMarkdown(text, source);
+        if (currentSource !== source || isDesktop) return;
+        startWebWatch(handle, file, webWatch.observer);
+    }
+
+    /** Watches a handle: with FileSystemObserver when `observe`, otherwise by polling. */
+    function startWebWatch(handle, file, observe) {
+        const watched = { handle, poller: null, observer: null };
+        const isCurrent = () => webWatched === watched && currentSource && currentSource.kind === 'file';
+        watched.poller = core.createFilePoller({
+            getFile: () => handle.getFile(),
+            observe,
+            onChange: async (changed) => {
+                if (!isCurrent()) return;
+                hideMissingNotice();
+                let text;
+                try {
+                    text = await changed.text();
+                } catch (_) {
+                    return;
+                }
+                if (!isCurrent() || text === currentSource.markdown) return;
+                renderMarkdown(text, { ...currentSource }, { reload: true });
+            },
+            onUnavailable: () => {
+                if (isCurrent()) showMissingNotice();
+            },
+        });
+        webWatched = watched;
+        setLive(true);
+        watched.poller.start(file);
+        watched.poller.setVisible(!document.hidden);
+        if (observe) {
+            try {
+                watched.observer = new window.FileSystemObserver(() => watched.poller.check());
+                Promise.resolve(watched.observer.observe(handle)).catch(() => pollInstead(watched));
+            } catch (_) {
+                pollInstead(watched);
+            }
+        }
+    }
+
+    /** The observer can't watch this handle: poll it instead. */
+    function pollInstead(watched) {
+        if (webWatched !== watched) return;
+        watched.poller.stop();
+        if (watched.observer) watched.observer.disconnect();
+        webWatched = null;
+        watched.handle.getFile().then(file => {
+            if (!webWatched && currentSource && currentSource.kind === 'file') {
+                startWebWatch(watched.handle, file, false);
+            }
+        }, () => {});
+    }
+
+    function stopWebWatch() {
+        if (!webWatched) return;
+        webWatched.poller.stop();
+        if (webWatched.observer) webWatched.observer.disconnect();
+        webWatched = null;
+        if (!isDesktop) setLive(false);
     }
 
     async function readFolderRecursively(entry, path) {
@@ -273,28 +604,174 @@
     // Rendering
     // ------------------------------------------------------------------
 
-    async function renderMarkdown(markdownText, source) {
+    /**
+     * Renders markdown into the content area. A new document starts at the top. A reload
+     * (same document, new content) keeps the reader's position, replaces only the blocks that
+     * changed, highlights them, and follows them in Follow mode.
+     *
+     * options.reload: same document, new content.
+     * options.previous: for a reload that switches to another file (a watched folder), that
+     *   file's earlier content, so its changes can still be highlighted.
+     */
+    async function renderMarkdown(markdownText, source, { reload = false, previous = null } = {}) {
+        const seq = ++renderSeq;
         currentSource = source;
-        revokeBlobUrls();
+        if (!reload) revokeBlobUrls();
 
-        let nodes;
+        let built;
         try {
-            const html = marked.parse(markdownText);
-            // Parse into an inert document so images aren't fetched before
-            // their paths are resolved.
-            const parsed = new DOMParser().parseFromString(html, 'text/html');
-            addHeadingIds(parsed);
-            await resolveImages(parsed, source);
-            nodes = Array.from(parsed.body.childNodes);
+            built = buildBlocks(markdownText);
+            await resolveImages(built.doc, source);
         } catch (error) {
             console.error('Error parsing markdown:', error);
-            nodes = [renderError(markdownText)];
+            built = { blocks: [{ raw: markdownText, nodes: [renderError(markdownText)] }], linksKey: '' };
         }
 
-        markdownContent.replaceChildren(...nodes);
-        showMarkdownContent(source.title);
-        markdownContent.scrollTop = 0;
-        window.scrollTo(0, 0);
+        if (seq !== renderSeq) return;
+        source.markdown = markdownText;
+
+        if (!reload || !rendered) {
+            commitBlocks(built, null);
+            anchorHold = null;
+            dispatchFollow({ type: 'reset' });
+            // "Updated ..." describes this document's reloads, which haven't happened yet.
+            updatedAt = null;
+            liveStatus.hidden = true;
+            showMarkdownContent(source.title);
+            markdownContent.scrollTop = 0;
+            window.scrollTo(0, 0);
+            return;
+        }
+
+        let oldRaws = rendered.blocks.map(block => block.raw);
+        let reuse = built.linksKey === rendered.linksKey;
+        if (previous !== null) {
+            // Another file: nothing on screen can be reused, but its own edit is still shown.
+            try {
+                oldRaws = buildBlocks(previous).blocks.map(block => block.raw);
+            } catch (_) {
+                oldRaws = [];
+            }
+            reuse = false;
+        }
+        const diff = core.changedBlocks(oldRaws, built.blocks.map(block => block.raw));
+        const switching = previous !== null;
+        const anchor = switching ? null : captureAnchor();
+
+        commitBlocks(built, reuse ? diff : null);
+        if (switching) showMarkdownContent(source.title);
+        if (anchor) {
+            restoreAnchor({ ...anchor, index: core.mapBlockIndex(anchor.index, diff) });
+        } else {
+            window.scrollTo(0, 0);
+        }
+        highlightChanges(diff);
+        markUpdated();
+
+        const target = core.changeTarget(diff, rendered.blocks.length);
+        const scrolled = dispatchFollow({ type: 'reload', target, visible: isBlockVisible(target) });
+        if (scrolled || !anchor) {
+            anchorHold = null;
+        } else {
+            keepAnchor({ ...anchor, index: core.mapBlockIndex(anchor.index, diff) });
+        }
+    }
+
+    /**
+     * Parses markdown into top-level blocks: [{ raw, nodes }]. Each block is one top-level
+     * token, or several when raw HTML spans them (e.g. a <details> around paragraphs). The
+     * markup is identical to marked.parse(): the tokens are rendered with a marker comment
+     * before each, parsed as one document (so HTML nests exactly as before), grouped by the
+     * markers, and the markers removed.
+     */
+    function buildBlocks(markdownText) {
+        const tokens = marked.lexer(markdownText);
+        const kept = tokens.filter(token => token.type !== 'space');
+        let html = '';
+        kept.forEach((token, index) => {
+            const one = [token];
+            one.links = tokens.links;
+            html += `<!--${BLOCK_MARK}${index}-->` + marked.parser(one);
+        });
+        // An inert document, so images aren't fetched before their paths are resolved.
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const groups = [];
+        let group = null;
+        for (const node of Array.from(doc.body.childNodes)) {
+            const mark = blockMark(node);
+            if (mark !== null) {
+                node.remove();
+                if (!group || mark > group.last) {
+                    group = { first: mark, last: mark, nodes: [] };
+                    groups.push(group);
+                }
+                continue;
+            }
+            if (!group) {
+                group = { first: 0, last: 0, nodes: [] };
+                groups.push(group);
+            }
+            group.nodes.push(node);
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                // Markers nested in this element: it spans those tokens too.
+                const walker = doc.createTreeWalker(node, NodeFilter.SHOW_COMMENT);
+                const nested = [];
+                while (walker.nextNode()) nested.push(walker.currentNode);
+                for (const comment of nested) {
+                    const inner = blockMark(comment);
+                    if (inner === null) continue;
+                    group.last = Math.max(group.last, inner);
+                    comment.remove();
+                }
+            }
+        }
+
+        const blocks = groups.map(g => ({
+            raw: kept.slice(g.first, g.last + 1).map(token => token.raw).join('').trimEnd(),
+            nodes: g.nodes,
+        }));
+        return { blocks, doc, linksKey: JSON.stringify(tokens.links || {}) };
+    }
+
+    function blockMark(node) {
+        if (node.nodeType !== Node.COMMENT_NODE || !node.data.startsWith(BLOCK_MARK)) return null;
+        const index = Number(node.data.slice(BLOCK_MARK.length));
+        return Number.isInteger(index) ? index : null;
+    }
+
+    /**
+     * Puts built blocks on screen. With a diff, the unchanged blocks before and after the
+     * change keep their existing elements (so their images don't reload or resize) and only
+     * the changed ones are swapped in.
+     */
+    function commitBlocks(built, diff) {
+        let blocks;
+        if (diff && rendered) {
+            const old = rendered.blocks;
+            for (const block of old.slice(diff.start, diff.oldEnd)) {
+                block.nodes.forEach(node => node.remove());
+            }
+            const fresh = built.blocks.slice(diff.start, diff.end);
+            const after = old.slice(diff.oldEnd).find(block => block.nodes.length > 0);
+            const fragment = document.createDocumentFragment();
+            fresh.forEach(block => block.nodes.forEach(node => fragment.appendChild(node)));
+            markdownContent.insertBefore(fragment, after ? after.nodes[0] : null);
+            blocks = old.slice(0, diff.start).concat(fresh, old.slice(diff.oldEnd));
+            blocks.forEach((block, i) => {
+                block.raw = built.blocks[i].raw;
+            });
+        } else {
+            blocks = built.blocks;
+            markdownContent.replaceChildren(...blocks.flatMap(block => block.nodes));
+        }
+        blocks.forEach((block, index) => {
+            for (const node of block.nodes) {
+                if (node.nodeType === Node.ELEMENT_NODE) node.dataset.block = String(index);
+            }
+        });
+        rendered = { blocks, linksKey: built.linksKey };
+        refreshHeadingIds();
     }
 
     function renderError(markdownText) {
@@ -308,12 +785,230 @@
         return box;
     }
 
-    function addHeadingIds(doc) {
+    /**
+     * GitHub-style ids for headings that don't have one, recomputed after every change so
+     * duplicates stay numbered in document order. Ids written in the markdown's own HTML are
+     * left alone.
+     */
+    function refreshHeadingIds() {
         const used = new Set();
-        for (const heading of doc.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
-            if (heading.id) continue;
+        for (const heading of markdownContent.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+            if (heading.id && !autoHeadingIds.has(heading)) continue;
             heading.id = core.uniqueSlug(heading.textContent, used);
+            autoHeadingIds.add(heading);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Live reload: reading position, highlight, Follow, notices
+    // ------------------------------------------------------------------
+
+    /** Height of the sticky top bar covering the top of the page (0 when it isn't there). */
+    function topInset() {
+        const bar = document.querySelector('.topbar');
+        if (!bar) return 0;
+        const style = getComputedStyle(bar);
+        if (style.display === 'none' || style.position !== 'sticky') return 0;
+        return bar.getBoundingClientRect().height;
+    }
+
+    /** Page position of each rendered block (blocks without elements sit where the last ended). */
+    function blockRects() {
+        if (!rendered) return [];
+        let bottom = 0;
+        return rendered.blocks.map(block => {
+            let top = Infinity;
+            let end = -Infinity;
+            for (const node of block.nodes) {
+                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                const rect = node.getBoundingClientRect();
+                top = Math.min(top, rect.top + window.scrollY);
+                end = Math.max(end, rect.bottom + window.scrollY);
+            }
+            if (top === Infinity) return { top: bottom, height: 0 };
+            bottom = end;
+            return { top, height: end - top };
+        });
+    }
+
+    function captureAnchor() {
+        return core.captureScrollAnchor(blockRects(), window.scrollY + topInset());
+    }
+
+    function restoreAnchor(anchor) {
+        const y = core.restoreScrollAnchor(anchor, blockRects());
+        if (y !== null) window.scrollTo(0, y - topInset());
+    }
+
+    /**
+     * Keeps re-applying the anchor as images in the new content finish loading (they change
+     * the height of the blocks above), until the reader scrolls or a few seconds pass.
+     */
+    function keepAnchor(anchor) {
+        const loading = Array.from(markdownContent.querySelectorAll('img')).filter(img => !img.complete);
+        if (loading.length === 0) {
+            anchorHold = null;
+            return;
+        }
+        const hold = { anchor };
+        anchorHold = hold;
+        const reapply = () => {
+            if (anchorHold === hold) restoreAnchor(anchor);
+        };
+        for (const img of loading) {
+            img.addEventListener('load', reapply, { once: true });
+            img.addEventListener('error', reapply, { once: true });
+        }
+        setTimeout(() => {
+            if (anchorHold === hold) anchorHold = null;
+        }, 3000);
+    }
+
+    function prefersReducedMotion() {
+        return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    function blockElements(index) {
+        if (!rendered || index === null || index < 0 || index >= rendered.blocks.length) return [];
+        return rendered.blocks[index].nodes.filter(node => node.nodeType === Node.ELEMENT_NODE);
+    }
+
+    /** Tints the changed blocks (fading out), or marks where blocks were removed. */
+    function highlightChanges(diff) {
+        if (!diff.changed) return;
+        const targets = [];
+        for (let i = diff.start; i < diff.end; i++) {
+            blockElements(i).forEach(el => targets.push([el, 'block-changed']));
+        }
+        if (diff.removedBefore !== null && rendered.blocks.length > 0) {
+            if (diff.removedBefore < rendered.blocks.length) {
+                const [el] = blockElements(diff.removedBefore);
+                if (el) targets.push([el, 'block-removed-before']);
+            } else {
+                const els = blockElements(rendered.blocks.length - 1);
+                if (els.length) targets.push([els[els.length - 1], 'block-removed-after']);
+            }
+        }
+        const duration = prefersReducedMotion() ? HIGHLIGHT_STATIC_MS : HIGHLIGHT_FADE_MS;
+        for (const [el, className] of targets) {
+            // Restart the animation if the same element changes again.
+            el.classList.remove(className);
+            void el.offsetWidth;
+            el.classList.add(className);
+            clearTimeout(highlightTimers.get(el));
+            highlightTimers.set(el, setTimeout(() => {
+                el.classList.remove(className);
+                highlightTimers.delete(el);
+            }, duration));
+        }
+    }
+
+    function isBlockVisible(index) {
+        const els = blockElements(index);
+        if (els.length === 0) return true;
+        const top = els[0].getBoundingClientRect().top;
+        const bottom = els[els.length - 1].getBoundingClientRect().bottom;
+        return bottom > topInset() && top < window.innerHeight;
+    }
+
+    function scrollToBlock(index) {
+        const [el] = blockElements(index);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top + window.scrollY;
+        // A little context above the change.
+        const y = Math.max(0, top - topInset() - window.innerHeight * 0.2);
+        window.scrollTo({ top: y, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    }
+
+    /** Runs a Follow event; returns true if it scrolled. */
+    function dispatchFollow(event) {
+        const result = core.followReducer(follow, event);
+        follow = result.state;
+        renderFollowButton();
+        if (result.scrollTo === null) return false;
+        anchorHold = null;
+        scrollToBlock(result.scrollTo);
+        return true;
+    }
+
+    function toggleFollow() {
+        dispatchFollow({ type: 'toggle' });
+        saveFollowPreference(follow.mode !== 'off');
+    }
+
+    function renderFollowButton() {
+        const label = { off: 'Follow', following: 'Following', paused: 'Resume' }[follow.mode];
+        followLabel.textContent = label;
+        followButton.setAttribute('aria-pressed', String(follow.mode === 'following'));
+        followButton.classList.toggle('paused', follow.mode === 'paused');
+        followButton.title = {
+            off: 'Follow changes: keep the latest edit in view',
+            following: 'Following changes. Click to stop.',
+            paused: 'Paused because you scrolled. Click to jump to the latest change.',
+        }[follow.mode];
+    }
+
+    function loadFollowPreference() {
+        try {
+            return window.localStorage.getItem(FOLLOW_KEY) !== 'off';
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function saveFollowPreference(on) {
+        try {
+            window.localStorage.setItem(FOLLOW_KEY, on ? 'on' : 'off');
+        } catch (_) {
+            // Private mode or storage disabled: the choice lasts for this page only.
+        }
+    }
+
+    /** Reader input that scrolls the page: releases the anchor and pauses Follow. */
+    function onUserInput(e) {
+        if (e.type === 'keydown' && (!SCROLL_KEYS.has(e.key) || e.target.closest('button, input, textarea, select'))) return;
+        if (e.type === 'mousedown') {
+            // Only a press on the page's scrollbar scrolls; clicks on content don't.
+            const root = document.documentElement;
+            if (e.target !== root && e.clientX < root.clientWidth) return;
+        }
+        if (e.type === 'wheel' && !e.deltaY) return;
+        anchorHold = null;
+        if (isLive) dispatchFollow({ type: 'userScroll' });
+    }
+
+    /** Live mode: the document on screen is watched. Shows Follow (and later "Updated"). */
+    function setLive(on) {
+        isLive = on;
+        document.body.classList.toggle('live', on);
+        followButton.hidden = !on;
+        if (!on) {
+            liveStatus.hidden = true;
+            updatedAt = null;
+            clearInterval(updatedTimer);
+            updatedTimer = null;
+        }
+    }
+
+    function markUpdated() {
+        if (!isLive) return;
+        updatedAt = new Date();
+        liveStatus.title = `Updated at ${updatedAt.toLocaleTimeString()}`;
+        liveStatus.hidden = false;
+        refreshUpdated();
+        if (!updatedTimer) updatedTimer = setInterval(refreshUpdated, 5000);
+    }
+
+    function refreshUpdated() {
+        if (updatedAt) liveStatus.textContent = core.formatUpdated(Date.now() - updatedAt.getTime());
+    }
+
+    function showMissingNotice() {
+        liveNotice.hidden = false;
+    }
+
+    function hideMissingNotice() {
+        liveNotice.hidden = true;
     }
 
     async function resolveImages(doc, source) {
@@ -425,6 +1120,7 @@
         fullscreenButton.style.display = 'inline-flex';
         docTitle.textContent = title || '';
         document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
+        hideMissingNotice();
         setDocumentOpen(true, title);
     }
 
@@ -446,7 +1142,15 @@
 
         folderFiles.clear();
         revokeBlobUrls();
+        renderSeq++;
         currentSource = null;
+        rendered = null;
+        anchorHold = null;
+        hideMissingNotice();
+        stopWebWatch();
+        setLive(false);
+        desktopFolder = null;
+        renderWatchFolderButton();
         fileInput.value = '';
         docTitle.textContent = '';
         document.title = DEFAULT_TITLE;
@@ -460,17 +1164,19 @@
         fullscreenButton.setAttribute('aria-pressed', String(entering));
     }
 
-    /** entries: [{ name, display, load }] */
+    /** entries: [{ name, display, path?, load }] */
     function showFileSelector(entries) {
         dropZone.style.display = 'none';
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
         fileList.replaceChildren();
+        renderWatchFolderButton();
 
         for (const entry of entries) {
             const item = document.createElement('div');
             item.className = 'file-item';
+            item.dataset.path = entry.path || '';
             item.innerHTML = `
                 <span class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
                 <div>
@@ -478,10 +1184,20 @@
                     <div class="file-path">${core.escapeHtml(entry.display)}</div>
                 </div>
             `;
-            item.addEventListener('click', () => {
+            // A button to keyboards and assistive tech, so a file can be picked without a mouse.
+            item.setAttribute('role', 'button');
+            item.tabIndex = 0;
+            const pick = () => {
                 fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
                 entry.load();
+            };
+            item.addEventListener('click', pick);
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    pick();
+                }
             });
             fileList.appendChild(item);
         }

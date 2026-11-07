@@ -6,13 +6,16 @@
 //! * opening `.md` files from Finder (double-click / "Open With"), the Dock,
 //!   File > Open… or the command line, one window per document;
 //! * reading files and folders by path, so relative images resolve;
-//! * scoped access to local images through Tauri's asset protocol.
+//! * scoped access to local images through Tauri's asset protocol;
+//! * live reload: each window watches the document it shows (`watch.rs`).
 
 mod crash_reporting;
 mod docs;
+mod watch;
 
 pub use crash_reporting::start as start_crash_reporting;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -28,20 +31,72 @@ use tauri_plugin_dialog::DialogExt;
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
 const PENDING_EVENT: &str = "document-pending";
+const CHANGED_EVENT: &str = "document-changed";
+const MISSING_EVENT: &str = "document-missing";
 const MAX_DOCUMENT_BYTES: u64 = 25 * 1024 * 1024;
+/// How long to wait before deciding whether re-opening an open document should focus it.
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Default)]
 struct AppState {
     router: Mutex<DocumentRouter>,
+    /// At most one live-reload watch per window, keyed by window label.
+    watches: Mutex<HashMap<String, watch::Watch>>,
 }
 
-#[derive(Debug, Serialize, PartialEq)]
+impl AppState {
+    /// Replaces (or with `None`, stops) a window's watch. The old watch is dropped outside the
+    /// lock.
+    fn set_watch(&self, label: &str, watch: Option<watch::Watch>) {
+        let old = {
+            let mut watches = self.watches.lock().unwrap();
+            match watch {
+                Some(w) => watches.insert(label.to_string(), w),
+                None => watches.remove(label),
+            }
+        };
+        drop(old);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Document {
     path: String,
     name: String,
     /// Parent directory with a trailing `/`, used to resolve relative links.
     dir: String,
     content: String,
+}
+
+/// Payload of `document-changed`: the new document, and the content it had before (if known).
+#[derive(Debug, Clone, Serialize)]
+struct ChangedPayload {
+    #[serde(flatten)]
+    document: Document,
+    previous: Option<String>,
+}
+
+/// Payload of `document-missing`.
+#[derive(Debug, Clone, Serialize)]
+struct MissingPayload {
+    path: String,
+}
+
+/// What `take_pending_document` hands a window: a document, or a folder to choose from.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Pending {
+    Document(Document),
+    Folder { folder: String },
+}
+
+/// Result of `watch_folder`.
+#[derive(Debug, Serialize)]
+struct FolderWatch {
+    root: String,
+    name: String,
+    /// The most recently modified markdown file, shown first.
+    document: Option<Document>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -60,9 +115,15 @@ pub struct MarkdownEntry {
 fn take_pending_document(
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Option<Document>, String> {
+) -> Result<Option<Pending>, String> {
     let pending = state.router.lock().unwrap().take_pending(window.label());
-    pending.map(|path| read_document_at(&path)).transpose()
+    match pending {
+        Some(path) if path.is_dir() => Ok(Some(Pending::Folder {
+            folder: path.to_string_lossy().into_owned(),
+        })),
+        Some(path) => read_document_at(&path).map(|d| Some(Pending::Document(d))),
+        None => Ok(None),
+    }
 }
 
 /// Reads a document for display in the calling window.
@@ -106,7 +167,8 @@ fn allow_asset_files(app: AppHandle, paths: Vec<String>) {
     }
 }
 
-/// Tracks whether a window is showing a document, and updates its title.
+/// Tracks whether a window is showing a document, and updates its title. Returning to the
+/// drop zone stops the window's live reload.
 #[tauri::command]
 fn set_document_open(
     window: WebviewWindow,
@@ -119,6 +181,9 @@ fn set_document_open(
         .lock()
         .unwrap()
         .set_occupied(window.label(), open);
+    if !open {
+        state.set_watch(window.label(), None);
+    }
     let title = match (open, title) {
         (true, Some(t)) if !t.is_empty() => t,
         _ => "Markydowny".to_string(),
@@ -126,11 +191,114 @@ fn set_document_open(
     let _ = window.set_title(&title);
 }
 
+/// Live reload: watches `path` for the calling window, replacing whatever it watched before.
+/// Changes arrive as `document-changed` / `document-missing` events. Returns the document as
+/// it is now (`None` if it's gone), so the window can catch up with anything that changed
+/// between reading it and starting the watch.
+#[tauri::command]
+fn watch_document(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<Document>, String> {
+    let label = window.label().to_string();
+    let (watch, seeded) = watch::Watch::start(
+        watch::Scope::file(Path::new(&path)),
+        |p| read_text(p).ok(),
+        change_sink(app, label.clone()),
+    )
+    .map_err(|e| format!("Can't watch {path}: {e}"))?;
+    state.set_watch(&label, Some(watch));
+    state
+        .router
+        .lock()
+        .unwrap()
+        .set_showing(&label, Some(Path::new(&path)));
+    Ok(seeded
+        .into_iter()
+        .next()
+        .map(|(path, content)| document_for(&path, content)))
+}
+
+/// Follows a folder in the calling window: watches every markdown file under it (the same
+/// files the drop list shows) and reports whichever changes, as `document-changed` events with
+/// the file's previous content. Replaces the window's watch. Returns the most recently
+/// modified file to show first.
+#[tauri::command(async)]
+fn watch_folder(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<FolderWatch, String> {
+    let label = window.label().to_string();
+    let root = Path::new(&path);
+    if !root.is_dir() {
+        return Err(format!("{path} is not a folder"));
+    }
+    let (watch, seeded) = watch::Watch::start(
+        watch::Scope::folder(root),
+        |p| read_text(p).ok(),
+        change_sink(app, label.clone()),
+    )
+    .map_err(|e| format!("Can't watch {path}: {e}"))?;
+    state.set_watch(&label, Some(watch));
+    state.router.lock().unwrap().set_folder(&label, Some(root));
+
+    let latest = seeded
+        .into_iter()
+        .max_by_key(|(p, _)| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    Ok(FolderWatch {
+        name: root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned()),
+        root: root.to_string_lossy().into_owned(),
+        document: latest.map(|(path, content)| document_for(&path, content)),
+    })
+}
+
+/// Forwards a watch's changes to one window.
+fn change_sink(app: AppHandle, label: String) -> impl Fn(watch::Change) + Send + 'static {
+    move |change| {
+        let _ = match change {
+            watch::Change::Changed {
+                path,
+                content,
+                previous,
+            } => app.emit_to(
+                label.as_str(),
+                CHANGED_EVENT,
+                ChangedPayload {
+                    document: document_for(&path, content),
+                    previous,
+                },
+            ),
+            watch::Change::Missing(path) => app.emit_to(
+                label.as_str(),
+                MISSING_EVENT,
+                MissingPayload {
+                    path: path.to_string_lossy().into_owned(),
+                },
+            ),
+        };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn read_document_at(path: &Path) -> Result<Document, String> {
+    let content = read_text(path)?;
+    Ok(document_for(path, content))
+}
+
+/// A document's text, with the same checks as opening it (a file, not too large). Invalid
+/// UTF-8 is replaced rather than refused.
+fn read_text(path: &Path) -> Result<String, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("Can't open {}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("{} is not a file", path.display()));
@@ -139,6 +307,10 @@ fn read_document_at(path: &Path) -> Result<Document, String> {
         return Err(format!("{} is too large to display", path.display()));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("Can't read {}: {e}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn document_for(path: &Path, content: String) -> Document {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut dir = path
         .parent()
@@ -147,15 +319,15 @@ fn read_document_at(path: &Path) -> Result<Document, String> {
     if !dir.ends_with('/') {
         dir.push('/');
     }
-    Ok(Document {
+    Document {
         name: path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
         path: path.to_string_lossy().into_owned(),
         dir,
-        content: String::from_utf8_lossy(&bytes).into_owned(),
-    })
+        content,
+    }
 }
 
 /// Window labels, main window first, so documents fill it before new windows open.
@@ -173,7 +345,7 @@ pub(crate) fn focused_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Op
 
 fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) {
     let state = app.state::<AppState>();
-    for path in paths.into_iter().filter(|p| p.is_file()) {
+    for path in paths.into_iter().filter(|p| p.is_file() || p.is_dir()) {
         let labels = window_labels(app);
         let placement = state
             .router
@@ -194,8 +366,35 @@ fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) 
                     state.router.lock().unwrap().forget(&label);
                 }
             }
+            // Already open (or in a followed folder). Live reload keeps it current, so this
+            // only decides about focus; see `focus_if_active`.
+            Placement::Showing(label) => focus_if_active(app, &label),
+            Placement::InFolder(label) => {
+                let _ = app.emit_to(label.as_str(), PENDING_EVENT, ());
+                focus_if_active(app, &label);
+            }
         }
     }
+}
+
+/// Re-opening an open document brings its window forward only if Markydowny is (or is
+/// becoming) the active app: true for a Finder double-click, `open -a` and File > Open…, but
+/// not for `open -g`. A Claude Code hook re-opens a file after every edit with `open -g`, and
+/// that mustn't pull focus away from the terminal. The check waits briefly because Launch
+/// Services activates the app around the same time it delivers the open request.
+fn focus_if_active(app: &AppHandle, label: &str) {
+    let app = app.clone();
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(FOCUS_SETTLE);
+        if focused_window(&app).is_none() {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn create_document_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
@@ -259,7 +458,7 @@ fn cli_paths() -> Vec<PathBuf> {
     std::env::args_os()
         .skip(1)
         .map(PathBuf::from)
-        .filter(|p| p.is_file())
+        .filter(|p| p.is_file() || p.is_dir())
         .collect()
 }
 
@@ -277,6 +476,8 @@ pub fn run() {
             list_markdown_files,
             allow_asset_files,
             set_document_open,
+            watch_document,
+            watch_folder,
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -294,12 +495,9 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                window
-                    .state::<AppState>()
-                    .router
-                    .lock()
-                    .unwrap()
-                    .forget(window.label());
+                let state = window.state::<AppState>();
+                state.router.lock().unwrap().forget(window.label());
+                state.set_watch(window.label(), None);
             }
         })
         .build(tauri::generate_context!())
