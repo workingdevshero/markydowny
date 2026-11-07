@@ -255,7 +255,140 @@
         return `Updated ${Math.floor(hours / 24)} d ago`;
     }
 
+    // ------------------------------------------------------------------
+    // Web live reload (File System Access API, Chromium browsers)
+    // ------------------------------------------------------------------
+
+    /**
+     * What the browser offers for opening files as handles and watching them. Everything
+     * false (Safari, Firefox) means the page keeps its one-time-copy behaviour.
+     */
+    function fileWatchSupport(win) {
+        const w = win || {};
+        const item = w.DataTransferItem && w.DataTransferItem.prototype;
+        return {
+            picker: typeof w.showOpenFilePicker === 'function',
+            dropHandles: Boolean(item && typeof item.getAsFileSystemHandle === 'function'),
+            observer: typeof w.FileSystemObserver === 'function',
+        };
+    }
+
+    /**
+     * Compares a re-read of a watched file with what was last seen.
+     *   prev: { lastModified, size } or null; result: { ok: true, lastModified, size } or
+     *   { ok: false }. Returns 'changed' | 'unchanged' | 'unavailable'.
+     */
+    function pollDecision(prev, result) {
+        if (!result || !result.ok) return 'unavailable';
+        if (!prev || prev.lastModified !== result.lastModified || prev.size !== result.size) return 'changed';
+        return 'unchanged';
+    }
+
+    /**
+     * Watches a file handle by polling getFile(). With observe: true (FileSystemObserver
+     * wired by the caller, which calls check() on its records) it polls only while the file
+     * is unavailable, to notice it coming back.
+     *
+     * options: { getFile, onChange(file), onUnavailable(error), interval = 1000, observe = false,
+     *            setTimer = setTimeout, clearTimer = clearTimeout }
+     * Methods: start(snapshot), stop(), setVisible(visible), check() -> Promise.
+     * Hidden pages don't poll (or act on observer records); becoming visible checks once.
+     * Unavailability is reported once, not on every poll; a file that comes back is reported
+     * as changed.
+     */
+    function createFilePoller(options) {
+        const interval = options.interval || 1000;
+        const setTimer = options.setTimer || setTimeout;
+        const clearTimer = options.clearTimer || clearTimeout;
+        let last = null;
+        let available = true;
+        let visible = true;
+        let running = false;
+        let timer = null;
+        let checking = null;
+
+        function schedule() {
+            cancel();
+            if (!running || !visible) return;
+            if (options.observe && available) return;
+            timer = setTimer(() => {
+                timer = null;
+                check().then(schedule, schedule);
+            }, interval);
+        }
+
+        function cancel() {
+            if (timer !== null) {
+                clearTimer(timer);
+                timer = null;
+            }
+        }
+
+        function check() {
+            if (!running) return Promise.resolve();
+            if (!visible) return Promise.resolve();
+            if (checking) return checking;
+            checking = Promise.resolve()
+                .then(() => options.getFile())
+                .then(
+                    file => ({ ok: true, file, lastModified: file.lastModified, size: file.size }),
+                    error => ({ ok: false, error })
+                )
+                .then(result => {
+                    checking = null;
+                    if (!running) return;
+                    const wasAvailable = available;
+                    const decision = pollDecision(last, result);
+                    if (decision === 'unavailable') {
+                        available = false;
+                        if (wasAvailable) {
+                            options.onUnavailable(result.error);
+                            // An observer may not report the file coming back: poll for it.
+                            schedule();
+                        }
+                        return;
+                    }
+                    available = true;
+                    if (decision === 'changed' || !wasAvailable) {
+                        last = { lastModified: result.lastModified, size: result.size };
+                        options.onChange(result.file);
+                    }
+                    if (!wasAvailable) schedule();
+                });
+            return checking;
+        }
+
+        return {
+            start(snapshot) {
+                last = snapshot ? { lastModified: snapshot.lastModified, size: snapshot.size } : null;
+                running = true;
+                available = true;
+                schedule();
+            },
+            stop() {
+                running = false;
+                cancel();
+            },
+            setVisible(next) {
+                if (next === visible) return;
+                visible = next;
+                if (!visible) {
+                    cancel();
+                    return;
+                }
+                check().then(schedule, schedule);
+            },
+            check,
+            get polling() {
+                return timer !== null;
+            },
+        };
+    }
+
     return {
+        fileWatchSupport,
+        pollDecision,
+        createFilePoller,
         changedBlocks,
         mapBlockIndex,
         changeTarget,

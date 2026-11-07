@@ -13,6 +13,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 - 🎨 **Beautiful Rendering**: Clean, readable markdown output with syntax highlighting
 - 🖼️ **Image Support**: Relative image paths in markdown are automatically resolved from folders
 - ⛶ **Fullscreen Mode**: Expand content for distraction-free reading
+- 🔄 **Live reload in Chrome, Edge and other Chromium browsers**: a file opened with *Choose File* or dropped on the page re-renders when it changes on disk, with the changes highlighted and an optional **Follow** mode (Safari and Firefox read the file once, as before)
 - 📱 **Responsive Design**: Works great on desktop and mobile
 - ↩️ **Easy Reset**: *Open another* takes you back to the drop zone to load another file
 

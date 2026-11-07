@@ -62,6 +62,11 @@
     // Desktop: the folder behind the file list, { root, name, following }. While following,
     // the window shows whichever markdown file in it changed last.
     let desktopFolder = null;
+    // Web: live reload through the File System Access API, where the browser has it
+    // (Chromium). Elsewhere every flag is false and nothing below is wired.
+    const webWatch = isDesktop ? core.fileWatchSupport(null) : core.fileWatchSupport(window);
+    // The handle being watched: { handle, poller, observer }.
+    let webWatched = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -109,6 +114,13 @@
     if (isDesktop) {
         initDesktop().catch(err => console.error('Desktop init failed:', err));
     }
+    document.addEventListener('visibilitychange', () => {
+        if (webWatched) webWatched.poller.setVisible(!document.hidden);
+    });
+
+    // For tests and verification: open a FileSystemFileHandle (e.g. one from the Origin Private
+    // File System) as if it had been picked.
+    window.MarkyApp = Object.freeze({ openFileHandle });
 
     function preventDefaults(e) {
         e.preventDefault();
@@ -126,6 +138,8 @@
     function chooseFile() {
         if (isDesktop) {
             invoke('show_open_dialog').catch(console.error);
+        } else if (webWatch.picker) {
+            pickFileHandle();
         } else {
             fileInput.click();
         }
@@ -370,14 +384,29 @@
 
     function handleDrop(e) {
         const items = e.dataTransfer.items;
-        if (items && items.length > 0 && items[0].webkitGetAsEntry) {
-            const entry = items[0].webkitGetAsEntry();
+        const files = Array.from(e.dataTransfer.files || []);
+        // Everything from the DataTransfer has to be taken now: it's emptied once this
+        // handler returns, so the handle is requested before any await.
+        const item = items && items.length > 0 ? items[0] : null;
+        const handlePromise = item && item.kind === 'file' && webWatch.dropHandles
+            ? item.getAsFileSystemHandle()
+            : null;
+        if (item && item.webkitGetAsEntry) {
+            const entry = item.webkitGetAsEntry();
             if (entry && entry.isDirectory) {
+                // Folders are read once, as before.
                 handleFolder(entry);
                 return;
             }
         }
-        handleFiles(e.dataTransfer.files);
+        if (handlePromise) {
+            handlePromise.then(
+                handle => (handle && handle.kind === 'file' ? openFileHandle(handle) : handleFiles(files)),
+                () => handleFiles(files)
+            );
+            return;
+        }
+        handleFiles(files);
     }
 
     function handleFiles(files) {
@@ -387,6 +416,7 @@
             alert('Please select a markdown (.md) or text file.');
             return;
         }
+        stopWebWatch();
         folderFiles.clear();
         file.text().then(
             text => renderMarkdown(text, { kind: 'file', dir: '', title: file.name }),
@@ -396,6 +426,7 @@
 
     async function handleFolder(folderEntry) {
         try {
+            stopWebWatch();
             folderFiles.clear();
             await readFolderRecursively(folderEntry, '');
 
@@ -420,6 +451,115 @@
             console.error('Error reading folder:', error);
             alert('Error reading folder contents. Please try again.');
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Web: files opened through a handle, reloaded when they change
+    // ------------------------------------------------------------------
+
+    const PICKER_TYPES = [{
+        description: 'Markdown or text',
+        accept: { 'text/markdown': core.MARKDOWN_EXTENSIONS, 'text/plain': ['.txt'] },
+    }];
+
+    async function pickFileHandle() {
+        let handles;
+        try {
+            handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: false });
+        } catch (err) {
+            if (err && err.name === 'AbortError') return; // the picker was cancelled
+            console.error('File picker unavailable, using the file input:', err);
+            fileInput.click();
+            return;
+        }
+        if (handles && handles[0]) await openFileHandle(handles[0]);
+    }
+
+    /** Shows the file behind a FileSystemFileHandle and reloads it when it changes. */
+    async function openFileHandle(handle) {
+        let file;
+        try {
+            file = await handle.getFile();
+        } catch (err) {
+            console.error('Error opening file:', err);
+            alert('Error loading the markdown file. Please try again.');
+            return;
+        }
+        if (!core.isTextFile(file)) {
+            alert('Please select a markdown (.md) or text file.');
+            return;
+        }
+        stopWebWatch();
+        folderFiles.clear();
+        let text;
+        try {
+            text = await file.text();
+        } catch (_) {
+            alert('Error loading the markdown file. Please try again.');
+            return;
+        }
+        const source = { kind: 'file', dir: '', title: file.name };
+        await renderMarkdown(text, source);
+        if (currentSource !== source || isDesktop) return;
+        startWebWatch(handle, file, webWatch.observer);
+    }
+
+    /** Watches a handle: with FileSystemObserver when `observe`, otherwise by polling. */
+    function startWebWatch(handle, file, observe) {
+        const watched = { handle, poller: null, observer: null };
+        const isCurrent = () => webWatched === watched && currentSource && currentSource.kind === 'file';
+        watched.poller = core.createFilePoller({
+            getFile: () => handle.getFile(),
+            observe,
+            onChange: async (changed) => {
+                if (!isCurrent()) return;
+                hideMissingNotice();
+                let text;
+                try {
+                    text = await changed.text();
+                } catch (_) {
+                    return;
+                }
+                if (!isCurrent() || text === currentSource.markdown) return;
+                renderMarkdown(text, { ...currentSource }, { reload: true });
+            },
+            onUnavailable: () => {
+                if (isCurrent()) showMissingNotice();
+            },
+        });
+        webWatched = watched;
+        setLive(true);
+        watched.poller.start(file);
+        watched.poller.setVisible(!document.hidden);
+        if (observe) {
+            try {
+                watched.observer = new window.FileSystemObserver(() => watched.poller.check());
+                Promise.resolve(watched.observer.observe(handle)).catch(() => pollInstead(watched));
+            } catch (_) {
+                pollInstead(watched);
+            }
+        }
+    }
+
+    /** The observer can't watch this handle: poll it instead. */
+    function pollInstead(watched) {
+        if (webWatched !== watched) return;
+        watched.poller.stop();
+        if (watched.observer) watched.observer.disconnect();
+        webWatched = null;
+        watched.handle.getFile().then(file => {
+            if (!webWatched && currentSource && currentSource.kind === 'file') {
+                startWebWatch(watched.handle, file, false);
+            }
+        }, () => {});
+    }
+
+    function stopWebWatch() {
+        if (!webWatched) return;
+        webWatched.poller.stop();
+        if (webWatched.observer) webWatched.observer.disconnect();
+        webWatched = null;
+        if (!isDesktop) setLive(false);
     }
 
     async function readFolderRecursively(entry, path) {
@@ -1007,6 +1147,7 @@
         rendered = null;
         anchorHold = null;
         hideMissingNotice();
+        stopWebWatch();
         setLive(false);
         desktopFolder = null;
         renderWatchFolderButton();
