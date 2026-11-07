@@ -148,19 +148,21 @@ fn set_document_open(
         .unwrap()
         .set_occupied(window.label(), open);
     let path = path.filter(|p| open && !p.is_empty()).map(PathBuf::from);
-    if path.is_none() {
-        let title = match (open, title) {
-            (true, Some(t)) if !t.is_empty() => t,
-            _ => "Markydowny".to_string(),
-        };
-        let _ = window.set_title(&title);
-    }
+    let plain_title = path.is_none().then(|| match (open, title) {
+        (true, Some(t)) if !t.is_empty() => t,
+        _ => "Markydowny".to_string(),
+    });
     state
         .open_documents
         .lock()
         .unwrap()
         .set(window.label(), path);
-    refresh_titles(&app);
+    let _ = app.run_on_main_thread(move || {
+        if let Some(title) = plain_title {
+            let _ = window.set_title(&title);
+        }
+        refresh_titles(window.app_handle());
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +223,9 @@ fn front_window(app: &AppHandle) -> Option<String> {
 }
 
 /// Retitles every tab showing a document, so duplicate names stay distinguishable.
+/// Call it on the main thread: there `set_title` applies at once, so titles
+/// always match the latest snapshot. From a worker it only queues the change,
+/// and an older snapshot's titles could land after a newer one's.
 fn refresh_titles(app: &AppHandle) {
     let titles = app.state::<AppState>().open_documents.lock().unwrap().titles();
     for (label, title) in titles {
@@ -316,9 +321,12 @@ fn build_document_window(
         .title("Markydowny")
         .inner_size(900.0, 1000.0)
         .min_inner_size(400.0, 300.0)
-        .tabbing_identifier(tabs::TABBING_IDENTIFIER)
         // Shown once it's a tab, so it never flashes up on its own.
         .visible(false);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.tabbing_identifier(tabs::TABBING_IDENTIFIER);
+    }
 
     if on_its_own {
         if let Some(front) = focused_window(app) {

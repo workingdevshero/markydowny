@@ -373,9 +373,11 @@ pub mod native {
 
     /// Adds the tab commands to the Window menu. AppKit adds Show Tab Bar and
     /// Show All Tabs to the View menu by itself, but (as of macOS 26) not
-    /// these. They go to the key window through the responder chain, so AppKit
-    /// enables and disables them. They go after Close Window; AppKit puts a
-    /// separator there when it adds its own items, so none is added here.
+    /// these. They go to the key window through the responder chain.
+    ///
+    /// By now AppKit has appended Bring All to Front and the window list, so
+    /// they're inserted right after Close Window, in a section of their own;
+    /// the separator AppKit put after Close Window then follows them.
     pub fn add_window_menu_items() {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
@@ -383,8 +385,13 @@ pub mod native {
         let Some(menu) = NSApp(mtm).windowsMenu() else {
             return;
         };
-        let start = menu.numberOfItems();
-        for (index, item) in (start..).zip(WINDOW_MENU_TAB_ITEMS) {
+        let count = menu.numberOfItems();
+        let close = sel!(performClose:);
+        let at = (0..count)
+            .find(|&i| menu.itemAtIndex(i).and_then(|item| item.action()) == Some(close))
+            .map_or(count, |i| i + 1);
+        menu.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), at);
+        for (index, item) in (at + 1..).zip(WINDOW_MENU_TAB_ITEMS) {
             // SAFETY: the selectors are NSWindow's tab action methods.
             let menu_item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
@@ -401,6 +408,10 @@ pub mod native {
             }
             menu.insertItem_atIndex(&menu_item, index);
         }
+        // muda turns auto-enabling off for every menu it builds; with it back
+        // on, AppKit asks the key window, which disables Show Next Tab and
+        // friends while there's only one tab.
+        menu.setAutoenablesItems(true);
     }
 
     /// Shows the tab bar's + button by answering `newWindowForTab:` (AppKit
