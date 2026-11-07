@@ -24,6 +24,7 @@
     const fileSelector = $('fileSelector');
     const fileList = $('fileList');
     const cancelSelectorButton = $('cancelSelector');
+    const openAllTabsButton = $('openAllTabs');
     const lightbox = $('lightbox');
     const lightboxImage = $('lightboxImage');
     const lightboxClose = $('lightboxClose');
@@ -32,8 +33,10 @@
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
     let blobUrls = [];
-    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title }
+    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title, path? }
     let currentSource = null;
+    // The file selector's "Open all as tabs" action (desktop only), or null.
+    let openAllAction = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -60,6 +63,9 @@
         chooseFile();
     });
     cancelSelectorButton.addEventListener('click', showDropZone);
+    openAllTabsButton.addEventListener('click', () => {
+        if (openAllAction) openAllAction();
+    });
     backButton.addEventListener('click', showDropZone);
     fullscreenButton.addEventListener('click', toggleFullscreen);
     markdownContent.addEventListener('click', handleContentClick);
@@ -120,6 +126,14 @@
             }
         });
 
+        // ⌃Tab / ⌃⇧Tab switch tabs; the webview gets these keys before the menu.
+        document.addEventListener('keydown', (e) => {
+            const direction = core.tabStepForKey(e);
+            if (!direction) return;
+            e.preventDefault();
+            invoke('select_tab', { direction }).catch(console.error);
+        });
+
         await loadPendingDocument();
     }
 
@@ -152,7 +166,22 @@
             name: core.basename(entry.path),
             display: entry.display,
             load: () => loadDesktopPath(entry.path),
-        })));
+        })), () => openAllAsTabs(entries.map(entry => entry.path)));
+    }
+
+    /**
+     * Opens every file from the selector, each in its own tab: the first in
+     * this window if it isn't showing a document, the rest beside it.
+     */
+    function openAllAsTabs(paths) {
+        closeFileSelector();
+        if (currentSource) {
+            showMarkdownContent(currentSource.title);
+        } else {
+            // Stay idle (no set_document_open call) so the first file lands here.
+            dropZone.style.display = 'flex';
+        }
+        invoke('open_documents', { paths }).catch(console.error);
     }
 
     async function loadDesktopPath(path) {
@@ -165,12 +194,13 @@
 
     async function showDesktopDocument(doc) {
         folderFiles.clear();
-        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name });
+        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
     }
 
-    function setDocumentOpen(open, title) {
+    /** Tells the app what this window shows; the path lets it tell same-named tabs apart. */
+    function setDocumentOpen(open, title, path) {
         if (!isDesktop) return;
-        invoke('set_document_open', { open, title: title || null }).catch(console.error);
+        invoke('set_document_open', { open, title: title || null, path: path || null }).catch(console.error);
     }
 
     // ------------------------------------------------------------------
@@ -393,7 +423,7 @@
         if (!path) return;
 
         if (currentSource.kind === 'desktop') {
-            // Linked markdown opens in its own window, like double-clicking it.
+            // Linked markdown opens in a new tab, like double-clicking it.
             // Anything else is revealed in Finder rather than launched, so a
             // document can't trick a click into running a script or app.
             const command = core.isMarkdownName(path)
@@ -425,7 +455,7 @@
         fullscreenButton.style.display = 'inline-flex';
         docTitle.textContent = title || '';
         document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
-        setDocumentOpen(true, title);
+        setDocumentOpen(true, title, currentSource && currentSource.path);
     }
 
     function closeFileSelector() {
@@ -460,13 +490,21 @@
         fullscreenButton.setAttribute('aria-pressed', String(entering));
     }
 
-    /** entries: [{ name, display, load }] */
-    function showFileSelector(entries) {
+    /**
+     * entries: [{ name, display, load }]
+     * openAll: opens every entry as a tab (desktop), or undefined to hide that button.
+     */
+    function showFileSelector(entries, openAll) {
         dropZone.style.display = 'none';
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
         fileList.replaceChildren();
+
+        const openAllLabel = openAll ? core.openAllLabel(entries.length) : null;
+        openAllAction = openAllLabel ? openAll : null;
+        openAllTabsButton.hidden = !openAllLabel;
+        if (openAllLabel) openAllTabsButton.textContent = openAllLabel;
 
         for (const entry of entries) {
             const item = document.createElement('div');

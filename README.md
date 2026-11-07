@@ -40,7 +40,9 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 The same viewer ships as a small native app built with [Tauri](https://tauri.app).
 
 - 🖱️ **Double-click to open**: registers as a viewer for `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`
-- 🪟 **One window per document**: open several files at once, or follow a link to another `.md` file
+- 🗂️ **Documents open as tabs**: open several files at once, or follow a link to another `.md` file, and
+  each gets a native macOS tab. Drag tabs between windows or out into their own, or use Window > Merge All Windows
+- ⌘T **File > New Tab** opens a tab to drop a file into; dropping a folder offers **Open all as tabs**
 - 🖼️ **Local images just work**: relative image paths resolve from the file's location on disk
 - ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
 - 🌙 **Dark mode**: follows your macOS appearance

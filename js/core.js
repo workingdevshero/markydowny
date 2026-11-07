@@ -106,6 +106,27 @@
         return slug;
     }
 
+    /** Most documents "Open all as tabs" opens at once; each tab is a window with its own webview. */
+    const MAX_OPEN_ALL = 50;
+
+    /**
+     * Label for the file selector's "Open all as tabs" button, or null when it
+     * shouldn't be offered (fewer than two files, or too many to open at once).
+     */
+    function openAllLabel(count) {
+        if (!Number.isInteger(count) || count < 2 || count > MAX_OPEN_ALL) return null;
+        return `Open all ${count} as tabs`;
+    }
+
+    /**
+     * 'next' for ⌃Tab, 'previous' for ⌃⇧Tab, otherwise null. The desktop app
+     * switches tabs with these; the webview sees them before the app's menu.
+     */
+    function tabStepForKey(event) {
+        if (!event || event.key !== 'Tab' || !event.ctrlKey || event.metaKey || event.altKey) return null;
+        return event.shiftKey ? 'previous' : 'next';
+    }
+
     function escapeHtml(text) {
         return String(text)
             .replace(/&/g, '&amp;')
@@ -126,6 +147,9 @@
         resolveRelativePath,
         slugify,
         uniqueSlug,
+        MAX_OPEN_ALL,
+        openAllLabel,
+        tabStepForKey,
         escapeHtml,
     };
 });
