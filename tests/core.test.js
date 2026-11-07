@@ -88,3 +88,25 @@ test('uniqueSlug de-duplicates repeated headings', () => {
     assert.equal(core.uniqueSlug('Usage', used), 'usage-2');
     assert.equal(core.uniqueSlug('!!!', used), 'section');
 });
+
+test('openAllLabel offers "Open all as tabs" for 2 to MAX_OPEN_ALL files', () => {
+    assert.equal(core.openAllLabel(2), 'Open all 2 as tabs');
+    assert.equal(core.openAllLabel(8), 'Open all 8 as tabs');
+    assert.equal(core.openAllLabel(core.MAX_OPEN_ALL), `Open all ${core.MAX_OPEN_ALL} as tabs`);
+    assert.equal(core.openAllLabel(core.MAX_OPEN_ALL + 1), null);
+    assert.equal(core.openAllLabel(1), null);
+    assert.equal(core.openAllLabel(0), null);
+    assert.equal(core.openAllLabel(undefined), null);
+});
+
+test('tabStepForKey maps ⌃Tab and ⌃⇧Tab to tab switches', () => {
+    const key = (props) => ({ key: 'Tab', ctrlKey: false, shiftKey: false, metaKey: false, altKey: false, ...props });
+    assert.equal(core.tabStepForKey(key({ ctrlKey: true })), 'next');
+    assert.equal(core.tabStepForKey(key({ ctrlKey: true, shiftKey: true })), 'previous');
+    assert.equal(core.tabStepForKey(key({})), null, 'plain Tab moves focus as usual');
+    assert.equal(core.tabStepForKey(key({ shiftKey: true })), null);
+    assert.equal(core.tabStepForKey(key({ ctrlKey: true, metaKey: true })), null);
+    assert.equal(core.tabStepForKey(key({ ctrlKey: true, altKey: true })), null);
+    assert.equal(core.tabStepForKey(key({ key: 'a', ctrlKey: true })), null);
+    assert.equal(core.tabStepForKey(null), null);
+});
