@@ -55,7 +55,7 @@ parsing and markup helpers; this pass is about what a person sees.
   found*, with a list to choose from and *Cancel*.
 - **Rendered view.** The markdown output, with relative images resolved from the dropped folder.
   The header shows the document's title, the fullscreen toggle and *Open another*, which returns
-  to the drop zone. (README.md still calls it *← Back to Drop Zone*; the page is right.)
+  to the drop zone.
 - **Light and dark.** The page follows `prefers-color-scheme`. Check both when the change touches
   styling (`browser_evaluate` can't switch it; use the browser's color-scheme emulation if it's
   available, otherwise say which scheme you saw).

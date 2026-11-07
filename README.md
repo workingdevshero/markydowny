@@ -48,7 +48,6 @@ The same viewer ships as a small native app built with [Tauri](https://tauri.app
 - ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
 - 🌙 **Dark mode**: follows your macOS appearance
 - 🔗 **Links** open in your default browser
-
 - 📂 **Watch a folder**: drop a folder (or `open -a Markydowny path/to/repo`) and choose **Watch this folder**. The window shows the most recently changed markdown file and switches to whichever one changes next, skipping hidden folders, `node_modules` and `target`. Pick a file from the list to stay on it
 
 ### Watch Claude edit your docs
