@@ -28,12 +28,17 @@
     const lightboxImage = $('lightboxImage');
     const lightboxClose = $('lightboxClose');
     const lightboxInfo = $('lightboxInfo');
+    const liveNotice = $('liveNotice');
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
     let blobUrls = [];
-    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title }
+    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title, path?, markdown }
     let currentSource = null;
+    // Bumped by every render, so a slow render can't overwrite a newer one.
+    let renderSeq = 0;
+    // While a reload's images load, keep re-applying its scroll anchor (until the reader scrolls).
+    let anchorHold = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -71,6 +76,9 @@
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && lightbox.style.display === 'block') closeLightbox();
     });
+    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(type => {
+        window.addEventListener(type, onUserInput, { passive: true });
+    });
 
     if (isDesktop) {
         initDesktop().catch(err => console.error('Desktop init failed:', err));
@@ -106,6 +114,10 @@
 
         // Finder / Dock / File > Open… route documents to a window and ping it.
         await tauri.event.listen('document-pending', loadPendingDocument);
+
+        // Live reload: the window's watch reports changes to the document it shows.
+        await tauri.event.listen('document-changed', (event) => onDocumentChanged(event.payload));
+        await tauri.event.listen('document-missing', (event) => onDocumentMissing(event.payload));
 
         // Native drag & drop gives real file paths (HTML5 drops don't in the app).
         await tauri.webview.getCurrentWebview().onDragDropEvent((event) => {
@@ -165,7 +177,38 @@
 
     async function showDesktopDocument(doc) {
         folderFiles.clear();
-        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name });
+        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
+        await watchDesktopDocument(doc.path);
+    }
+
+    /** Starts live reload for the document on screen, catching up if it changed meanwhile. */
+    async function watchDesktopDocument(path) {
+        try {
+            const now = await invoke('watch_document', { path });
+            if (!isShowingPath(path)) return;
+            if (now) {
+                onDocumentChanged(now);
+            } else {
+                showMissingNotice();
+            }
+        } catch (err) {
+            console.error('Live reload unavailable:', err);
+        }
+    }
+
+    function isShowingPath(path) {
+        return Boolean(currentSource && currentSource.kind === 'desktop' && currentSource.path === path);
+    }
+
+    function onDocumentChanged(doc) {
+        if (!isShowingPath(doc.path)) return;
+        hideMissingNotice();
+        if (doc.content === currentSource.markdown) return;
+        renderMarkdown(doc.content, { ...currentSource }, { reload: true });
+    }
+
+    function onDocumentMissing(payload) {
+        if (isShowingPath(payload.path)) showMissingNotice();
     }
 
     function setDocumentOpen(open, title) {
@@ -273,9 +316,14 @@
     // Rendering
     // ------------------------------------------------------------------
 
-    async function renderMarkdown(markdownText, source) {
+    /**
+     * Renders markdown into the content area. A new document starts at the top; a reload
+     * (same document, new content) keeps the reader's position.
+     */
+    async function renderMarkdown(markdownText, source, { reload = false } = {}) {
+        const seq = ++renderSeq;
         currentSource = source;
-        revokeBlobUrls();
+        if (!reload) revokeBlobUrls();
 
         let nodes;
         try {
@@ -291,10 +339,84 @@
             nodes = [renderError(markdownText)];
         }
 
+        if (seq !== renderSeq) return;
+        const anchor = reload ? captureAnchor() : null;
         markdownContent.replaceChildren(...nodes);
+        source.markdown = markdownText;
+        if (reload) {
+            keepAnchor(anchor);
+            return;
+        }
+        anchorHold = null;
         showMarkdownContent(source.title);
         markdownContent.scrollTop = 0;
         window.scrollTo(0, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Live reload: reading position and notices
+    // ------------------------------------------------------------------
+
+    /** Height of the sticky top bar covering the top of the page (0 when it isn't there). */
+    function topInset() {
+        const bar = document.querySelector('.topbar');
+        if (!bar) return 0;
+        const style = getComputedStyle(bar);
+        if (style.display === 'none' || style.position !== 'sticky') return 0;
+        return bar.getBoundingClientRect().height;
+    }
+
+    function blockRects() {
+        return Array.from(markdownContent.children, (el) => {
+            const rect = el.getBoundingClientRect();
+            return { top: rect.top + window.scrollY, height: rect.height };
+        });
+    }
+
+    function captureAnchor() {
+        return core.captureScrollAnchor(blockRects(), window.scrollY + topInset());
+    }
+
+    function restoreAnchor(anchor) {
+        const y = core.restoreScrollAnchor(anchor, blockRects());
+        if (y !== null) window.scrollTo(0, y - topInset());
+    }
+
+    /**
+     * Restores the anchor now, and again as images in the new content finish loading (they
+     * change the height of the blocks above), until the reader scrolls or a few seconds pass.
+     */
+    function keepAnchor(anchor) {
+        restoreAnchor(anchor);
+        const loading = Array.from(markdownContent.querySelectorAll('img')).filter(img => !img.complete);
+        if (loading.length === 0) {
+            anchorHold = null;
+            return;
+        }
+        const hold = { anchor };
+        anchorHold = hold;
+        const reapply = () => {
+            if (anchorHold === hold) restoreAnchor(anchor);
+        };
+        for (const img of loading) {
+            img.addEventListener('load', reapply, { once: true });
+            img.addEventListener('error', reapply, { once: true });
+        }
+        setTimeout(() => {
+            if (anchorHold === hold) anchorHold = null;
+        }, 3000);
+    }
+
+    function onUserInput() {
+        anchorHold = null;
+    }
+
+    function showMissingNotice() {
+        liveNotice.hidden = false;
+    }
+
+    function hideMissingNotice() {
+        liveNotice.hidden = true;
     }
 
     function renderError(markdownText) {
@@ -425,6 +547,7 @@
         fullscreenButton.style.display = 'inline-flex';
         docTitle.textContent = title || '';
         document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
+        hideMissingNotice();
         setDocumentOpen(true, title);
     }
 
@@ -446,7 +569,10 @@
 
         folderFiles.clear();
         revokeBlobUrls();
+        renderSeq++;
         currentSource = null;
+        anchorHold = null;
+        hideMissingNotice();
         fileInput.value = '';
         docTitle.textContent = '';
         document.title = DEFAULT_TITLE;

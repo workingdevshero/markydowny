@@ -115,7 +115,49 @@
             .replace(/'/g, '&#39;');
     }
 
+    // ------------------------------------------------------------------
+    // Live reload: keeping the reading position
+    // ------------------------------------------------------------------
+
+    /**
+     * Where the reader is, relative to the rendered blocks rather than as a raw offset, so an
+     * edit above the viewport (which changes the height of everything before it) doesn't move
+     * the text being read.
+     *
+     * blocks: [{ top, height }] for the top-level blocks in page coordinates, in order.
+     * y: the page offset of the top of the viewport.
+     * Returns { index, offset }: the first block that reaches into the viewport, and how far
+     * the viewport top is past that block's top (negative in the gap above it). null when there
+     * are no blocks.
+     */
+    function captureScrollAnchor(blocks, y) {
+        if (!blocks || blocks.length === 0) return null;
+        for (let index = 0; index < blocks.length; index++) {
+            const block = blocks[index];
+            if (block.top + block.height > y) {
+                return { index, offset: y - block.top };
+            }
+        }
+        const index = blocks.length - 1;
+        return { index, offset: y - blocks[index].top };
+    }
+
+    /**
+     * The page offset that puts an anchor from captureScrollAnchor back at the top of the
+     * viewport, given the new block positions. If the anchored block got shorter the offset is
+     * clamped to it, and a missing block falls back to the last one. null if it can't apply.
+     */
+    function restoreScrollAnchor(anchor, blocks) {
+        if (!anchor || !blocks || blocks.length === 0) return null;
+        const index = Math.min(Math.max(anchor.index, 0), blocks.length - 1);
+        const block = blocks[index];
+        const offset = Math.min(anchor.offset, Math.max(block.height, 0));
+        return Math.max(0, block.top + offset);
+    }
+
     return {
+        captureScrollAnchor,
+        restoreScrollAnchor,
         MARKDOWN_EXTENSIONS,
         isMarkdownName,
         isTextFile,

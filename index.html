@@ -691,6 +691,40 @@
             padding: 28px max(64px, calc((100vw - 860px) / 2));
         }
 
+        /* ---------- Live reload ---------- */
+
+        .live-notice {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            z-index: 150;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: calc(100vw - 32px);
+            padding: 8px 16px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            box-shadow: var(--shadow);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .live-notice::before {
+            content: "";
+            flex: none;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--coral);
+        }
+
+        .live-notice[hidden] {
+            display: none;
+        }
+
         /* ---------- Footer ---------- */
 
         .footer {
@@ -951,6 +985,8 @@
             </section>
 
             <article class="markdown-content" id="markdownContent"></article>
+
+            <div class="live-notice" id="liveNotice" role="status" hidden>This file was deleted or moved</div>
 
             <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
         </main>
