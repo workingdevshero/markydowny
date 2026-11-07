@@ -5,11 +5,13 @@
 //!
 //! * opening `.md` files from Finder (double-click / "Open With"), the Dock,
 //!   File > Open… or the command line, one window per document;
+//! * grouping those windows as native macOS tabs (see `tabs`);
 //! * reading files and folders by path, so relative images resolve;
 //! * scoped access to local images through Tauri's asset protocol.
 
 mod crash_reporting;
 mod docs;
+mod tabs;
 
 pub use crash_reporting::start as start_crash_reporting;
 
@@ -27,12 +29,17 @@ use tauri_plugin_dialog::DialogExt;
 
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
+const NEW_TAB_MENU_ID: &str = "new-tab";
 const PENDING_EVENT: &str = "document-pending";
 const MAX_DOCUMENT_BYTES: u64 = 25 * 1024 * 1024;
 
 #[derive(Default)]
 struct AppState {
     router: Mutex<DocumentRouter>,
+    /// Files macOS asked us to open before setup finished.
+    launch: Mutex<tabs::LaunchQueue>,
+    /// Which document each window shows, for tab titles.
+    open_documents: Mutex<tabs::OpenDocuments>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -71,16 +78,34 @@ fn read_document(path: String) -> Result<Document, String> {
     read_document_at(Path::new(&path))
 }
 
-/// Opens documents in idle windows (or new ones), like double-clicking in Finder.
+/// Opens documents like double-clicking them in Finder: the first in the
+/// calling window if it's idle, the rest as tabs beside it.
 #[tauri::command]
-fn open_documents(app: AppHandle, paths: Vec<String>) {
-    route_paths(&app, paths.into_iter().map(PathBuf::from).collect(), None);
+fn open_documents(app: AppHandle, window: WebviewWindow, paths: Vec<String>) {
+    route_paths(
+        &app,
+        paths.into_iter().map(PathBuf::from).collect(),
+        Some(window.label().to_string()),
+    );
 }
 
 /// Shows the native Open panel; picked files open in the calling window if it's idle.
 #[tauri::command]
 fn show_open_dialog(app: AppHandle, window: WebviewWindow) {
     open_with_dialog(&app, Some(window.label().to_string()));
+}
+
+/// ⌃Tab / ⌃⇧Tab from the page: selects the next or previous tab. (The webview
+/// gets those keys before the menu could.)
+#[tauri::command]
+fn select_tab(app: AppHandle, window: WebviewWindow, direction: String) {
+    let Some(step) = tabs::TabStep::parse(&direction) else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(move || tabs::native::select_tab(&window, step));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, window, step);
 }
 
 /// Expands dropped files/folders into the markdown files they contain.
@@ -107,23 +132,35 @@ fn allow_asset_files(app: AppHandle, paths: Vec<String>) {
 }
 
 /// Tracks whether a window is showing a document, and updates its title.
+/// With the document's `path`, tabs that share a file name are titled apart.
 #[tauri::command]
 fn set_document_open(
+    app: AppHandle,
     window: WebviewWindow,
     state: State<'_, AppState>,
     open: bool,
     title: Option<String>,
+    path: Option<String>,
 ) {
     state
         .router
         .lock()
         .unwrap()
         .set_occupied(window.label(), open);
-    let title = match (open, title) {
-        (true, Some(t)) if !t.is_empty() => t,
-        _ => "Markydowny".to_string(),
-    };
-    let _ = window.set_title(&title);
+    let path = path.filter(|p| open && !p.is_empty()).map(PathBuf::from);
+    if path.is_none() {
+        let title = match (open, title) {
+            (true, Some(t)) if !t.is_empty() => t,
+            _ => "Markydowny".to_string(),
+        };
+        let _ = window.set_title(&title);
+    }
+    state
+        .open_documents
+        .lock()
+        .unwrap()
+        .set(window.label(), path);
+    refresh_titles(&app);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,49 +208,130 @@ pub(crate) fn focused_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Op
         .find(|w| w.is_focused().unwrap_or(false))
 }
 
-fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) {
-    let state = app.state::<AppState>();
-    for path in paths.into_iter().filter(|p| p.is_file()) {
-        let labels = window_labels(app);
-        let placement = state
-            .router
-            .lock()
-            .unwrap()
-            .route(path, &labels, preferred.as_deref());
-        match placement {
-            Placement::Existing(label) => {
-                if let Some(window) = app.get_webview_window(&label) {
-                    let _ = app.emit_to(label.as_str(), PENDING_EVENT, ());
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            }
-            Placement::New(label) => {
-                if let Err(err) = create_document_window(app, &label) {
-                    eprintln!("failed to open window {label}: {err}");
-                    state.router.lock().unwrap().forget(&label);
-                }
-            }
+/// Label of the front document window, even while the app is in the background.
+fn front_window(app: &AppHandle) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let windows: Vec<WebviewWindow> = app.webview_windows().into_values().collect();
+        if let Some(label) = tabs::native::front_window(&windows) {
+            return Some(label);
+        }
+    }
+    focused_window(app).map(|w| w.label().to_string())
+}
+
+/// Retitles every tab showing a document, so duplicate names stay distinguishable.
+fn refresh_titles(app: &AppHandle) {
+    let titles = app.state::<AppState>().open_documents.lock().unwrap().titles();
+    for (label, title) in titles {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.set_title(&title);
         }
     }
 }
 
-fn create_document_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
+/// Opens `paths` together: the first in an idle window (`preferred`, then the
+/// front window, if idle), the rest as tabs after it; then selects the first.
+fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) {
+    // AppKit's tab calls need the main thread; this runs inline when already on it.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || place_documents(&handle, paths, preferred));
+}
+
+fn place_documents(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) {
+    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
+    if paths.is_empty() {
+        return;
+    }
+    let windows = window_labels(app);
+    let front = preferred
+        .filter(|p| windows.contains(p))
+        .or_else(|| front_window(app));
+    let state = app.state::<AppState>();
+    let steps = tabs::plan_batch(
+        &mut state.router.lock().unwrap(),
+        paths,
+        &windows,
+        front.as_deref(),
+    );
+    for step in &steps {
+        match &step.placement {
+            Placement::Existing(label) => {
+                let _ = app.emit_to(label.as_str(), PENDING_EVENT, ());
+            }
+            Placement::New(label) => {
+                if let Err(err) = create_document_window(app, label, step.tab_after.as_deref()) {
+                    eprintln!("failed to open window {label}: {err}");
+                    state.router.lock().unwrap().forget(label);
+                }
+            }
+        }
+    }
+    // Select the first document's tab and bring its window forward.
+    if let Some(window) = steps.first().and_then(|s| app.get_webview_window(s.label())) {
+        bring_forward(&window);
+    }
+}
+
+/// Selects the window's tab, brings it to the front and activates the app.
+/// `set_focus` alone does nothing to a tab that's never been selected (it
+/// isn't visible yet), so the window is shown first.
+fn bring_forward(window: &WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// Creates a document window: a tab right after `tab_after` when that window
+/// exists, otherwise a window of its own.
+fn create_document_window(
+    app: &AppHandle,
+    label: &str,
+    tab_after: Option<&str>,
+) -> tauri::Result<WebviewWindow> {
+    let anchor = tab_after.and_then(|l| app.get_webview_window(l));
     let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Markydowny")
         .inner_size(900.0, 1000.0)
-        .min_inner_size(400.0, 300.0);
+        .min_inner_size(400.0, 300.0)
+        .tabbing_identifier(tabs::TABBING_IDENTIFIER)
+        // Shown after it's been made a tab, so it never flashes up on its own.
+        .visible(false);
 
-    // Cascade new windows off whichever one is in front.
-    if let Some(anchor) = focused_window(app) {
-        if let (Ok(pos), Ok(scale)) = (anchor.outer_position(), anchor.scale_factor()) {
-            let pos: LogicalPosition<f64> = pos.to_logical(scale);
-            builder = builder.position(pos.x + 28.0, pos.y + 28.0);
+    // Cascade windows of their own off whichever one is in front.
+    if anchor.is_none() {
+        if let Some(front) = focused_window(app) {
+            if let (Ok(pos), Ok(scale)) = (front.outer_position(), front.scale_factor()) {
+                let pos: LogicalPosition<f64> = pos.to_logical(scale);
+                builder = builder.position(pos.x + 28.0, pos.y + 28.0);
+            }
         }
     }
     let window = builder.build()?;
-    let _ = window.set_focus();
+
+    #[cfg(target_os = "macos")]
+    {
+        tabs::native::prepare(&window);
+        if let Some(anchor) = &anchor {
+            tabs::native::add_tab(anchor, &window);
+        }
+    }
+    // Showing a tab selects it, so callers select the tab they want afterwards
+    // (the screen only updates once they're done). It has to be shown at least
+    // once anyway: AppKit treats a tab that has never been ordered in as
+    // hidden, and Window > Merge All Windows then leaves it behind.
+    window.show()?;
     Ok(window)
+}
+
+/// File > New Tab (⌘T) and the tab bar's + button: a tab showing the drop zone.
+fn new_tab(app: &AppHandle) {
+    let front = front_window(app);
+    let label = app.state::<AppState>().router.lock().unwrap().next_label();
+    match create_document_window(app, &label, front.as_deref()) {
+        Ok(window) => bring_forward(&window),
+        Err(err) => eprintln!("failed to open tab {label}: {err}"),
+    }
 }
 
 fn open_with_dialog(app: &AppHandle, preferred: Option<String>) {
@@ -232,17 +350,22 @@ fn open_with_dialog(app: &AppHandle, preferred: Option<String>) {
         });
 }
 
-/// The default macOS menu, plus File > Open… (⌘O).
+/// The default macOS menu, plus File > New Tab (⌘T) and Open… (⌘O). The
+/// Window menu's tab items are added natively, by `tabs::native`.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
+    let new_tab = MenuItemBuilder::with_id(NEW_TAB_MENU_ID, "New Tab")
+        .accelerator("CmdOrCtrl+T")
+        .build(app)?;
     let open = MenuItemBuilder::with_id(OPEN_MENU_ID, "Open…")
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
     for item in menu.items()? {
         if let MenuItemKind::Submenu(submenu) = item {
             if submenu.text()? == "File" {
-                submenu.prepend(&open)?;
-                submenu.insert(&PredefinedMenuItem::separator(app)?, 1)?;
+                submenu.prepend(&new_tab)?;
+                submenu.insert(&open, 1)?;
+                submenu.insert(&PredefinedMenuItem::separator(app)?, 2)?;
                 break;
             }
         }
@@ -277,6 +400,7 @@ pub fn run() {
             list_markdown_files,
             allow_asset_files,
             set_document_open,
+            select_tab,
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -285,21 +409,38 @@ pub fn run() {
                 if event.id() == OPEN_MENU_ID {
                     let preferred = focused_window(app).map(|w| w.label().to_string());
                     open_with_dialog(app, preferred);
+                } else if event.id() == NEW_TAB_MENU_ID {
+                    new_tab(app);
                 } else {
                     crash_reporting::handle_menu(app, event.id().as_ref());
                 }
             });
-            route_paths(handle, cli_paths(), Some(MAIN_WINDOW.to_string()));
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(main) = handle.get_webview_window(MAIN_WINDOW) {
+                    tabs::native::prepare(&main);
+                }
+                let button_handle = handle.clone();
+                tabs::native::install_new_tab_button(move || new_tab(&button_handle));
+                tabs::native::add_window_menu_items();
+            }
+            // The main window exists now, so files from the launch can fill it.
+            let mut paths = cli_paths();
+            let queued = handle.state::<AppState>().launch.lock().unwrap().finish();
+            #[cfg(debug_assertions)]
+            if !queued.is_empty() {
+                eprintln!("opening {} file(s) macOS sent before launch finished", queued.len());
+            }
+            paths.extend(queued);
+            route_paths(handle, paths, Some(MAIN_WINDOW.to_string()));
             Ok(())
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
-                window
-                    .state::<AppState>()
-                    .router
-                    .lock()
-                    .unwrap()
-                    .forget(window.label());
+                let state = window.state::<AppState>();
+                state.router.lock().unwrap().forget(window.label());
+                state.open_documents.lock().unwrap().set(window.label(), None);
+                refresh_titles(window.app_handle());
             }
         })
         .build(tauri::generate_context!())
@@ -308,20 +449,25 @@ pub fn run() {
     app.run(|app, event| {
         match event {
             // Finder double-click, "Open With", or dropping files on the Dock icon.
+            // On a cold launch this arrives before setup has created the main
+            // window, so the paths wait in the launch queue until it has.
             #[cfg(target_os = "macos")]
             RunEvent::Opened { urls } => {
                 let paths = urls.into_iter().filter_map(|u| u.to_file_path().ok()).collect();
-                route_paths(app, paths, None);
+                let ready = app.state::<AppState>().launch.lock().unwrap().offer(paths);
+                if let Some(paths) = ready {
+                    route_paths(app, paths, None);
+                }
             }
             // Clicking the Dock icon with no windows open brings back a blank viewer.
             #[cfg(target_os = "macos")]
             RunEvent::Reopen {
                 has_visible_windows: false,
                 ..
-            } => {
-                if app.webview_windows().is_empty() {
-                    let label = app.state::<AppState>().router.lock().unwrap().next_label();
-                    let _ = create_document_window(app, &label);
+            } if app.webview_windows().is_empty() => {
+                let label = app.state::<AppState>().router.lock().unwrap().next_label();
+                if let Ok(window) = create_document_window(app, &label, None) {
+                    bring_forward(&window);
                 }
             }
             _ => {}
