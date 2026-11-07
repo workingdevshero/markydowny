@@ -14,7 +14,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 - 🖼️ **Image Support**: Relative image paths in markdown are automatically resolved from folders
 - ⛶ **Fullscreen Mode**: Expand content for distraction-free reading
 - 📱 **Responsive Design**: Works great on desktop and mobile
-- ↩️ **Easy Reset**: Go back to drop zone to load another file
+- ↩️ **Easy Reset**: *Open another* takes you back to the drop zone to load another file
 
 ## How to Use
 
@@ -26,7 +26,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 3. If you dropped a folder with multiple markdown files, select which one you want to view from the list
 4. Watch your markdown render beautifully!
 5. Use the fullscreen button (⛶) for distraction-free reading
-6. Click the "← Back to Drop Zone" button to load another file
+6. Click *Open another* to load another file
 
 ## Supported File Types
 
@@ -40,13 +40,41 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 The same viewer ships as a small native app built with [Tauri](https://tauri.app).
 
 - 🖱️ **Double-click to open**: registers as a viewer for `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`
-- 🪟 **One window per document**: open several files at once, or follow a link to another `.md` file
+- 🪟 **One window per document**: open several files at once, or follow a link to another `.md` file. Opening a file that is already open reuses its window
 - 🖼️ **Local images just work**: relative image paths resolve from the file's location on disk
 - 🔄 **Live reload**: when the file changes on disk (another editor, an agent), the window re-renders it within a second and keeps your place
 - 👀 **Follow**: changed blocks light up briefly, and with **Follow** on the window keeps the latest change in view (scroll away to pause it, click *Resume* to jump back). Handy for watching an agent edit a document
 - ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
 - 🌙 **Dark mode**: follows your macOS appearance
 - 🔗 **Links** open in your default browser
+
+- 📂 **Watch a folder**: drop a folder (or `open -a Markydowny path/to/repo`) and choose **Watch this folder**. The window shows the most recently changed markdown file and switches to whichever one changes next, skipping hidden folders, `node_modules` and `target`. Pick a file from the list to stay on it
+
+### Watch Claude edit your docs
+
+The simple route: open the file (or folder) in Markydowny, then ask [Claude Code](https://claude.com/claude-code) to edit it. The window follows each edit as it lands.
+
+To have every markdown file Claude edits open by itself, add a `PostToolUse` hook to `.claude/settings.json` in your project, or to `~/.claude/settings.json` for all projects:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$(printf '%s' \"$f\" | tr '[:upper:]' '[:lower:]')\" in *.md|*.markdown|*.mdown|*.mkd|*.mkdn) open -g -a Markydowny \"$f\" ;; esac; true"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook reads the edited file's path (`tool_input.file_path`) from the JSON Claude Code passes on stdin, keeps markdown files only, and opens them with `open -g`, which leaves your terminal in front. The first edit to a file opens its window; later edits re-open a file that's already showing, so Markydowny keeps its one window, live-reloads it, and doesn't take focus. It needs [`jq`](https://jqlang.org) (`brew install jq`; recent macOS versions include it).
 
 ### Install
 

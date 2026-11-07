@@ -33,6 +33,17 @@ test('the Follow button and live status live in the top bar, hidden until a docu
     assert.match(topbar[1], /id="followLabel"/);
 });
 
+test('Watch this folder sits with the file list buttons, hidden by default', () => {
+    const selector = html.match(/<section class="file-selector" id="fileSelector">([\s\S]*?)<\/section>/);
+    assert.ok(selector, 'file selector not found');
+    const button = selector[1].match(/<button[^>]*id="watchFolderButton"[^>]*>/);
+    assert.ok(button, 'watchFolderButton is not in the file selector');
+    assert.match(button[0], /\shidden[\s>]/);
+    assert.match(button[0], /aria-pressed="false"/);
+    // .btn sets display, so hiding needs its own rule.
+    assert.match(html, /\.watch-folder-button\[hidden\]\s*\{\s*display:\s*none/);
+});
+
 test('the missing-file notice sits outside the rendered markdown', () => {
     assert.match(html, /id="liveNotice"[^>]*role="status"[^>]*hidden/);
     const article = html.match(/<article class="markdown-content" id="markdownContent">([\s\S]*?)<\/article>/);

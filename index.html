@@ -422,6 +422,18 @@
         .selector-buttons {
             display: flex;
             justify-content: flex-end;
+            gap: 8px;
+        }
+
+        /* Desktop only: follow whichever file in the dropped folder changes. */
+        .watch-folder-button[hidden] {
+            display: none;
+        }
+
+        .watch-folder-button[aria-pressed="true"] {
+            background: var(--accent-soft);
+            color: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
         }
 
         /* ---------- Rendered markdown ---------- */
@@ -1110,6 +1122,7 @@
                 <div class="file-list" id="fileList"></div>
                 <div class="selector-buttons">
                     <button class="btn btn-ghost" id="cancelSelector" type="button">Cancel</button>
+                    <button class="btn btn-primary watch-folder-button" id="watchFolderButton" type="button" aria-pressed="false" hidden>Watch this folder</button>
                 </div>
             </section>
 

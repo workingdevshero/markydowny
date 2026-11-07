@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::docs;
+
 /// How long the file system has to be quiet before a changed file is re-read.
 pub const QUIET: Duration = Duration::from_millis(100);
 /// The longest a continuous stream of events can delay a re-read.
@@ -34,6 +36,9 @@ const IDLE_TICK: Duration = Duration::from_millis(500);
 pub enum Scope {
     /// One file. Its parent directory is watched, non-recursively.
     File(PathBuf),
+    /// Every markdown file under a folder, with the same rules as
+    /// [`docs::collect_markdown_files`]: no hidden folders, `node_modules` or `target`.
+    Folder(PathBuf),
 }
 
 impl Scope {
@@ -52,12 +57,17 @@ impl Scope {
         Scope::File(canonical)
     }
 
+    pub fn folder(path: &Path) -> Scope {
+        Scope::Folder(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+    }
+
     /// Whether a file system event about `path` concerns this scope.
     pub fn matches(&self, path: &Path) -> bool {
         match self {
             Scope::File(file) => {
                 path.file_name() == file.file_name() && path.parent() == file.parent()
             }
+            Scope::Folder(root) => docs::is_watchable(root, path),
         }
     }
 
@@ -67,6 +77,7 @@ impl Scope {
                 file.parent().unwrap_or(Path::new("/")),
                 RecursiveMode::NonRecursive,
             ),
+            Scope::Folder(root) => (root, RecursiveMode::Recursive),
         }
     }
 
@@ -74,6 +85,10 @@ impl Scope {
     fn initial_files(&self) -> Vec<PathBuf> {
         match self {
             Scope::File(file) => vec![file.clone()],
+            Scope::Folder(root) => docs::collect_markdown_files(std::slice::from_ref(root))
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect(),
         }
     }
 }
@@ -353,6 +368,19 @@ mod tests {
     }
 
     #[test]
+    fn folder_scope_uses_the_markdown_collection_rules() {
+        let scope = Scope::Folder(PathBuf::from("/repo"));
+        assert!(scope.matches(Path::new("/repo/README.md")));
+        assert!(scope.matches(Path::new("/repo/docs/guide.markdown")));
+        assert!(!scope.matches(Path::new("/repo/src/main.rs")));
+        assert!(!scope.matches(Path::new("/repo/.git/HEAD.md")));
+        assert!(!scope.matches(Path::new("/repo/node_modules/x/README.md")));
+        assert!(!scope.matches(Path::new("/repo/target/doc/a.md")));
+        assert!(!scope.matches(Path::new("/repo/.hidden.md")));
+        assert!(!scope.matches(Path::new("/other/README.md")));
+    }
+
+    #[test]
     fn debouncer_waits_for_quiet() {
         let t0 = Instant::now();
         let mut d = Debouncer::new(ms(100), ms(1000));
@@ -594,5 +622,56 @@ mod tests {
             );
             assert!(rx.try_recv().is_err());
         }
+    }
+
+    #[test]
+    fn folder_watch_follows_the_latest_markdown_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        for dir in ["docs", ".git", "node_modules/pkg", "target"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(root.join("README.md"), "# readme\n").unwrap();
+        std::fs::write(root.join("docs/guide.md"), "# guide\n").unwrap();
+        let (h, seeded) = watch(Scope::folder(&root));
+        assert_eq!(seeded.len(), 2);
+
+        // Ignored: dependencies, git, build output, other file types, unchanged content.
+        std::fs::write(root.join("node_modules/pkg/README.md"), "x").unwrap();
+        std::fs::write(root.join(".git/notes.md"), "x").unwrap();
+        std::fs::write(root.join("target/out.md"), "x").unwrap();
+        std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("README.md"), "# readme\n").unwrap();
+        assert_eq!(h.drain(ms(800)), vec![]);
+
+        std::fs::write(root.join("docs/guide.md"), "# guide 2\n").unwrap();
+        match h.next() {
+            Some(Change::Changed {
+                path,
+                content,
+                previous,
+            }) => {
+                assert!(path.ends_with("docs/guide.md"));
+                assert_eq!(content, "# guide 2\n");
+                assert_eq!(previous.as_deref(), Some("# guide\n"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        // Two files in one burst: the later one wins.
+        std::fs::write(root.join("docs/guide.md"), "# guide 3\n").unwrap();
+        std::fs::write(root.join("README.md"), "# readme 2\n").unwrap();
+        let changes = h.drain(ms(800));
+        let last = changes.last().cloned();
+        assert!(
+            matches!(&last, Some(Change::Changed { path, .. }) if path.ends_with("README.md")),
+            "{changes:?}"
+        );
+
+        // A new file appears.
+        std::fs::write(root.join("docs/new.md"), "# new\n").unwrap();
+        assert!(
+            matches!(h.next(), Some(Change::Changed { path, previous: None, .. }) if path.ends_with("docs/new.md"))
+        );
     }
 }

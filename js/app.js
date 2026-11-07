@@ -32,6 +32,7 @@
     const followButton = $('followButton');
     const followLabel = $('followLabel');
     const liveStatus = $('liveStatus');
+    const watchFolderButton = $('watchFolderButton');
 
     const BLOCK_MARK = 'markydowny-block:';
     const FOLLOW_KEY = 'markydowny.follow';
@@ -58,6 +59,9 @@
     let follow = { mode: loadFollowPreference() ? 'following' : 'off', target: null };
     let updatedAt = null;
     let updatedTimer = null;
+    // Desktop: the folder behind the file list, { root, name, following }. While following,
+    // the window shows whichever markdown file in it changed last.
+    let desktopFolder = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -96,6 +100,7 @@
         if (e.key === 'Escape' && lightbox.style.display === 'block') closeLightbox();
     });
     followButton.addEventListener('click', toggleFollow);
+    watchFolderButton.addEventListener('click', toggleWatchFolder);
     ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(type => {
         window.addEventListener(type, onUserInput, { passive: true });
     });
@@ -158,11 +163,22 @@
 
     async function loadPendingDocument() {
         try {
-            const doc = await invoke('take_pending_document');
-            if (doc) {
-                closeFileSelector();
-                await showDesktopDocument(doc);
+            const pending = await invoke('take_pending_document');
+            if (!pending) return;
+            if (pending.folder) {
+                // A folder opened from Finder or `open -a`: offer its files, and watching it.
+                await handleDesktopDrop([pending.folder]);
+                return;
             }
+            if (isFollowingFolder() && isInFolder(pending.path)) {
+                // Opened from inside the folder this window follows: switch to it, keep following.
+                await showFolderFile(pending, null);
+                return;
+            }
+            closeFileSelector();
+            desktopFolder = null;
+            renderWatchFolderButton();
+            await showDesktopDocument(pending);
         } catch (err) {
             showDropZone();
             alert(String(err));
@@ -178,17 +194,26 @@
         }
         if (entries.length === 1) {
             closeFileSelector();
+            desktopFolder = null;
+            renderWatchFolderButton();
             await loadDesktopPath(entries[0].path);
             return;
         }
+        // One dropped item with several files in it is a folder, which can be watched.
+        const root = paths.length === 1 ? paths[0].replace(/\/+$/, '') : null;
+        desktopFolder = root ? { root, name: core.basename(root), following: false } : null;
         showFileSelector(entries.map(entry => ({
             name: core.basename(entry.path),
             display: entry.display,
+            path: entry.path,
             load: () => loadDesktopPath(entry.path),
         })));
     }
 
+    /** Shows a file picked by hand. In a watched folder this pins it: the window stops switching. */
     async function loadDesktopPath(path) {
+        if (desktopFolder) desktopFolder.following = false;
+        renderWatchFolderButton();
         try {
             await showDesktopDocument(await invoke('read_document', { path }));
         } catch (err) {
@@ -198,8 +223,10 @@
 
     async function showDesktopDocument(doc) {
         folderFiles.clear();
-        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
+        const title = desktopFolder ? folderTitle(doc) : doc.name;
+        await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title, path: doc.path });
         setLive(true);
+        selectFileInList(doc.path);
         await watchDesktopDocument(doc.path);
     }
 
@@ -222,15 +249,114 @@
         return Boolean(currentSource && currentSource.kind === 'desktop' && currentSource.path === path);
     }
 
+    /**
+     * A watched document changed. In a followed folder, a change to another file switches to
+     * it (highlighting its edit against the content it had before).
+     */
     function onDocumentChanged(doc) {
-        if (!isShowingPath(doc.path)) return;
+        if (!currentSource || currentSource.kind !== 'desktop') return;
+        if (doc.path !== currentSource.path) {
+            if (isFollowingFolder() && isInFolder(doc.path)) {
+                showFolderFile(doc, typeof doc.previous === 'string' ? doc.previous : '');
+            }
+            return;
+        }
         hideMissingNotice();
-        if (doc.content === currentSource.markdown) return;
-        renderMarkdown(doc.content, { ...currentSource }, { reload: true });
+        if (doc.content === currentSource.markdown) {
+            // Already showing this content, but switched to without knowing what changed
+            // (opened while following): the watch's report still has the edit to highlight.
+            if (currentSource.unhighlighted && typeof doc.previous === 'string' && doc.previous !== doc.content) {
+                renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true, previous: doc.previous });
+            }
+            return;
+        }
+        renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true });
     }
 
     function onDocumentMissing(payload) {
         if (isShowingPath(payload.path)) showMissingNotice();
+    }
+
+    // ------------------------------------------------------------------
+    // Desktop: following a folder
+    // ------------------------------------------------------------------
+
+    function isFollowingFolder() {
+        return Boolean(desktopFolder && desktopFolder.following);
+    }
+
+    function isInFolder(path) {
+        return Boolean(desktopFolder && path && path.startsWith(desktopFolder.root + '/'));
+    }
+
+    function folderTitle(doc) {
+        return `${desktopFolder.name} › ${doc.name}`;
+    }
+
+    /** Watch this folder (follow whichever file changes), or stop and stay on the current file. */
+    async function toggleWatchFolder() {
+        if (!desktopFolder) return;
+        if (desktopFolder.following) {
+            desktopFolder.following = false;
+            renderWatchFolderButton();
+            if (currentSource && currentSource.path) await watchDesktopDocument(currentSource.path);
+            return;
+        }
+        try {
+            const result = await invoke('watch_folder', { path: desktopFolder.root });
+            desktopFolder = { root: result.root, name: result.name, following: true };
+            renderWatchFolderButton();
+            if (result.document) {
+                await showFolderFile(result.document, null, { fresh: true });
+            }
+        } catch (err) {
+            alert(String(err));
+        }
+    }
+
+    /**
+     * Shows a file of the followed folder. `previous` is its earlier content (to highlight the
+     * edit), or null when unknown; `fresh` starts it as a new document.
+     */
+    async function showFolderFile(doc, previous, { fresh = false } = {}) {
+        // Already on screen as it is (the watch got there first): keep its highlight.
+        if (!fresh && isShowingPath(doc.path) && doc.content === currentSource.markdown) return;
+        folderFiles.clear();
+        const source = {
+            kind: 'desktop',
+            dir: doc.dir,
+            title: folderTitle(doc),
+            path: doc.path,
+            unhighlighted: previous === null,
+        };
+        if (fresh || !rendered || currentSource === null) {
+            await renderMarkdown(doc.content, source);
+            setLive(true);
+        } else {
+            await renderMarkdown(doc.content, source, {
+                reload: true,
+                previous: previous === null ? doc.content : previous,
+            });
+        }
+        selectFileInList(doc.path);
+    }
+
+    function renderWatchFolderButton() {
+        const show = Boolean(isDesktop && desktopFolder);
+        watchFolderButton.hidden = !show;
+        if (!show) return;
+        const on = desktopFolder.following;
+        watchFolderButton.setAttribute('aria-pressed', String(on));
+        watchFolderButton.textContent = on ? 'Watching folder' : 'Watch this folder';
+        watchFolderButton.title = on
+            ? 'Showing whichever markdown file changes. Click to stay on this file.'
+            : 'Show whichever markdown file in this folder changes next';
+    }
+
+    function selectFileInList(path) {
+        for (const item of fileList.querySelectorAll('.file-item')) {
+            item.classList.toggle('selected', item.dataset.path === path);
+        }
     }
 
     function setDocumentOpen(open, title) {
@@ -368,6 +494,9 @@
             commitBlocks(built, null);
             anchorHold = null;
             dispatchFollow({ type: 'reset' });
+            // "Updated ..." describes this document's reloads, which haven't happened yet.
+            updatedAt = null;
+            liveStatus.hidden = true;
             showMarkdownContent(source.title);
             markdownContent.scrollTop = 0;
             window.scrollTo(0, 0);
@@ -390,6 +519,7 @@
         const anchor = switching ? null : captureAnchor();
 
         commitBlocks(built, reuse ? diff : null);
+        if (switching) showMarkdownContent(source.title);
         if (anchor) {
             restoreAnchor({ ...anchor, index: core.mapBlockIndex(anchor.index, diff) });
         } else {
@@ -878,6 +1008,8 @@
         anchorHold = null;
         hideMissingNotice();
         setLive(false);
+        desktopFolder = null;
+        renderWatchFolderButton();
         fileInput.value = '';
         docTitle.textContent = '';
         document.title = DEFAULT_TITLE;
@@ -891,17 +1023,19 @@
         fullscreenButton.setAttribute('aria-pressed', String(entering));
     }
 
-    /** entries: [{ name, display, load }] */
+    /** entries: [{ name, display, path?, load }] */
     function showFileSelector(entries) {
         dropZone.style.display = 'none';
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
         fileList.replaceChildren();
+        renderWatchFolderButton();
 
         for (const entry of entries) {
             const item = document.createElement('div');
             item.className = 'file-item';
+            item.dataset.path = entry.path || '';
             item.innerHTML = `
                 <span class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
                 <div>
@@ -909,10 +1043,20 @@
                     <div class="file-path">${core.escapeHtml(entry.display)}</div>
                 </div>
             `;
-            item.addEventListener('click', () => {
+            // A button to keyboards and assistive tech, so a file can be picked without a mouse.
+            item.setAttribute('role', 'button');
+            item.tabIndex = 0;
+            const pick = () => {
                 fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
                 entry.load();
+            };
+            item.addEventListener('click', pick);
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    pick();
+                }
             });
             fileList.appendChild(item);
         }

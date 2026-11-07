@@ -34,6 +34,8 @@ const PENDING_EVENT: &str = "document-pending";
 const CHANGED_EVENT: &str = "document-changed";
 const MISSING_EVENT: &str = "document-missing";
 const MAX_DOCUMENT_BYTES: u64 = 25 * 1024 * 1024;
+/// How long to wait before deciding whether re-opening an open document should focus it.
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Default)]
 struct AppState {
@@ -80,6 +82,23 @@ struct MissingPayload {
     path: String,
 }
 
+/// What `take_pending_document` hands a window: a document, or a folder to choose from.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Pending {
+    Document(Document),
+    Folder { folder: String },
+}
+
+/// Result of `watch_folder`.
+#[derive(Debug, Serialize)]
+struct FolderWatch {
+    root: String,
+    name: String,
+    /// The most recently modified markdown file, shown first.
+    document: Option<Document>,
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 pub struct MarkdownEntry {
     path: String,
@@ -96,9 +115,15 @@ pub struct MarkdownEntry {
 fn take_pending_document(
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Option<Document>, String> {
+) -> Result<Option<Pending>, String> {
     let pending = state.router.lock().unwrap().take_pending(window.label());
-    pending.map(|path| read_document_at(&path)).transpose()
+    match pending {
+        Some(path) if path.is_dir() => Ok(Some(Pending::Folder {
+            folder: path.to_string_lossy().into_owned(),
+        })),
+        Some(path) => read_document_at(&path).map(|d| Some(Pending::Document(d))),
+        None => Ok(None),
+    }
 }
 
 /// Reads a document for display in the calling window.
@@ -185,10 +210,54 @@ fn watch_document(
     )
     .map_err(|e| format!("Can't watch {path}: {e}"))?;
     state.set_watch(&label, Some(watch));
+    state
+        .router
+        .lock()
+        .unwrap()
+        .set_showing(&label, Some(Path::new(&path)));
     Ok(seeded
         .into_iter()
         .next()
         .map(|(path, content)| document_for(&path, content)))
+}
+
+/// Follows a folder in the calling window: watches every markdown file under it (the same
+/// files the drop list shows) and reports whichever changes, as `document-changed` events with
+/// the file's previous content. Replaces the window's watch. Returns the most recently
+/// modified file to show first.
+#[tauri::command(async)]
+fn watch_folder(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<FolderWatch, String> {
+    let label = window.label().to_string();
+    let root = Path::new(&path);
+    if !root.is_dir() {
+        return Err(format!("{path} is not a folder"));
+    }
+    let (watch, seeded) = watch::Watch::start(
+        watch::Scope::folder(root),
+        |p| read_text(p).ok(),
+        change_sink(app, label.clone()),
+    )
+    .map_err(|e| format!("Can't watch {path}: {e}"))?;
+    state.set_watch(&label, Some(watch));
+    state.router.lock().unwrap().set_folder(&label, Some(root));
+
+    let latest = seeded
+        .into_iter()
+        .max_by_key(|(p, _)| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    Ok(FolderWatch {
+        name: root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned()),
+        root: root.to_string_lossy().into_owned(),
+        document: latest.map(|(path, content)| document_for(&path, content)),
+    })
 }
 
 /// Forwards a watch's changes to one window.
@@ -276,7 +345,7 @@ pub(crate) fn focused_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Op
 
 fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) {
     let state = app.state::<AppState>();
-    for path in paths.into_iter().filter(|p| p.is_file()) {
+    for path in paths.into_iter().filter(|p| p.is_file() || p.is_dir()) {
         let labels = window_labels(app);
         let placement = state
             .router
@@ -297,8 +366,35 @@ fn route_paths(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<String>) 
                     state.router.lock().unwrap().forget(&label);
                 }
             }
+            // Already open (or in a followed folder). Live reload keeps it current, so this
+            // only decides about focus; see `focus_if_active`.
+            Placement::Showing(label) => focus_if_active(app, &label),
+            Placement::InFolder(label) => {
+                let _ = app.emit_to(label.as_str(), PENDING_EVENT, ());
+                focus_if_active(app, &label);
+            }
         }
     }
+}
+
+/// Re-opening an open document brings its window forward only if Markydowny is (or is
+/// becoming) the active app: true for a Finder double-click, `open -a` and File > Open…, but
+/// not for `open -g`. A Claude Code hook re-opens a file after every edit with `open -g`, and
+/// that mustn't pull focus away from the terminal. The check waits briefly because Launch
+/// Services activates the app around the same time it delivers the open request.
+fn focus_if_active(app: &AppHandle, label: &str) {
+    let app = app.clone();
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(FOCUS_SETTLE);
+        if focused_window(&app).is_none() {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    });
 }
 
 fn create_document_window(app: &AppHandle, label: &str) -> tauri::Result<WebviewWindow> {
@@ -362,7 +458,7 @@ fn cli_paths() -> Vec<PathBuf> {
     std::env::args_os()
         .skip(1)
         .map(PathBuf::from)
-        .filter(|p| p.is_file())
+        .filter(|p| p.is_file() || p.is_dir())
         .collect()
 }
 
@@ -381,6 +477,7 @@ pub fn run() {
             allow_asset_files,
             set_document_open,
             watch_document,
+            watch_folder,
         ])
         .setup(|app| {
             let handle = app.handle();
