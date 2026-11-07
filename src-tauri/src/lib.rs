@@ -254,17 +254,27 @@ fn place_documents(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<Strin
         &windows,
         front.as_deref(),
     );
-    for step in &steps {
+    // Create the new windows in document order (Merge All Windows orders tabs
+    // by window creation), but don't show them yet.
+    for (index, step) in steps.iter().enumerate() {
         match &step.placement {
             Placement::Existing(label) => {
                 let _ = app.emit_to(label.as_str(), PENDING_EVENT, ());
             }
             Placement::New(label) => {
-                if let Err(err) = create_document_window(app, label, step.tab_after.as_deref()) {
+                let on_its_own = index == 0 && step.tab_after.is_none();
+                if let Err(err) = build_document_window(app, label, on_its_own) {
                     eprintln!("failed to open window {label}: {err}");
                     state.router.lock().unwrap().forget(label);
                 }
             }
+        }
+    }
+    // Then add them to the tab group in `attach_order`, so the tab bar ends
+    // up scrolled to the batch's start.
+    for (label, anchor) in tabs::attach_order(&steps) {
+        if let Some(window) = app.get_webview_window(label) {
+            attach_or_show(app, &window, anchor);
         }
     }
     // Select the first document's tab and bring its window forward.
@@ -289,17 +299,28 @@ fn create_document_window(
     label: &str,
     tab_after: Option<&str>,
 ) -> tauri::Result<WebviewWindow> {
-    let anchor = tab_after.and_then(|l| app.get_webview_window(l));
+    let on_its_own = tab_after.and_then(|l| app.get_webview_window(l)).is_none();
+    let window = build_document_window(app, label, on_its_own)?;
+    attach_or_show(app, &window, tab_after);
+    Ok(window)
+}
+
+/// Builds a hidden document window. `on_its_own` cascades it off the front
+/// window, for one that won't become a tab.
+fn build_document_window(
+    app: &AppHandle,
+    label: &str,
+    on_its_own: bool,
+) -> tauri::Result<WebviewWindow> {
     let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Markydowny")
         .inner_size(900.0, 1000.0)
         .min_inner_size(400.0, 300.0)
         .tabbing_identifier(tabs::TABBING_IDENTIFIER)
-        // Shown after it's been made a tab, so it never flashes up on its own.
+        // Shown once it's a tab, so it never flashes up on its own.
         .visible(false);
 
-    // Cascade windows of their own off whichever one is in front.
-    if anchor.is_none() {
+    if on_its_own {
         if let Some(front) = focused_window(app) {
             if let (Ok(pos), Ok(scale)) = (front.outer_position(), front.scale_factor()) {
                 let pos: LogicalPosition<f64> = pos.to_logical(scale);
@@ -308,20 +329,22 @@ fn create_document_window(
         }
     }
     let window = builder.build()?;
-
     #[cfg(target_os = "macos")]
-    {
-        tabs::native::prepare(&window);
-        if let Some(anchor) = &anchor {
-            tabs::native::add_tab(anchor, &window);
-        }
-    }
-    // Showing a tab selects it, so callers select the tab they want afterwards
-    // (the screen only updates once they're done). It has to be shown at least
-    // once anyway: AppKit treats a tab that has never been ordered in as
-    // hidden, and Window > Merge All Windows then leaves it behind.
-    window.show()?;
+    tabs::native::prepare(&window);
     Ok(window)
+}
+
+/// Adds `window` as a tab right after `tab_after` (when that window exists),
+/// then shows it. Showing a tab selects it; every tab has to be shown once, or
+/// AppKit treats it as hidden and Window > Merge All Windows leaves it behind.
+fn attach_or_show(app: &AppHandle, window: &WebviewWindow, tab_after: Option<&str>) {
+    #[cfg(target_os = "macos")]
+    if let Some(anchor) = tab_after.and_then(|l| app.get_webview_window(l)) {
+        tabs::native::add_tab(&anchor, window);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, tab_after);
+    let _ = window.show();
 }
 
 /// File > New Tab (⌘T) and the tab bar's + button: a tab showing the drop zone.

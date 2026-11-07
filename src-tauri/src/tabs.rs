@@ -75,6 +75,38 @@ pub fn plan_batch(
     steps
 }
 
+/// How to add a batch's new windows to the tab group: `(window, insert right
+/// after this one)`, in the order to do it. The first document's window goes
+/// beside its `tab_after`; the rest are each inserted right after the first
+/// document's window, last to first, which puts them in document order.
+///
+/// Why not first to last, each after the previous one: when the tabs don't fit
+/// the tab bar, AppKit keeps the most recently added tab in view and squeezes
+/// the ones scrolled past into slivers. Added first to last, the bar stayed
+/// scrolled to the batch's end, and selecting the first document then left
+/// the tabs between it and the visible ones as slivers (e.g. 4.md, then 5.md
+/// and 6.md as slivers, then 7.md to 12.md). Last to first, the last tab added
+/// sits right after the first document, so the bar stays at the start and
+/// only the tabs at its far end are squeezed, as in Safari.
+///
+/// The windows themselves are still created in document order, because
+/// Window > Merge All Windows orders tabs by when their windows were created.
+pub fn attach_order(steps: &[Step]) -> Vec<(&str, Option<&str>)> {
+    let Some(first) = steps.first() else {
+        return Vec::new();
+    };
+    let lead = match first.placement {
+        Placement::New(_) => Some((first.label(), first.tab_after.as_deref())),
+        Placement::Existing(_) => None,
+    };
+    let rest = steps[1..]
+        .iter()
+        .rev()
+        .filter(|s| matches!(s.placement, Placement::New(_)))
+        .map(|s| (s.label(), Some(first.label())));
+    lead.into_iter().chain(rest).collect()
+}
+
 // ---------------------------------------------------------------------------
 // Files opened before launch finishes
 // ---------------------------------------------------------------------------
@@ -526,6 +558,90 @@ mod tests {
             Some("gone"),
         );
         assert_eq!(steps, vec![new_tab("doc-1", Some("main"))]);
+    }
+
+    /// Carries out `attach_order(steps)` the way AppKit's
+    /// `addTabbedWindow:ordered:` would, on a tab bar holding `bar`. Returns
+    /// the final tab order and the order the tabs were added in.
+    fn attach(bar: &[&str], steps: &[Step]) -> (Vec<String>, Vec<String>) {
+        let mut tabs = labels(bar);
+        let mut added = Vec::new();
+        for (label, anchor) in attach_order(steps) {
+            match anchor {
+                Some(anchor) => {
+                    let at = tabs
+                        .iter()
+                        .position(|t| t == anchor)
+                        .expect("anchor exists");
+                    tabs.insert(at + 1, label.to_string());
+                }
+                None => tabs.push(label.to_string()),
+            }
+            added.push(label.to_string());
+        }
+        (tabs, added)
+    }
+
+    #[test]
+    fn cold_launch_batch_is_added_in_document_order_ending_at_the_start() {
+        // 9 files: main takes the first, 8 new tabs follow.
+        let names: Vec<String> = (1..=9).map(|n| format!("/{n}.md")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut router = DocumentRouter::default();
+        let steps = plan_batch(&mut router, paths(&names), &labels(&["main"]), Some("main"));
+        let in_document_order: Vec<String> = steps.iter().map(|s| s.label().to_string()).collect();
+        let (tabs, added) = attach(&["main"], &steps);
+        assert_eq!(tabs, in_document_order);
+        // Added last to first: the last tab added is the one right after main,
+        // so the tab bar isn't left scrolled to the end when main is selected.
+        let expected: Vec<String> = (1..=8).rev().map(|n| format!("doc-{n}")).collect();
+        assert_eq!(added, expected);
+    }
+
+    #[test]
+    fn batch_beside_a_busy_front_tab_is_added_in_document_order() {
+        // `open -a` with three files into a window whose front tab, "x", sits
+        // between "w" and "y". The first file's tab goes in first, beside "x".
+        let mut router = DocumentRouter::default();
+        for label in ["w", "x", "y"] {
+            router.set_occupied(label, true);
+        }
+        let steps = plan_batch(
+            &mut router,
+            paths(&["/a.md", "/b.md", "/c.md"]),
+            &labels(&["w", "x", "y"]),
+            Some("x"),
+        );
+        let (tabs, added) = attach(&["w", "x", "y"], &steps);
+        assert_eq!(tabs, labels(&["w", "x", "doc-1", "doc-2", "doc-3", "y"]));
+        assert_eq!(added, labels(&["doc-1", "doc-3", "doc-2"]));
+    }
+
+    #[test]
+    fn batch_with_no_windows_starts_a_window_then_adds_tabs() {
+        let mut router = DocumentRouter::default();
+        let steps = plan_batch(&mut router, paths(&["/a.md", "/b.md", "/c.md"]), &[], None);
+        assert_eq!(
+            attach_order(&steps),
+            [
+                ("doc-1", None),
+                ("doc-3", Some("doc-1")),
+                ("doc-2", Some("doc-1"))
+            ]
+        );
+        assert_eq!(attach(&[], &steps).0, labels(&["doc-1", "doc-2", "doc-3"]));
+    }
+
+    #[test]
+    fn single_document_into_an_idle_window_adds_no_tabs() {
+        let mut router = DocumentRouter::default();
+        let steps = plan_batch(
+            &mut router,
+            paths(&["/a.md"]),
+            &labels(&["main"]),
+            Some("main"),
+        );
+        assert!(attach_order(&steps).is_empty());
     }
 
     #[test]
