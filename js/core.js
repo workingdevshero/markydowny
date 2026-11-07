@@ -155,7 +155,112 @@
         return Math.max(0, block.top + offset);
     }
 
+    // ------------------------------------------------------------------
+    // Live reload: what changed, and following it
+    // ------------------------------------------------------------------
+
+    /**
+     * Compares the raw text of the old and new top-level blocks. Everything between the
+     * unchanged start and the unchanged end is the change.
+     *
+     * Returns { changed, start, end, oldEnd, removedBefore }:
+     *   new blocks [start, end) are new or changed; they replace old blocks [start, oldEnd).
+     *   removedBefore: when blocks were only removed, the index in the new list they were
+     *   removed before (=== newRaws.length when removed from the end); otherwise null.
+     */
+    function changedBlocks(oldRaws, newRaws) {
+        const limit = Math.min(oldRaws.length, newRaws.length);
+        let start = 0;
+        while (start < limit && oldRaws[start] === newRaws[start]) start++;
+        // The suffix may not overlap the prefix, or repeated blocks would be counted twice.
+        let suffix = 0;
+        while (
+            suffix < limit - start &&
+            oldRaws[oldRaws.length - 1 - suffix] === newRaws[newRaws.length - 1 - suffix]
+        ) {
+            suffix++;
+        }
+        const end = newRaws.length - suffix;
+        const oldEnd = oldRaws.length - suffix;
+        const changed = end > start || oldEnd > start;
+        const removedBefore = changed && end === start ? start : null;
+        return { changed, start, end, oldEnd, removedBefore };
+    }
+
+    /** Where old block `index` is after a change from changedBlocks. */
+    function mapBlockIndex(index, diff) {
+        if (!diff || !diff.changed || index < diff.start) return index;
+        if (index >= diff.oldEnd) return index + (diff.end - diff.oldEnd);
+        return Math.min(index, Math.max(diff.end - 1, diff.start));
+    }
+
+    /** The block a reload should draw attention to: the first changed one, or the removal point. */
+    function changeTarget(diff, blockCount) {
+        if (!diff || !diff.changed || blockCount === 0) return null;
+        const index = diff.end > diff.start ? diff.start : diff.removedBefore;
+        return Math.min(index, blockCount - 1);
+    }
+
+    /**
+     * Follow mode as a state machine. state: { mode: 'off' | 'following' | 'paused', target }
+     * where target is the block of the latest change (or null).
+     *
+     * Events:
+     *   { type: 'reload', target, visible } - the document changed; visible: whether the
+     *       target block is already in view.
+     *   { type: 'userScroll' } - the reader scrolled. Following pauses, like a terminal.
+     *   { type: 'toggle' } - the Follow button. Off or paused -> following, jumping to the
+     *       latest change; following -> off.
+     *   { type: 'reset' } - a different document: forget the target, un-pause.
+     * Returns { state, scrollTo } where scrollTo is a block index to bring into view, or null.
+     */
+    function followReducer(state, event) {
+        const next = { mode: state.mode, target: state.target };
+        let scrollTo = null;
+        switch (event.type) {
+            case 'reload':
+                next.target = event.target === undefined ? null : event.target;
+                if (next.mode === 'following' && next.target !== null && !event.visible) {
+                    scrollTo = next.target;
+                }
+                break;
+            case 'userScroll':
+                if (next.mode === 'following') next.mode = 'paused';
+                break;
+            case 'toggle':
+                if (next.mode === 'following') {
+                    next.mode = 'off';
+                } else {
+                    next.mode = 'following';
+                    scrollTo = next.target;
+                }
+                break;
+            case 'reset':
+                next.target = null;
+                if (next.mode === 'paused') next.mode = 'following';
+                break;
+        }
+        return { state: next, scrollTo };
+    }
+
+    /** "Updated just now", "Updated 12s ago", "Updated 3 min ago", ... */
+    function formatUpdated(elapsedMs) {
+        const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+        if (seconds < 5) return 'Updated just now';
+        if (seconds < 60) return `Updated ${seconds}s ago`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `Updated ${minutes} min ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `Updated ${hours} h ago`;
+        return `Updated ${Math.floor(hours / 24)} d ago`;
+    }
+
     return {
+        changedBlocks,
+        mapBlockIndex,
+        changeTarget,
+        followReducer,
+        formatUpdated,
         captureScrollAnchor,
         restoreScrollAnchor,
         MARKDOWN_EXTENSIONS,

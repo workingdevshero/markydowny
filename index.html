@@ -82,6 +82,8 @@
             --accent-text: #ffffff;
             --coral: #ef7f63;
             --code-bg: #f4f5f7;
+            --change-bg: rgba(239, 127, 99, 0.16);
+            --change-edge: #e0603f;
             --shadow: 0 1px 2px rgba(29, 38, 53, 0.04), 0 8px 24px rgba(29, 38, 53, 0.06);
             --radius: 16px;
             --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -102,6 +104,8 @@
                 --accent-text: #0f1626;
                 --coral: #f2957d;
                 --code-bg: #20252e;
+                --change-bg: rgba(242, 149, 125, 0.17);
+                --change-edge: #f2957d;
                 --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
             }
         }
@@ -725,6 +729,80 @@
             display: none;
         }
 
+        /* Follow and "Updated ..." live in the top bar, shown while a document is watched. */
+        .live-status,
+        .follow-button {
+            display: none;
+        }
+
+        body.live .follow-button {
+            display: inline-flex;
+        }
+
+        body.live .live-status:not([hidden]) {
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .live-status {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .follow-button[aria-pressed="true"] {
+            color: var(--accent);
+            background: var(--accent-soft);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+        }
+
+        .follow-button.paused {
+            color: var(--coral);
+            border-color: color-mix(in srgb, var(--coral) 55%, var(--border));
+        }
+
+        /* Changed blocks: a tint (drawn with shadows, so the block's own background survives)
+           that fades out. Removed blocks: a thin line where they were. */
+        .markdown-content .block-changed {
+            border-radius: 4px;
+            animation: block-changed 2.4s ease-out forwards;
+        }
+
+        .markdown-content .block-removed-before {
+            animation: block-removed-before 2.4s ease-out forwards;
+        }
+
+        .markdown-content .block-removed-after {
+            animation: block-removed-after 2.4s ease-out forwards;
+        }
+
+        @keyframes block-changed {
+            0%, 35% {
+                box-shadow: 0 0 0 6px var(--change-bg), inset 0 0 0 100vmax var(--change-bg);
+            }
+            100% {
+                box-shadow: 0 0 0 6px transparent, inset 0 0 0 100vmax transparent;
+            }
+        }
+
+        @keyframes block-removed-before {
+            0%, 35% {
+                box-shadow: 0 -12px 0 -9px var(--change-edge);
+            }
+            100% {
+                box-shadow: 0 -12px 0 -9px transparent;
+            }
+        }
+
+        @keyframes block-removed-after {
+            0%, 35% {
+                box-shadow: 0 12px 0 -9px var(--change-edge);
+            }
+            100% {
+                box-shadow: 0 12px 0 -9px transparent;
+            }
+        }
+
         /* ---------- Footer ---------- */
 
         .footer {
@@ -870,6 +948,10 @@
                 display: none;
             }
 
+            .live-status {
+                display: none !important;
+            }
+
             main {
                 padding: 16px 12px 32px;
             }
@@ -898,6 +980,22 @@
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
                 transition: none !important;
+            }
+
+            /* No fade: a static highlight that app.js clears after a few seconds. */
+            .markdown-content .block-changed {
+                animation: none;
+                box-shadow: 0 0 0 6px var(--change-bg), inset 0 0 0 100vmax var(--change-bg);
+            }
+
+            .markdown-content .block-removed-before {
+                animation: none;
+                box-shadow: 0 -12px 0 -9px var(--change-edge);
+            }
+
+            .markdown-content .block-removed-after {
+                animation: none;
+                box-shadow: 0 12px 0 -9px var(--change-edge);
             }
         }
 
@@ -940,6 +1038,32 @@
         body.desktop .markdown-content img {
             max-height: 70vh;
         }
+
+        /* The window's title bar does the top bar's job on desktop. While a document is live,
+           only its Follow control and "Updated" status show, floating in the corner. */
+        body.desktop.live .topbar {
+            display: flex !important;
+            position: fixed;
+            top: 12px;
+            right: 16px;
+            height: auto;
+            padding: 4px 4px 4px 12px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--surface) 86%, transparent);
+            box-shadow: var(--shadow);
+        }
+
+        body.desktop .topbar .brand,
+        body.desktop .topbar .doc-title,
+        body.desktop .topbar .back-button,
+        body.desktop .topbar .fullscreen-button {
+            display: none !important;
+        }
+
+        body.desktop .follow-button {
+            padding: 7px 12px;
+        }
     </style>
 </head>
 <body>
@@ -951,6 +1075,11 @@
             </div>
             <div class="doc-title" id="docTitle"></div>
             <div class="topbar-actions">
+                <span class="live-status" id="liveStatus" hidden></span>
+                <button class="btn btn-ghost follow-button" id="followButton" type="button" aria-pressed="false" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                    <span id="followLabel">Follow</span>
+                </button>
                 <button class="btn btn-ghost back-button" id="backButton" type="button" title="Close document">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
                     <span class="back-button-label">Open another</span>

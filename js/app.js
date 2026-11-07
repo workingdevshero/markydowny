@@ -29,6 +29,15 @@
     const lightboxClose = $('lightboxClose');
     const lightboxInfo = $('lightboxInfo');
     const liveNotice = $('liveNotice');
+    const followButton = $('followButton');
+    const followLabel = $('followLabel');
+    const liveStatus = $('liveStatus');
+
+    const BLOCK_MARK = 'markydowny-block:';
+    const FOLLOW_KEY = 'markydowny.follow';
+    const HIGHLIGHT_FADE_MS = 2400;
+    const HIGHLIGHT_STATIC_MS = 4000;
+    const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
@@ -39,6 +48,16 @@
     let renderSeq = 0;
     // While a reload's images load, keep re-applying its scroll anchor (until the reader scrolls).
     let anchorHold = null;
+    // The blocks on screen: { blocks: [{ raw, nodes }], linksKey }.
+    let rendered = null;
+    // Headings whose id we generated (as opposed to ids in the markdown's own HTML).
+    const autoHeadingIds = new WeakSet();
+    const highlightTimers = new Map();
+    // Live mode: the document on screen is watched (desktop, or a file handle on the web).
+    let isLive = false;
+    let follow = { mode: loadFollowPreference() ? 'following' : 'off', target: null };
+    let updatedAt = null;
+    let updatedTimer = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -76,9 +95,11 @@
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && lightbox.style.display === 'block') closeLightbox();
     });
-    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(type => {
+    followButton.addEventListener('click', toggleFollow);
+    ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(type => {
         window.addEventListener(type, onUserInput, { passive: true });
     });
+    renderFollowButton();
 
     if (isDesktop) {
         initDesktop().catch(err => console.error('Desktop init failed:', err));
@@ -178,6 +199,7 @@
     async function showDesktopDocument(doc) {
         folderFiles.clear();
         await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
+        setLive(true);
         await watchDesktopDocument(doc.path);
     }
 
@@ -317,44 +339,198 @@
     // ------------------------------------------------------------------
 
     /**
-     * Renders markdown into the content area. A new document starts at the top; a reload
-     * (same document, new content) keeps the reader's position.
+     * Renders markdown into the content area. A new document starts at the top. A reload
+     * (same document, new content) keeps the reader's position, replaces only the blocks that
+     * changed, highlights them, and follows them in Follow mode.
+     *
+     * options.reload: same document, new content.
+     * options.previous: for a reload that switches to another file (a watched folder), that
+     *   file's earlier content, so its changes can still be highlighted.
      */
-    async function renderMarkdown(markdownText, source, { reload = false } = {}) {
+    async function renderMarkdown(markdownText, source, { reload = false, previous = null } = {}) {
         const seq = ++renderSeq;
         currentSource = source;
         if (!reload) revokeBlobUrls();
 
-        let nodes;
+        let built;
         try {
-            const html = marked.parse(markdownText);
-            // Parse into an inert document so images aren't fetched before
-            // their paths are resolved.
-            const parsed = new DOMParser().parseFromString(html, 'text/html');
-            addHeadingIds(parsed);
-            await resolveImages(parsed, source);
-            nodes = Array.from(parsed.body.childNodes);
+            built = buildBlocks(markdownText);
+            await resolveImages(built.doc, source);
         } catch (error) {
             console.error('Error parsing markdown:', error);
-            nodes = [renderError(markdownText)];
+            built = { blocks: [{ raw: markdownText, nodes: [renderError(markdownText)] }], linksKey: '' };
         }
 
         if (seq !== renderSeq) return;
-        const anchor = reload ? captureAnchor() : null;
-        markdownContent.replaceChildren(...nodes);
         source.markdown = markdownText;
-        if (reload) {
-            keepAnchor(anchor);
+
+        if (!reload || !rendered) {
+            commitBlocks(built, null);
+            anchorHold = null;
+            dispatchFollow({ type: 'reset' });
+            showMarkdownContent(source.title);
+            markdownContent.scrollTop = 0;
+            window.scrollTo(0, 0);
             return;
         }
-        anchorHold = null;
-        showMarkdownContent(source.title);
-        markdownContent.scrollTop = 0;
-        window.scrollTo(0, 0);
+
+        let oldRaws = rendered.blocks.map(block => block.raw);
+        let reuse = built.linksKey === rendered.linksKey;
+        if (previous !== null) {
+            // Another file: nothing on screen can be reused, but its own edit is still shown.
+            try {
+                oldRaws = buildBlocks(previous).blocks.map(block => block.raw);
+            } catch (_) {
+                oldRaws = [];
+            }
+            reuse = false;
+        }
+        const diff = core.changedBlocks(oldRaws, built.blocks.map(block => block.raw));
+        const switching = previous !== null;
+        const anchor = switching ? null : captureAnchor();
+
+        commitBlocks(built, reuse ? diff : null);
+        if (anchor) {
+            restoreAnchor({ ...anchor, index: core.mapBlockIndex(anchor.index, diff) });
+        } else {
+            window.scrollTo(0, 0);
+        }
+        highlightChanges(diff);
+        markUpdated();
+
+        const target = core.changeTarget(diff, rendered.blocks.length);
+        const scrolled = dispatchFollow({ type: 'reload', target, visible: isBlockVisible(target) });
+        if (scrolled || !anchor) {
+            anchorHold = null;
+        } else {
+            keepAnchor({ ...anchor, index: core.mapBlockIndex(anchor.index, diff) });
+        }
+    }
+
+    /**
+     * Parses markdown into top-level blocks: [{ raw, nodes }]. Each block is one top-level
+     * token, or several when raw HTML spans them (e.g. a <details> around paragraphs). The
+     * markup is identical to marked.parse(): the tokens are rendered with a marker comment
+     * before each, parsed as one document (so HTML nests exactly as before), grouped by the
+     * markers, and the markers removed.
+     */
+    function buildBlocks(markdownText) {
+        const tokens = marked.lexer(markdownText);
+        const kept = tokens.filter(token => token.type !== 'space');
+        let html = '';
+        kept.forEach((token, index) => {
+            const one = [token];
+            one.links = tokens.links;
+            html += `<!--${BLOCK_MARK}${index}-->` + marked.parser(one);
+        });
+        // An inert document, so images aren't fetched before their paths are resolved.
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        const groups = [];
+        let group = null;
+        for (const node of Array.from(doc.body.childNodes)) {
+            const mark = blockMark(node);
+            if (mark !== null) {
+                node.remove();
+                if (!group || mark > group.last) {
+                    group = { first: mark, last: mark, nodes: [] };
+                    groups.push(group);
+                }
+                continue;
+            }
+            if (!group) {
+                group = { first: 0, last: 0, nodes: [] };
+                groups.push(group);
+            }
+            group.nodes.push(node);
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                // Markers nested in this element: it spans those tokens too.
+                const walker = doc.createTreeWalker(node, NodeFilter.SHOW_COMMENT);
+                const nested = [];
+                while (walker.nextNode()) nested.push(walker.currentNode);
+                for (const comment of nested) {
+                    const inner = blockMark(comment);
+                    if (inner === null) continue;
+                    group.last = Math.max(group.last, inner);
+                    comment.remove();
+                }
+            }
+        }
+
+        const blocks = groups.map(g => ({
+            raw: kept.slice(g.first, g.last + 1).map(token => token.raw).join('').trimEnd(),
+            nodes: g.nodes,
+        }));
+        return { blocks, doc, linksKey: JSON.stringify(tokens.links || {}) };
+    }
+
+    function blockMark(node) {
+        if (node.nodeType !== Node.COMMENT_NODE || !node.data.startsWith(BLOCK_MARK)) return null;
+        const index = Number(node.data.slice(BLOCK_MARK.length));
+        return Number.isInteger(index) ? index : null;
+    }
+
+    /**
+     * Puts built blocks on screen. With a diff, the unchanged blocks before and after the
+     * change keep their existing elements (so their images don't reload or resize) and only
+     * the changed ones are swapped in.
+     */
+    function commitBlocks(built, diff) {
+        let blocks;
+        if (diff && rendered) {
+            const old = rendered.blocks;
+            for (const block of old.slice(diff.start, diff.oldEnd)) {
+                block.nodes.forEach(node => node.remove());
+            }
+            const fresh = built.blocks.slice(diff.start, diff.end);
+            const after = old.slice(diff.oldEnd).find(block => block.nodes.length > 0);
+            const fragment = document.createDocumentFragment();
+            fresh.forEach(block => block.nodes.forEach(node => fragment.appendChild(node)));
+            markdownContent.insertBefore(fragment, after ? after.nodes[0] : null);
+            blocks = old.slice(0, diff.start).concat(fresh, old.slice(diff.oldEnd));
+            blocks.forEach((block, i) => {
+                block.raw = built.blocks[i].raw;
+            });
+        } else {
+            blocks = built.blocks;
+            markdownContent.replaceChildren(...blocks.flatMap(block => block.nodes));
+        }
+        blocks.forEach((block, index) => {
+            for (const node of block.nodes) {
+                if (node.nodeType === Node.ELEMENT_NODE) node.dataset.block = String(index);
+            }
+        });
+        rendered = { blocks, linksKey: built.linksKey };
+        refreshHeadingIds();
+    }
+
+    function renderError(markdownText) {
+        const box = document.createElement('div');
+        box.className = 'render-error';
+        box.innerHTML = `
+            <h3>Error parsing markdown</h3>
+            <p>There was an error parsing the markdown file. Here's the raw content:</p>
+            <pre>${core.escapeHtml(markdownText)}</pre>
+        `;
+        return box;
+    }
+
+    /**
+     * GitHub-style ids for headings that don't have one, recomputed after every change so
+     * duplicates stay numbered in document order. Ids written in the markdown's own HTML are
+     * left alone.
+     */
+    function refreshHeadingIds() {
+        const used = new Set();
+        for (const heading of markdownContent.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+            if (heading.id && !autoHeadingIds.has(heading)) continue;
+            heading.id = core.uniqueSlug(heading.textContent, used);
+            autoHeadingIds.add(heading);
+        }
     }
 
     // ------------------------------------------------------------------
-    // Live reload: reading position and notices
+    // Live reload: reading position, highlight, Follow, notices
     // ------------------------------------------------------------------
 
     /** Height of the sticky top bar covering the top of the page (0 when it isn't there). */
@@ -366,10 +542,22 @@
         return bar.getBoundingClientRect().height;
     }
 
+    /** Page position of each rendered block (blocks without elements sit where the last ended). */
     function blockRects() {
-        return Array.from(markdownContent.children, (el) => {
-            const rect = el.getBoundingClientRect();
-            return { top: rect.top + window.scrollY, height: rect.height };
+        if (!rendered) return [];
+        let bottom = 0;
+        return rendered.blocks.map(block => {
+            let top = Infinity;
+            let end = -Infinity;
+            for (const node of block.nodes) {
+                if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                const rect = node.getBoundingClientRect();
+                top = Math.min(top, rect.top + window.scrollY);
+                end = Math.max(end, rect.bottom + window.scrollY);
+            }
+            if (top === Infinity) return { top: bottom, height: 0 };
+            bottom = end;
+            return { top, height: end - top };
         });
     }
 
@@ -383,11 +571,10 @@
     }
 
     /**
-     * Restores the anchor now, and again as images in the new content finish loading (they
-     * change the height of the blocks above), until the reader scrolls or a few seconds pass.
+     * Keeps re-applying the anchor as images in the new content finish loading (they change
+     * the height of the blocks above), until the reader scrolls or a few seconds pass.
      */
     function keepAnchor(anchor) {
-        restoreAnchor(anchor);
         const loading = Array.from(markdownContent.querySelectorAll('img')).filter(img => !img.complete);
         if (loading.length === 0) {
             anchorHold = null;
@@ -407,8 +594,143 @@
         }, 3000);
     }
 
-    function onUserInput() {
+    function prefersReducedMotion() {
+        return Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    function blockElements(index) {
+        if (!rendered || index === null || index < 0 || index >= rendered.blocks.length) return [];
+        return rendered.blocks[index].nodes.filter(node => node.nodeType === Node.ELEMENT_NODE);
+    }
+
+    /** Tints the changed blocks (fading out), or marks where blocks were removed. */
+    function highlightChanges(diff) {
+        if (!diff.changed) return;
+        const targets = [];
+        for (let i = diff.start; i < diff.end; i++) {
+            blockElements(i).forEach(el => targets.push([el, 'block-changed']));
+        }
+        if (diff.removedBefore !== null && rendered.blocks.length > 0) {
+            if (diff.removedBefore < rendered.blocks.length) {
+                const [el] = blockElements(diff.removedBefore);
+                if (el) targets.push([el, 'block-removed-before']);
+            } else {
+                const els = blockElements(rendered.blocks.length - 1);
+                if (els.length) targets.push([els[els.length - 1], 'block-removed-after']);
+            }
+        }
+        const duration = prefersReducedMotion() ? HIGHLIGHT_STATIC_MS : HIGHLIGHT_FADE_MS;
+        for (const [el, className] of targets) {
+            // Restart the animation if the same element changes again.
+            el.classList.remove(className);
+            void el.offsetWidth;
+            el.classList.add(className);
+            clearTimeout(highlightTimers.get(el));
+            highlightTimers.set(el, setTimeout(() => {
+                el.classList.remove(className);
+                highlightTimers.delete(el);
+            }, duration));
+        }
+    }
+
+    function isBlockVisible(index) {
+        const els = blockElements(index);
+        if (els.length === 0) return true;
+        const top = els[0].getBoundingClientRect().top;
+        const bottom = els[els.length - 1].getBoundingClientRect().bottom;
+        return bottom > topInset() && top < window.innerHeight;
+    }
+
+    function scrollToBlock(index) {
+        const [el] = blockElements(index);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top + window.scrollY;
+        // A little context above the change.
+        const y = Math.max(0, top - topInset() - window.innerHeight * 0.2);
+        window.scrollTo({ top: y, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    }
+
+    /** Runs a Follow event; returns true if it scrolled. */
+    function dispatchFollow(event) {
+        const result = core.followReducer(follow, event);
+        follow = result.state;
+        renderFollowButton();
+        if (result.scrollTo === null) return false;
         anchorHold = null;
+        scrollToBlock(result.scrollTo);
+        return true;
+    }
+
+    function toggleFollow() {
+        dispatchFollow({ type: 'toggle' });
+        saveFollowPreference(follow.mode !== 'off');
+    }
+
+    function renderFollowButton() {
+        const label = { off: 'Follow', following: 'Following', paused: 'Resume' }[follow.mode];
+        followLabel.textContent = label;
+        followButton.setAttribute('aria-pressed', String(follow.mode === 'following'));
+        followButton.classList.toggle('paused', follow.mode === 'paused');
+        followButton.title = {
+            off: 'Follow changes: keep the latest edit in view',
+            following: 'Following changes. Click to stop.',
+            paused: 'Paused because you scrolled. Click to jump to the latest change.',
+        }[follow.mode];
+    }
+
+    function loadFollowPreference() {
+        try {
+            return window.localStorage.getItem(FOLLOW_KEY) !== 'off';
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function saveFollowPreference(on) {
+        try {
+            window.localStorage.setItem(FOLLOW_KEY, on ? 'on' : 'off');
+        } catch (_) {
+            // Private mode or storage disabled: the choice lasts for this page only.
+        }
+    }
+
+    /** Reader input that scrolls the page: releases the anchor and pauses Follow. */
+    function onUserInput(e) {
+        if (e.type === 'keydown' && (!SCROLL_KEYS.has(e.key) || e.target.closest('button, input, textarea, select'))) return;
+        if (e.type === 'mousedown') {
+            // Only a press on the page's scrollbar scrolls; clicks on content don't.
+            const root = document.documentElement;
+            if (e.target !== root && e.clientX < root.clientWidth) return;
+        }
+        if (e.type === 'wheel' && !e.deltaY) return;
+        anchorHold = null;
+        if (isLive) dispatchFollow({ type: 'userScroll' });
+    }
+
+    /** Live mode: the document on screen is watched. Shows Follow (and later "Updated"). */
+    function setLive(on) {
+        isLive = on;
+        document.body.classList.toggle('live', on);
+        followButton.hidden = !on;
+        if (!on) {
+            liveStatus.hidden = true;
+            updatedAt = null;
+            clearInterval(updatedTimer);
+            updatedTimer = null;
+        }
+    }
+
+    function markUpdated() {
+        if (!isLive) return;
+        updatedAt = new Date();
+        liveStatus.title = `Updated at ${updatedAt.toLocaleTimeString()}`;
+        liveStatus.hidden = false;
+        refreshUpdated();
+        if (!updatedTimer) updatedTimer = setInterval(refreshUpdated, 5000);
+    }
+
+    function refreshUpdated() {
+        if (updatedAt) liveStatus.textContent = core.formatUpdated(Date.now() - updatedAt.getTime());
     }
 
     function showMissingNotice() {
@@ -417,25 +739,6 @@
 
     function hideMissingNotice() {
         liveNotice.hidden = true;
-    }
-
-    function renderError(markdownText) {
-        const box = document.createElement('div');
-        box.className = 'render-error';
-        box.innerHTML = `
-            <h3>Error parsing markdown</h3>
-            <p>There was an error parsing the markdown file. Here's the raw content:</p>
-            <pre>${core.escapeHtml(markdownText)}</pre>
-        `;
-        return box;
-    }
-
-    function addHeadingIds(doc) {
-        const used = new Set();
-        for (const heading of doc.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
-            if (heading.id) continue;
-            heading.id = core.uniqueSlug(heading.textContent, used);
-        }
     }
 
     async function resolveImages(doc, source) {
@@ -571,8 +874,10 @@
         revokeBlobUrls();
         renderSeq++;
         currentSource = null;
+        rendered = null;
         anchorHold = null;
         hideMissingNotice();
+        setLive(false);
         fileInput.value = '';
         docTitle.textContent = '';
         document.title = DEFAULT_TITLE;

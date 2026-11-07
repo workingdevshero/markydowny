@@ -43,6 +43,7 @@ The same viewer ships as a small native app built with [Tauri](https://tauri.app
 - 🪟 **One window per document**: open several files at once, or follow a link to another `.md` file
 - 🖼️ **Local images just work**: relative image paths resolve from the file's location on disk
 - 🔄 **Live reload**: when the file changes on disk (another editor, an agent), the window re-renders it within a second and keeps your place
+- 👀 **Follow**: changed blocks light up briefly, and with **Follow** on the window keeps the latest change in view (scroll away to pause it, click *Resume* to jump back). Handy for watching an agent edit a document
 - ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
 - 🌙 **Dark mode**: follows your macOS appearance
 - 🔗 **Links** open in your default browser
