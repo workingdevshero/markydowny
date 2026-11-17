@@ -690,6 +690,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+/// Whether to stay running when an exit is requested with `code`. Like other Mac document
+/// apps, Markydowny keeps running after its last window closes: the Dock icon, File > Open…
+/// and Finder bring a window back. Only an exit the user didn't ask for by quitting reaches
+/// here without a code (the last window closing; ⌘Q terminates through AppKit), and an exit
+/// the app asks for itself (`AppHandle::exit`, which has a code) still goes through.
+fn keep_running_without_windows(on_macos: bool, code: Option<i32>) -> bool {
+    on_macos && code.is_none()
+}
+
 /// Paths passed on the command line (useful in dev, and how Linux/Windows open files).
 fn cli_paths() -> Vec<PathBuf> {
     std::env::args_os()
@@ -797,6 +806,11 @@ pub fn run() {
                     bring_forward(&window);
                 }
             }
+            RunEvent::ExitRequested { code, api, .. }
+                if keep_running_without_windows(cfg!(target_os = "macos"), code) =>
+            {
+                api.prevent_exit();
+            }
             _ => {}
         }
     });
@@ -833,5 +847,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         assert!(read_document_at(tmp.path()).is_err());
         assert!(read_document_at(&tmp.path().join("nope.md")).is_err());
+    }
+
+    #[test]
+    fn closing_the_last_window_keeps_the_app_running_on_macos_only() {
+        // The last window closing (no exit code) on macOS: stay in the Dock.
+        assert!(keep_running_without_windows(true, None));
+        // Elsewhere there's no Dock icon to bring a window back, so exit.
+        assert!(!keep_running_without_windows(false, None));
+        // An exit the app asks for (`AppHandle::exit`) always goes through.
+        assert!(!keep_running_without_windows(true, Some(0)));
+        assert!(!keep_running_without_windows(true, Some(1)));
     }
 }
