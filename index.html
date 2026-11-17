@@ -436,6 +436,10 @@
             border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
         }
 
+        .selector-buttons .btn[hidden] {
+            display: none;
+        }
+
         /* ---------- Rendered markdown ---------- */
 
         .markdown-content {
@@ -1123,6 +1127,7 @@
                 <div class="selector-buttons">
                     <button class="btn btn-ghost" id="cancelSelector" type="button">Cancel</button>
                     <button class="btn btn-primary watch-folder-button" id="watchFolderButton" type="button" aria-pressed="false" hidden>Watch this folder</button>
+                    <button class="btn btn-primary" id="openAllTabs" type="button" hidden>Open all as tabs</button>
                 </div>
             </section>
 

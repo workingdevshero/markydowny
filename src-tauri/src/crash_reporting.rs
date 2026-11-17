@@ -41,7 +41,11 @@ pub fn options(database: Option<&str>, quiet: bool) -> Option<bugsplat::Options>
     let database = database.map(str::trim).filter(|d| !d.is_empty())?;
     Some(
         bugsplat::Options::new(database, APPLICATION, env!("CARGO_PKG_VERSION"))
-            .upload_policy(if quiet { bugsplat::UploadPolicy::Quiet } else { bugsplat::UploadPolicy::Dialog })
+            .upload_policy(if quiet {
+                bugsplat::UploadPolicy::Quiet
+            } else {
+                bugsplat::UploadPolicy::Dialog
+            })
             .open_support_url(!quiet),
     )
 }
@@ -67,7 +71,9 @@ pub fn handle_menu<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
             // A named function so the report's stack shows where it came from.
             let script = "setTimeout(function markydownyCrashTest() { \
                 throw new TypeError('Crash Test: JavaScript error'); })";
-            if let Some(window) = crate::focused_window(app).or_else(|| app.webview_windows().into_values().next()) {
+            if let Some(window) =
+                crate::focused_window(app).or_else(|| app.webview_windows().into_values().next())
+            {
                 let _ = window.eval(script);
             }
         }
@@ -87,7 +93,9 @@ fn segfault() {
 #[inline(never)]
 fn rust_panic() {
     let documents: Vec<&str> = std::hint::black_box(Vec::new());
-    let first = documents.first().expect("Crash Test: Rust panic (no documents open)");
+    let first = documents
+        .first()
+        .expect("Crash Test: Rust panic (no documents open)");
     println!("{first}");
 }
 
@@ -131,8 +139,13 @@ mod tests {
         // (it uses kIOMainPortDefault), so the app can't promise to run on anything older.
         let conf: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        let minimum = conf["bundle"]["macOS"]["minimumSystemVersion"].as_str().unwrap();
+        let minimum = conf["bundle"]["macOS"]["minimumSystemVersion"]
+            .as_str()
+            .unwrap();
         let major: u32 = minimum.split('.').next().unwrap().parse().unwrap();
-        assert!(major >= 12, "minimumSystemVersion {minimum} is below Crashpad's macOS 12.0");
+        assert!(
+            major >= 12,
+            "minimumSystemVersion {minimum} is below Crashpad's macOS 12.0"
+        );
     }
 }
