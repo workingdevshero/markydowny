@@ -47,6 +47,10 @@
     let currentSource = null;
     // Bumped by every render, so a slow render can't overwrite a newer one.
     let renderSeq = 0;
+    // Bumped by every desktop watch request (a document, a folder, the drop zone), so the app
+    // ignores one that finishes after a newer one. Starts from the clock so it keeps growing
+    // across reloads of the page.
+    let watchGeneration = Date.now();
     // While a reload's images load, keep re-applying its scroll anchor (until the reader scrolls).
     let anchorHold = null;
     // The blocks on screen: { blocks: [{ raw, nodes }], linksKey }.
@@ -181,7 +185,9 @@
             if (!pending) return;
             if (pending.folder) {
                 // A folder opened from Finder or `open -a`: offer its files, and watching it.
-                await handleDesktopDrop([pending.folder]);
+                // With none to offer, go back to the drop zone so the window counts as idle.
+                const offered = await handleDesktopDrop([pending.folder]);
+                if (!offered && !currentSource) showDropZone();
                 return;
             }
             if (isFollowingFolder() && isInFolder(pending.path)) {
@@ -189,6 +195,7 @@
                 await showFolderFile(pending, null);
                 return;
             }
+            watchGeneration++;
             closeFileSelector();
             desktopFolder = null;
             renderWatchFolderButton();
@@ -199,22 +206,23 @@
         }
     }
 
+    /** Shows the markdown in dropped files/folders. Returns false when there was none. */
     async function handleDesktopDrop(paths) {
-        if (!paths || paths.length === 0) return;
+        if (!paths || paths.length === 0) return false;
         const entries = await invoke('list_markdown_files', { paths });
         if (entries.length === 0) {
             alert('No markdown files found. Drop a .md or .markdown file, or a folder containing them.');
-            return;
+            return false;
         }
         if (entries.length === 1) {
             closeFileSelector();
             desktopFolder = null;
             renderWatchFolderButton();
             await loadDesktopPath(entries[0].path);
-            return;
+            return true;
         }
         // One dropped item with several files in it is a folder, which can be watched.
-        const root = paths.length === 1 ? paths[0].replace(/\/+$/, '') : null;
+        const root = paths.length === 1 ? paths[0].replace(/(.)\/+$/, '$1') : null;
         desktopFolder = root ? { root, name: core.basename(root), following: false } : null;
         showFileSelector(entries.map(entry => ({
             name: core.basename(entry.path),
@@ -222,10 +230,13 @@
             path: entry.path,
             load: () => loadDesktopPath(entry.path),
         })));
+        return true;
     }
 
     /** Shows a file picked by hand. In a watched folder this pins it: the window stops switching. */
     async function loadDesktopPath(path) {
+        // A folder watch still starting is no longer wanted.
+        watchGeneration++;
         if (desktopFolder) desktopFolder.following = false;
         renderWatchFolderButton();
         try {
@@ -239,6 +250,8 @@
         folderFiles.clear();
         const title = desktopFolder ? folderTitle(doc) : doc.name;
         await renderMarkdown(doc.content, { kind: 'desktop', dir: doc.dir, title, path: doc.path });
+        // Something else was shown (or the drop zone) while this rendered: don't watch it.
+        if (!isShowingPath(doc.path)) return;
         setLive(true);
         selectFileInList(doc.path);
         await watchDesktopDocument(doc.path);
@@ -246,16 +259,17 @@
 
     /** Starts live reload for the document on screen, catching up if it changed meanwhile. */
     async function watchDesktopDocument(path) {
+        const generation = ++watchGeneration;
         try {
-            const now = await invoke('watch_document', { path });
-            if (!isShowingPath(path)) return;
+            const now = await invoke('watch_document', { path, generation });
+            if (generation !== watchGeneration || !isShowingPath(path)) return;
             if (now) {
                 onDocumentChanged(now);
             } else {
                 showMissingNotice();
             }
         } catch (err) {
-            console.error('Live reload unavailable:', err);
+            if (generation === watchGeneration) console.error('Live reload unavailable:', err);
         }
     }
 
@@ -300,7 +314,9 @@
     }
 
     function isInFolder(path) {
-        return Boolean(desktopFolder && path && path.startsWith(desktopFolder.root + '/'));
+        if (!desktopFolder || !path) return false;
+        const root = desktopFolder.root;
+        return path.startsWith(root.endsWith('/') ? root : root + '/');
     }
 
     function folderTitle(doc) {
@@ -316,15 +332,18 @@
             if (currentSource && currentSource.path) await watchDesktopDocument(currentSource.path);
             return;
         }
+        const generation = ++watchGeneration;
         try {
-            const result = await invoke('watch_folder', { path: desktopFolder.root });
+            const result = await invoke('watch_folder', { path: desktopFolder.root, generation });
+            // A file was pinned or opened, or the window went back to the drop zone, meanwhile.
+            if (generation !== watchGeneration || !desktopFolder) return;
             desktopFolder = { root: result.root, name: result.name, following: true };
             renderWatchFolderButton();
             if (result.document) {
                 await showFolderFile(result.document, null, { fresh: true });
             }
         } catch (err) {
-            alert(String(err));
+            if (generation === watchGeneration) alert(String(err));
         }
     }
 
@@ -375,7 +394,9 @@
 
     function setDocumentOpen(open, title) {
         if (!isDesktop) return;
-        invoke('set_document_open', { open, title: title || null }).catch(console.error);
+        // Closing stops the window's watch, which is a watch request of its own.
+        const generation = open ? null : ++watchGeneration;
+        invoke('set_document_open', { open, title: title || null, generation }).catch(console.error);
     }
 
     // ------------------------------------------------------------------
@@ -533,7 +554,8 @@
         watched.poller.setVisible(!document.hidden);
         if (observe) {
             try {
-                watched.observer = new window.FileSystemObserver(() => watched.poller.check());
+                // A record means the file changed even when its size and timestamp didn't.
+                watched.observer = new window.FileSystemObserver(() => watched.poller.check({ force: true }));
                 Promise.resolve(watched.observer.observe(handle)).catch(() => pollInstead(watched));
             } catch (_) {
                 pollInstead(watched);
@@ -547,11 +569,16 @@
         watched.poller.stop();
         if (watched.observer) watched.observer.disconnect();
         webWatched = null;
+        const isCurrent = () => !webWatched && currentSource && currentSource.kind === 'file';
         watched.handle.getFile().then(file => {
-            if (!webWatched && currentSource && currentSource.kind === 'file') {
-                startWebWatch(watched.handle, file, false);
+            if (isCurrent()) startWebWatch(watched.handle, file, false);
+        }, () => {
+            // Can't be observed or read: nothing is watching it any more.
+            if (isCurrent()) {
+                setLive(false);
+                showMissingNotice();
             }
-        }, () => {});
+        });
     }
 
     function stopWebWatch() {

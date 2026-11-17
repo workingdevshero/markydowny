@@ -79,7 +79,7 @@ pub enum Placement {
 pub struct DocumentRouter {
     pending: HashMap<String, PathBuf>,
     occupied: HashSet<String>,
-    /// Canonical path of the document each window shows.
+    /// Canonical path of the document each window shows (or the folder whose files it offers).
     showing: HashMap<String, PathBuf>,
     /// Canonical root of the folder each window follows.
     folders: HashMap<String, PathBuf>,
@@ -130,9 +130,20 @@ impl DocumentRouter {
         placement
     }
 
-    /// Removes and returns the document queued for `label`.
+    /// Removes and returns the document (or folder) queued for `label`, which the window is
+    /// about to present. From here on it counts as showing it, so opening it again reuses this
+    /// window while it is still loading. A file inside the folder the window follows keeps the
+    /// window following.
     pub fn take_pending(&mut self, label: &str) -> Option<PathBuf> {
-        self.pending.remove(label)
+        let path = self.pending.remove(label)?;
+        let in_folder = self
+            .folders
+            .get(label)
+            .is_some_and(|root| is_watchable(root, &path));
+        if !in_folder {
+            self.set_showing(label, Some(&path));
+        }
+        Some(path)
     }
 
     pub fn set_occupied(&mut self, label: &str, occupied: bool) {
@@ -340,12 +351,42 @@ mod tests {
             Placement::Showing("main".into())
         );
         assert!(router.take_pending("main").is_some());
+        // Taken but not yet watched (or the watch failed): still that window.
+        assert_eq!(
+            router.route(file.clone(), &windows, None),
+            Placement::Showing("main".into())
+        );
         router.set_showing("main", Some(&file));
         assert_eq!(
             router.route(file.clone(), &windows, None),
             Placement::Showing("main".into())
         );
         assert_eq!(router.take_pending("main"), None, "no re-read is queued");
+    }
+
+    #[test]
+    fn a_folder_being_chosen_from_routes_to_its_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let windows = labels(&["main", "doc-1"]);
+        let mut router = DocumentRouter::default();
+
+        assert_eq!(
+            router.route(root.clone(), &windows, None),
+            Placement::Existing("main".into())
+        );
+        assert!(router.take_pending("main").is_some());
+        assert_eq!(
+            router.route(root.join("."), &windows, None),
+            Placement::Showing("main".into())
+        );
+        // Cancelling back to the drop zone frees it.
+        router.set_occupied("main", false);
+        assert_eq!(
+            router.route(root, &windows, None),
+            Placement::Existing("main".into())
+        );
     }
 
     #[test]
@@ -392,9 +433,9 @@ mod tests {
         );
 
         // Going back to the drop zone frees it too.
+        router.take_pending("doc-5");
         router.set_showing("doc-5", Some(&file));
         router.set_occupied("doc-5", false);
-        router.take_pending("doc-5");
         assert_eq!(
             router.route(file, &labels(&["doc-5"]), None),
             Placement::Existing("doc-5".into())

@@ -291,7 +291,9 @@
      *
      * options: { getFile, onChange(file), onUnavailable(error), interval = 1000, observe = false,
      *            setTimer = setTimeout, clearTimer = clearTimeout }
-     * Methods: start(snapshot), stop(), setVisible(visible), check() -> Promise.
+     * Methods: start(snapshot), stop(), setVisible(visible), check({ force }) -> Promise.
+     * check({ force: true }) (an observer record) reports a change even if the size and
+     * timestamp look the same; the caller compares the text.
      * Hidden pages don't poll (or act on observer records); becoming visible checks once.
      * Unavailability is reported once, not on every poll; a file that comes back is reported
      * as changed.
@@ -306,6 +308,8 @@
         let running = false;
         let timer = null;
         let checking = null;
+        // An observer record arrived while hidden or mid-check: the next check is forced.
+        let forceNext = false;
 
         function schedule() {
             cancel();
@@ -324,10 +328,14 @@
             }
         }
 
-        function check() {
+        function check({ force = false } = {}) {
             if (!running) return Promise.resolve();
+            if (force) forceNext = true;
             if (!visible) return Promise.resolve();
-            if (checking) return checking;
+            // The check under way may have read the file before this record's change.
+            if (checking) return force ? checking.then(() => check()) : checking;
+            const forced = forceNext;
+            forceNext = false;
             checking = Promise.resolve()
                 .then(() => options.getFile())
                 .then(
@@ -349,7 +357,7 @@
                         return;
                     }
                     available = true;
-                    if (decision === 'changed' || !wasAvailable) {
+                    if (decision === 'changed' || !wasAvailable || forced) {
                         last = { lastModified: result.lastModified, size: result.size };
                         options.onChange(result.file);
                     }

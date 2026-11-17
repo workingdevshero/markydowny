@@ -163,3 +163,30 @@ test('fileWatchSupport: detects each Chromium API', () => {
     const win = { showOpenFilePicker() {}, DataTransferItem: Item, FileSystemObserver: function () {} };
     assert.deepEqual(core.fileWatchSupport(win), { picker: true, dropHandles: true, observer: true });
 });
+
+test('poller: an observer record reloads even when size and timestamp look the same', async () => {
+    const { events, poller } = setup({ observe: true });
+    await poller.check();
+    assert.deepEqual(events, [], 'a plain check trusts the metadata');
+    await poller.check({ force: true });
+    assert.deepEqual(events, [['change', 1]]);
+});
+
+test('poller: an observer record while hidden is acted on once visible', async () => {
+    const { events, poller } = setup({ observe: true });
+    poller.setVisible(false);
+    await poller.check({ force: true });
+    assert.deepEqual(events, []);
+    poller.setVisible(true);
+    await flush();
+    assert.deepEqual(events, [['change', 1]]);
+});
+
+test('poller: a record during a check is checked again afterwards', async () => {
+    const { events, poller } = setup({ observe: true });
+    const first = poller.check();
+    const second = poller.check({ force: true });
+    await first;
+    await second;
+    assert.deepEqual(events, [['change', 1]]);
+});

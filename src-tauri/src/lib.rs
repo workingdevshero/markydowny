@@ -42,9 +42,54 @@ struct AppState {
     router: Mutex<DocumentRouter>,
     /// At most one live-reload watch per window, keyed by window label.
     watches: Mutex<HashMap<String, watch::Watch>>,
+    /// The generation of the newest watch request each window has committed. Every request
+    /// (`watch_document`, `watch_folder`, going back to the drop zone) carries a generation
+    /// that grows with each request the window makes, so one that finishes after a newer one
+    /// changes nothing, and a replaced watch stops reporting.
+    generations: Mutex<HashMap<String, u64>>,
 }
 
+/// Returned by a watch request that a newer one replaced before it finished.
+const SUPERSEDED: &str = "superseded";
+
 impl AppState {
+    /// Installs a window's watch (or with `None`, stops it) and updates the router, unless the
+    /// window has already committed a newer request. Returns whether it was committed.
+    fn commit_watch(
+        &self,
+        label: &str,
+        generation: u64,
+        watch: Option<watch::Watch>,
+        update: impl FnOnce(&mut DocumentRouter),
+    ) -> bool {
+        let old = {
+            let mut generations = self.generations.lock().unwrap();
+            if generations.get(label).is_some_and(|g| *g > generation) {
+                Err(watch)
+            } else {
+                generations.insert(label.to_string(), generation);
+                let mut watches = self.watches.lock().unwrap();
+                let old = match watch {
+                    Some(w) => watches.insert(label.to_string(), w),
+                    None => watches.remove(label),
+                };
+                update(&mut self.router.lock().unwrap());
+                Ok(old)
+            }
+        };
+        // Watches are dropped outside the locks.
+        old.is_ok()
+    }
+
+    /// Whether a newer request has replaced the watch of `generation`.
+    fn is_retired(&self, label: &str, generation: u64) -> bool {
+        self.generations
+            .lock()
+            .unwrap()
+            .get(label)
+            .is_some_and(|g| *g > generation)
+    }
+
     /// Replaces (or with `None`, stops) a window's watch. The old watch is dropped outside the
     /// lock.
     fn set_watch(&self, label: &str, watch: Option<watch::Watch>) {
@@ -150,7 +195,12 @@ fn list_markdown_files(paths: Vec<String>) -> Vec<MarkdownEntry> {
     docs::collect_markdown_files(&paths.iter().map(PathBuf::from).collect::<Vec<_>>())
         .into_iter()
         .map(|(path, display)| MarkdownEntry {
-            path: path.to_string_lossy().into_owned(),
+            // Canonical, like `Document::path`, so the list can find the file on screen.
+            path: path
+                .canonicalize()
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned(),
             display,
         })
         .collect()
@@ -168,21 +218,25 @@ fn allow_asset_files(app: AppHandle, paths: Vec<String>) {
 }
 
 /// Tracks whether a window is showing a document, and updates its title. Returning to the
-/// drop zone stops the window's live reload.
+/// drop zone (which carries a watch `generation`) stops the window's live reload.
 #[tauri::command]
 fn set_document_open(
     window: WebviewWindow,
     state: State<'_, AppState>,
     open: bool,
     title: Option<String>,
+    generation: Option<u64>,
 ) {
-    state
-        .router
-        .lock()
-        .unwrap()
-        .set_occupied(window.label(), open);
-    if !open {
-        state.set_watch(window.label(), None);
+    let label = window.label();
+    if open {
+        state.router.lock().unwrap().set_occupied(label, true);
+    } else if let Some(generation) = generation {
+        state.commit_watch(label, generation, None, |router| {
+            router.set_occupied(label, false)
+        });
+    } else {
+        state.router.lock().unwrap().set_occupied(label, false);
+        state.set_watch(label, None);
     }
     let title = match (open, title) {
         (true, Some(t)) if !t.is_empty() => t,
@@ -194,28 +248,33 @@ fn set_document_open(
 /// Live reload: watches `path` for the calling window, replacing whatever it watched before.
 /// Changes arrive as `document-changed` / `document-missing` events. Returns the document as
 /// it is now (`None` if it's gone), so the window can catch up with anything that changed
-/// between reading it and starting the watch.
+/// between reading it and starting the watch. If the watch can't start, the window still
+/// counts as showing `path` (it just won't reload) and the error is returned.
 #[tauri::command]
 fn watch_document(
     app: AppHandle,
     window: WebviewWindow,
     state: State<'_, AppState>,
     path: String,
+    generation: u64,
 ) -> Result<Option<Document>, String> {
     let label = window.label().to_string();
-    let (watch, seeded) = watch::Watch::start(
+    let started = watch::Watch::start(
         watch::Scope::file(Path::new(&path)),
         |p| read_text(p).ok(),
-        change_sink(app, label.clone()),
-    )
-    .map_err(|e| format!("Can't watch {path}: {e}"))?;
-    state.set_watch(&label, Some(watch));
-    state
-        .router
-        .lock()
-        .unwrap()
-        .set_showing(&label, Some(Path::new(&path)));
-    Ok(seeded
+        change_sink(app, label.clone(), generation),
+    );
+    let (watch, seeded) = match started {
+        Ok((watch, seeded)) => (Some(watch), Ok(seeded)),
+        Err(e) => (None, Err(format!("Can't watch {path}: {e}"))),
+    };
+    let committed = state.commit_watch(&label, generation, watch, |router| {
+        router.set_showing(&label, Some(Path::new(&path)))
+    });
+    if !committed {
+        return Err(SUPERSEDED.to_string());
+    }
+    Ok(seeded?
         .into_iter()
         .next()
         .map(|(path, content)| document_for(&path, content)))
@@ -231,6 +290,7 @@ fn watch_folder(
     window: WebviewWindow,
     state: State<'_, AppState>,
     path: String,
+    generation: u64,
 ) -> Result<FolderWatch, String> {
     let label = window.label().to_string();
     let root = Path::new(&path);
@@ -240,11 +300,15 @@ fn watch_folder(
     let (watch, seeded) = watch::Watch::start(
         watch::Scope::folder(root),
         |p| read_text(p).ok(),
-        change_sink(app, label.clone()),
+        change_sink(app, label.clone(), generation),
     )
     .map_err(|e| format!("Can't watch {path}: {e}"))?;
-    state.set_watch(&label, Some(watch));
-    state.router.lock().unwrap().set_folder(&label, Some(root));
+    let committed = state.commit_watch(&label, generation, Some(watch), |router| {
+        router.set_folder(&label, Some(root))
+    });
+    if !committed {
+        return Err(SUPERSEDED.to_string());
+    }
 
     let latest = seeded
         .into_iter()
@@ -260,9 +324,16 @@ fn watch_folder(
     })
 }
 
-/// Forwards a watch's changes to one window.
-fn change_sink(app: AppHandle, label: String) -> impl Fn(watch::Change) + Send + 'static {
+/// Forwards a watch's changes to one window, until a newer request replaces the watch.
+fn change_sink(
+    app: AppHandle,
+    label: String,
+    generation: u64,
+) -> impl Fn(watch::Change) + Send + 'static {
     move |change| {
+        if app.state::<AppState>().is_retired(&label, generation) {
+            return;
+        }
         let _ = match change {
             watch::Change::Changed {
                 path,
@@ -498,6 +569,7 @@ pub fn run() {
                 let state = window.state::<AppState>();
                 state.router.lock().unwrap().forget(window.label());
                 state.set_watch(window.label(), None);
+                state.generations.lock().unwrap().remove(window.label());
             }
         })
         .build(tauri::generate_context!())
