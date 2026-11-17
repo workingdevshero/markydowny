@@ -55,12 +55,58 @@ parsing and markup helpers; this pass is about what a person sees.
   found*, with a list to choose from and *Cancel*.
 - **Rendered view.** The markdown output, with relative images resolved from the dropped folder.
   The header shows the document's title, the fullscreen toggle and *Open another*, which returns
-  to the drop zone. (README.md still calls it *← Back to Drop Zone*; the page is right.)
+  to the drop zone.
 - **Light and dark.** The page follows `prefers-color-scheme`. Check both when the change touches
   styling (`browser_evaluate` can't switch it; use the browser's color-scheme emulation if it's
   available, otherwise say which scheme you saw).
 - **Narrow screens.** The layout is responsive; a change to layout deserves one look at a phone
   width.
+
+## Live reload (Chromium)
+
+In Chromium a document opened through a file handle (*Choose File* uses `showOpenFilePicker()`,
+drops use `getAsFileSystemHandle()`) re-renders when the file changes: the changed blocks are
+tinted for a couple of seconds, a **Follow** toggle and *Updated just now* appear in the top bar,
+and a deleted file shows *This file was deleted or moved*. Safari and Firefox have no file
+handles, so there the page reads a dropped file once and never shows Follow.
+
+The browser can't edit a file on your disk, but the Origin Private File System gives real
+`FileSystemFileHandle`s without a picker, and `MarkyApp.openFileHandle(handle)` opens one as if
+it had been picked. With `browser_evaluate`:
+
+```js
+async () => {
+  const root = await navigator.storage.getDirectory();
+  const handle = await root.getFileHandle('live.md', { create: true });
+  const write = async (text) => {
+    const w = await handle.createWritable();
+    await w.write(text);
+    await w.close();
+  };
+  await write('# Live\n\nFirst.\n\nSecond.\n');
+  await MarkyApp.openFileHandle(handle);
+  await write('# Live\n\nFirst.\n\nSecond, **changed**.\n');
+  await new Promise(r => setTimeout(r, 1500));
+  return [...document.querySelectorAll('#markdownContent .block-changed')].map(e => e.textContent);
+}
+```
+
+It returns `["Second, changed."]`: only the changed paragraph is highlighted (the tint fades after
+about 2.4 s, so look within that). Then:
+
+- **Deleting** the file (`root.removeEntry('live.md')`) shows the notice within a second or two
+  and keeps the content; writing it again reloads and hides the notice. The console stays clean.
+- **Polling.** Where `FileSystemObserver` exists (recent Chromium) changes arrive through it. To
+  exercise the once-a-second polling instead, pass a wrapper the observer can't watch:
+  `{ kind: 'file', name: 'live.md', getFile: () => handle.getFile() }`. Hiding the tab stops
+  the polling and showing it checks once; headless tabs don't change visibility, so overriding
+  `document.hidden` and dispatching `visibilitychange` stands in for it.
+- **Without the API** the page must behave as before. Add an init script that deletes
+  `window.showOpenFilePicker`, `window.FileSystemObserver` and
+  `DataTransferItem.prototype.getAsFileSystemHandle` before load: *Choose File* opens the plain
+  file input, the Follow button stays hidden, and nothing is logged.
+- **Follow** scrolls a change that's out of view into view. Scrolling yourself (wheel, keys)
+  pauses it, and the button reads *Resume* until clicked.
 
 ## Known quirks
 

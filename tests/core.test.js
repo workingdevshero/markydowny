@@ -88,3 +88,41 @@ test('uniqueSlug de-duplicates repeated headings', () => {
     assert.equal(core.uniqueSlug('Usage', used), 'usage-2');
     assert.equal(core.uniqueSlug('!!!', used), 'section');
 });
+
+// ---------------------------------------------------------------------------
+// Live reload: scroll anchoring
+// ---------------------------------------------------------------------------
+
+// Three blocks: 0-100, 120-320, 340-400 (20px gaps).
+const BLOCKS = [{ top: 0, height: 100 }, { top: 120, height: 200 }, { top: 340, height: 60 }];
+
+test('captureScrollAnchor anchors to the first block reaching into the viewport', () => {
+    assert.deepEqual(core.captureScrollAnchor(BLOCKS, 0), { index: 0, offset: 0 });
+    assert.deepEqual(core.captureScrollAnchor(BLOCKS, 150), { index: 1, offset: 30 });
+    // In the gap above block 1: anchored to it with a negative offset.
+    assert.deepEqual(core.captureScrollAnchor(BLOCKS, 110), { index: 1, offset: -10 });
+    // Past the end: the last block.
+    assert.deepEqual(core.captureScrollAnchor(BLOCKS, 500), { index: 2, offset: 160 });
+    assert.equal(core.captureScrollAnchor([], 10), null);
+});
+
+test('restoreScrollAnchor keeps the same text at the top after an edit above it', () => {
+    const anchor = core.captureScrollAnchor(BLOCKS, 150);
+    // The first paragraph grew by 80px: everything below moved down.
+    const grown = [{ top: 0, height: 180 }, { top: 200, height: 200 }, { top: 420, height: 60 }];
+    assert.equal(core.restoreScrollAnchor(anchor, grown), 230);
+    // ...or shrank.
+    const shrunk = [{ top: 0, height: 40 }, { top: 60, height: 200 }, { top: 280, height: 60 }];
+    assert.equal(core.restoreScrollAnchor(anchor, shrunk), 90);
+});
+
+test('restoreScrollAnchor clamps to the block and to the document', () => {
+    // The anchored block shrank below the offset.
+    assert.equal(core.restoreScrollAnchor({ index: 1, offset: 150 }, [{ top: 0, height: 10 }, { top: 20, height: 50 }]), 70);
+    // The anchored block is gone: fall back to the last one.
+    assert.equal(core.restoreScrollAnchor({ index: 5, offset: 10 }, BLOCKS), 350);
+    // Never above the page.
+    assert.equal(core.restoreScrollAnchor({ index: 0, offset: -30 }, BLOCKS), 0);
+    assert.equal(core.restoreScrollAnchor(null, BLOCKS), null);
+    assert.equal(core.restoreScrollAnchor({ index: 0, offset: 0 }, []), null);
+});
