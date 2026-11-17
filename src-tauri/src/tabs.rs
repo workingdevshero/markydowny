@@ -66,6 +66,9 @@ pub fn plan_batch(
     let front = front
         .filter(|f| windows.iter().any(|w| w == f))
         .or_else(|| windows.first().map(String::as_str));
+    // Windows this batch creates join the list, so a second copy of a file
+    // (a symlink, or a folder plus a file in it) finds the first one's.
+    let mut windows = windows.to_vec();
     let mut steps: Vec<Step> = Vec::new();
     for path in paths {
         let previous = steps.last().map(|s| s.label().to_string());
@@ -73,9 +76,12 @@ pub fn plan_batch(
         // scatter into idle windows elsewhere. Any of them that's already open
         // stays where it is.
         let placement = match previous {
-            None => router.route(path, windows, front),
-            Some(_) => router.route_new(path, windows),
+            None => router.route(path, &windows, front),
+            Some(_) => router.route_new(path, &windows),
         };
+        if let Placement::New(label) = &placement {
+            windows.push(label.clone());
+        }
         let tab_after = match placement {
             Placement::New(_) => previous.or_else(|| front.map(str::to_string)),
             Placement::Existing(_) | Placement::Showing(_) | Placement::InFolder(_) => None,
@@ -93,17 +99,9 @@ pub fn plan_batch(
 /// beside its `tab_after`; the rest are each inserted right after the first
 /// document's window, last to first, which puts them in document order.
 ///
-/// Why not first to last, each after the previous one: when the tabs don't fit
-/// the tab bar, AppKit keeps the most recently added tab in view and squeezes
-/// the ones scrolled past into slivers. Added first to last, the bar stayed
-/// scrolled to the batch's end, and selecting the first document then left
-/// the tabs between it and the visible ones as slivers (e.g. 4.md, then 5.md
-/// and 6.md as slivers, then 7.md to 12.md). Last to first, the last tab added
-/// sits right after the first document, so the bar stays at the start and
-/// only the tabs at its far end are squeezed, as in Safari.
-///
-/// The windows themselves are still created in document order, because
-/// Window > Merge All Windows orders tabs by when their windows were created.
+/// AppKit keeps the most recently added tab in view, so inserting last to
+/// first keeps the bar at the batch's start. The windows are still created in
+/// document order, which Window > Merge All Windows orders tabs by.
 pub fn attach_order(steps: &[Step]) -> Vec<(&str, Option<&str>)> {
     let Some(first) = steps.first() else {
         return Vec::new();
@@ -532,6 +530,27 @@ mod tests {
                 new_tab("doc-2", Some("doc-1"))
             ]
         );
+    }
+
+    #[test]
+    fn a_file_twice_in_one_batch_opens_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.md");
+        std::fs::write(&file, "# a").unwrap();
+        let link = dir.path().join("link.md");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let mut router = DocumentRouter::default();
+        router.set_occupied("main", true);
+        let steps = plan_batch(
+            &mut router,
+            vec![file.clone(), dir.path().join("b.md"), link],
+            &labels(&["main"]),
+            Some("main"),
+        );
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0], new_tab("doc-1", Some("main")));
+        assert_eq!(steps[1], new_tab("doc-2", Some("doc-1")));
+        assert_eq!(steps[2].placement, Placement::Showing("doc-1".into()));
     }
 
     #[test]

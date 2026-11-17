@@ -71,6 +71,10 @@ test('only desktop drops offer "Open all as tabs", which opens every file throug
     const openAll = app.match(/function openAllAsTabs[\s\S]*?\n {4}}\n/)[0];
     assert.match(openAll, /invoke\('open_documents', \{ paths \}\)/);
     assert.doesNotMatch(openAll, /showDropZone\(/, 'showDropZone would mark the window idle after a file landed in it');
+    // The app must stop counting this window as showing (or following) the folder first.
+    const clear = Math.max(openAll.indexOf('await watchDesktopDocument('), openAll.indexOf("await invoke('set_document_open'"));
+    assert.ok(clear > 0 && clear < openAll.indexOf("invoke('open_documents'"), 'the window is cleared, awaited, before the files are routed');
+    assert.match(openAll, /generation: \+\+watchGeneration/);
 });
 
 test('only the desktop app forwards ⌃Tab to switch tabs', () => {

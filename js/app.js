@@ -251,15 +251,22 @@
      * Opens every file from the selector, each in its own tab: the first in
      * this window if it isn't showing a document, the rest beside it.
      */
-    function openAllAsTabs(paths) {
+    async function openAllAsTabs(paths) {
         closeFileSelector();
-        // The files open as tabs of their own, so this window isn't showing the folder any more.
-        if (desktopFolder && !desktopFolder.following) desktopFolder = null;
-        if (currentSource) {
+        // The files open as tabs of their own, so this window stops offering (or following)
+        // the folder. The app has to know that before it places them, or it keeps routing
+        // them here: so it's awaited, and carries a watch generation that also supersedes a
+        // folder watch still starting.
+        desktopFolder = null;
+        renderWatchFolderButton();
+        if (currentSource && currentSource.kind === 'desktop' && currentSource.path) {
             showMarkdownContent(currentSource.title);
+            await watchDesktopDocument(currentSource.path);
         } else {
-            // Stay idle (no set_document_open call) so the first file lands here.
+            // Back to idle, so the first file lands here.
             dropZone.style.display = 'flex';
+            await invoke('set_document_open', { open: false, title: null, path: null, generation: ++watchGeneration })
+                .catch(console.error);
         }
         invoke('open_documents', { paths }).catch(console.error);
     }
