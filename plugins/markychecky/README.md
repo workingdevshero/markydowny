@@ -29,6 +29,7 @@ Claude Code sessions keep a task list as they work (`TaskCreate` and `TaskUpdate
 - **The heading** is the repository and branch, or the folder outside git.
 - **Now** is what's in progress.
 - **The checklist** follows, in the order the tasks were made. The task in progress is bold.
+- **Issue and pull request numbers become links.** `#18` links into the session's GitHub repository (its `origin` remote), and so does `owner/repo#18`. A bare `repo#18` is linked only when it names the session's own repository; anything else stays plain text rather than becoming a wrong link.
 
 The script does the writing, not the model, so sessions never have to remember to update the board.
 

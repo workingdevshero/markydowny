@@ -181,3 +181,23 @@ test('the marketplace lists the plugin, and the versions agree', () => {
     assert.equal(manifest.name, 'markychecky');
     assert.deepEqual(Object.keys(manifest.userConfig).sort(), ['file', 'idle_hours', 'open']);
 });
+
+test('issue and PR references in task text become links into the session\'s GitHub repo', { skip: !hasPython }, () => {
+    const box = sandbox();
+    spawnSync('git', ['init', '-q', box.dir]);
+    spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git']);
+    hook(box, 'task', create('s1', 1, 'Merge #18, then widgets#19 and other-org/tools#5', 'Merging #18'));
+    hook(box, 'task', update('s1', 1, { status: 'in_progress' }));
+    const s = section(read(box), 's1');
+    assert.match(s, /\*\*Now:\*\* Merging \[#18\]\(https:\/\/github\.com\/acme\/widgets\/issues\/18\)/);
+    assert.match(s, /\[#18\]\(https:\/\/github\.com\/acme\/widgets\/issues\/18\)/);
+    assert.match(s, /\[widgets#19\]\(https:\/\/github\.com\/acme\/widgets\/issues\/19\)/);
+    assert.match(s, /\[other-org\/tools#5\]\(https:\/\/github\.com\/other-org\/tools\/issues\/5\)/);
+});
+
+test('references that can\'t be linked for sure stay plain text', { skip: !hasPython }, () => {
+    const box = sandbox(); // not a git repo: no GitHub remote
+    hook(box, 'task', create('s1', 1, 'See #7 and somerepo#8, issue#3, C# and [#9](https://x)'));
+    const s = section(read(box), 's1');
+    assert.match(s, /See #7 and somerepo#8, issue#3, C# and \[#9\]\(https:\/\/x\)/);
+});

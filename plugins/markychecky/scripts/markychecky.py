@@ -146,6 +146,43 @@ def git(cwd, *args):
         return ""
 
 
+def github_repo(cwd):
+    """`owner/repo` of the session's GitHub `origin` remote, or "" when there isn't one."""
+    url = git(cwd or os.getcwd(), "remote", "get-url", "origin")
+    match = re.search(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", url)
+    return f"{match.group(1)}/{match.group(2)}" if match else ""
+
+
+# `owner/repo#12`, `#12` (the session's repo) or `repo#12` when it names the session's own repo.
+# Anything else, such as another owner's `repo#12`, stays text rather than becoming a wrong link.
+# Not inside an existing link or a word.
+REF_RE = re.compile(
+    r"(?<![\w/\[(#-])(?:(?P<owner>[\w.-]+)/)?(?P<repo>[\w.-]+)?#(?P<num>\d+)\b(?![\]\w])"
+)
+
+
+def link_refs(text, repo):
+    """Turns issue and pull request references into links, so the board is clickable. GitHub
+    redirects /issues/N to the pull request when N is one."""
+    default_owner, _, default_name = repo.partition("/")
+
+    def link(match):
+        owner, name, num = match.group("owner"), match.group("repo"), match.group("num")
+        if owner and name:
+            target = f"{owner}/{name}"
+        elif name:
+            if not repo or name.lower() != default_name.lower():
+                return match.group(0)
+            target = repo
+        elif repo:
+            target = repo
+        else:
+            return match.group(0)
+        return f"[{match.group(0)}](https://github.com/{target}/issues/{num})"
+
+    return REF_RE.sub(link, text)
+
+
 def place(cwd):
     """`repo · branch` for a session's working directory, or the folder's name outside git."""
     cwd = cwd or os.getcwd()
@@ -165,6 +202,7 @@ def render_section(session_id, state, ended_at=None):
         now_line = f"idle, the session ended at {ended_at.astimezone().strftime('%H:%M')}"
     elif doing:
         now_line = "; ".join(one_line(t["active"] or t["subject"]) for t in doing)
+        now_line = link_refs(now_line, state.get("repo", ""))
     elif ordered and all(t["status"] == "completed" for _, t in ordered):
         now_line = "all done"
     else:
@@ -179,7 +217,7 @@ def render_section(session_id, state, ended_at=None):
     ]
     for _, t in ordered:
         mark = STATUS_BOX[t["status"]]
-        text = one_line(t["subject"]) or "(untitled)"
+        text = link_refs(one_line(t["subject"]), state.get("repo", "")) or "(untitled)"
         if t["status"] == "in_progress":
             text = f"**{text}**"
         lines.append(f"- [{mark}] {text}")
@@ -282,6 +320,7 @@ def main(argv):
         if not apply_event(state, event):
             return
         state["place"] = place(event.get("cwd"))
+        state["repo"] = github_repo(event.get("cwd"))
         state.pop("ended", None)
         save_state(state_path, state)
         first = not state.get("opened")
