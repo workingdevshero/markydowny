@@ -288,6 +288,15 @@ What differs from the browser:
   name selected) and shows in Rich mode. One from outside the document's folder asks first:
   *Copy* puts a copy next to the document (numbered, `shot-1.png`, if another file has the name)
   and links that; *Link Where It Is* links it with `../`; *Cancel* (or Escape) inserts nothing.
+- **File > Open Recent.** Lists the last ten files and folders opened in any way (Open…, a drop,
+  Finder, the command line, Open Recent itself), newest first, each once; two with the same name
+  get their folder added ("README.md — docs"). It survives quitting. To check it: open two files
+  and a folder in different ways (⌘O for one, a drop for another, a folder drop), quit, relaunch,
+  and check the submenu lists them newest first and that picking each opens it (in the tab
+  already showing it, if there is one). For a missing entry, save a new file somewhere with
+  TextEdit, open it here, then delete or rename it in Finder and pick it: it should say "*name*
+  was moved or deleted" and leave the list, with no broken window. **Clear Menu** empties it and
+  is then disabled. The list is in `recent.json` in the app's config folder.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
 - **Links** open in the default browser, not in the app.

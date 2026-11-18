@@ -10,11 +10,13 @@
 //! * scoped access to local images through Tauri's asset protocol;
 //! * live reload: each window watches the document it shows (`watch.rs`);
 //! * saving an edited document, checked and atomic (`save.rs`);
-//! * inserting an image picked from disk, copied next to the document if asked (`images.rs`).
+//! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
+//! * File > Open Recent, kept across launches (`recent.rs`).
 
 mod crash_reporting;
 mod docs;
 mod images;
+mod recent;
 mod save;
 mod tabs;
 mod watch;
@@ -26,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use docs::{DocumentRouter, Placement};
+use recent::RecentList;
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{
@@ -39,6 +42,10 @@ use tauri_plugin_dialog::{
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
 const NEW_TAB_MENU_ID: &str = "new-tab";
+/// Open Recent entries are this prefix followed by the entry's index in the list.
+const RECENT_MENU_PREFIX: &str = "open-recent:";
+const CLEAR_RECENT_MENU_ID: &str = "clear-recent";
+const RECENT_FILE: &str = "recent.json";
 const PENDING_EVENT: &str = "document-pending";
 const CHANGED_EVENT: &str = "document-changed";
 const MISSING_EVENT: &str = "document-missing";
@@ -60,6 +67,9 @@ struct AppState {
     launch: Mutex<tabs::LaunchQueue>,
     /// Which document each window shows, for tab titles.
     open_documents: Mutex<tabs::OpenDocuments>,
+    /// File > Open Recent, and the submenu that shows it.
+    recent: Mutex<RecentList>,
+    recent_menu: Mutex<Option<Submenu<tauri::Wry>>>,
 }
 
 /// Returned by a watch request that a newer one replaced before it finished.
@@ -235,6 +245,18 @@ fn list_markdown_files(paths: Vec<String>) -> Vec<MarkdownEntry> {
             display,
         })
         .collect()
+}
+
+/// Adds files and folders dropped on a window to File > Open Recent (other opens are added by
+/// `place_documents`). Only what can show markdown: folders and markdown files.
+#[tauri::command]
+fn add_recent_documents(app: AppHandle, paths: Vec<String>) {
+    let paths = paths
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir() || (p.is_file() && docs::is_markdown_path(p)))
+        .collect();
+    note_recent(&app, paths);
 }
 
 /// Lets the webview load specific local images referenced by the current document.
@@ -632,6 +654,7 @@ fn place_documents(app: &AppHandle, paths: Vec<PathBuf>, preferred: Option<Strin
     if paths.is_empty() {
         return;
     }
+    note_recent(app, paths.clone());
     let windows = window_labels(app);
     let front = preferred
         .filter(|p| windows.contains(p))
@@ -792,7 +815,110 @@ fn open_with_dialog(app: &AppHandle, preferred: Option<String>) {
         });
 }
 
-/// The default macOS menu, plus File > New Tab (⌘T) and Open… (⌘O). The
+/// Where File > Open Recent is kept between launches.
+fn recent_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join(RECENT_FILE))
+}
+
+/// Puts `paths` at the top of File > Open Recent, the first one topmost.
+fn note_recent(app: &AppHandle, paths: Vec<PathBuf>) {
+    update_recent(app, move |list| {
+        paths
+            .iter()
+            .rev()
+            .fold(false, |changed, path| list.add(path) | changed)
+    });
+}
+
+/// Changes the recent list with `update` and, if it says the list changed, saves it and
+/// rebuilds the submenu. All on the main thread (inline when already on it), so changes are
+/// applied, saved and shown in order, and a menu click always finds the list its menu shows.
+fn update_recent(app: &AppHandle, update: impl FnOnce(&mut RecentList) -> bool + Send + 'static) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let list = {
+            let mut list = state.recent.lock().unwrap();
+            if !update(&mut list) {
+                return;
+            }
+            list.clone()
+        };
+        if let Some(file) = recent_file(&handle) {
+            if let Err(err) = list.save(&file) {
+                eprintln!("failed to save {}: {err}", file.display());
+            }
+        }
+        let menu = state.recent_menu.lock().unwrap().clone();
+        if let Some(menu) = menu {
+            if let Err(err) = fill_recent_menu(&handle, &menu, &list) {
+                eprintln!("failed to update Open Recent: {err}");
+            }
+        }
+    });
+}
+
+/// Replaces the items of the Open Recent submenu: an entry per file or folder (its id is
+/// [`RECENT_MENU_PREFIX`] and its index in `list`), then Clear Menu, disabled when there are
+/// none.
+fn fill_recent_menu(
+    app: &AppHandle,
+    menu: &Submenu<tauri::Wry>,
+    list: &RecentList,
+) -> tauri::Result<()> {
+    while menu.remove_at(0)?.is_some() {}
+    let titles = list.titles();
+    for (index, (_, title)) in titles.iter().enumerate() {
+        let id = format!("{RECENT_MENU_PREFIX}{index}");
+        menu.append(&MenuItemBuilder::with_id(id, menu_label(title)).build(app)?)?;
+    }
+    if !titles.is_empty() {
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+    let clear = MenuItemBuilder::with_id(CLEAR_RECENT_MENU_ID, "Clear Menu")
+        .enabled(!titles.is_empty())
+        .build(app)?;
+    menu.append(&clear)
+}
+
+/// `title` as a menu item shows it: muda reads `&` as a mnemonic marker (dropped on macOS,
+/// an underline on Linux), and `&&` as a literal `&`.
+fn menu_label(title: &str) -> String {
+    title.replace('&', "&&")
+}
+
+/// File > Open Recent > an entry: opens it like File > Open…. One that's gone is taken off
+/// the list, with a message saying so.
+fn open_recent(app: &AppHandle, index: usize) {
+    let path = {
+        let state = app.state::<AppState>();
+        let list = state.recent.lock().unwrap();
+        list.paths().get(index).cloned()
+    };
+    let Some(path) = path else {
+        return;
+    };
+    if path.is_file() || path.is_dir() {
+        let preferred = focused_window(app).map(|w| w.label().to_string());
+        route_paths(app, vec![path], preferred);
+        return;
+    }
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    update_recent(app, move |list| list.remove(&path));
+    app.dialog()
+        .message(format!("{name} was moved or deleted."))
+        .title("Can't open")
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
+}
+
+/// The default macOS menu, plus File > New Tab (⌘T), Open… (⌘O) and Open Recent. The
 /// Window menu's tab items are added natively, by `tabs::native`.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
@@ -802,20 +928,26 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItemBuilder::with_id(OPEN_MENU_ID, "Open…")
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
+    let recent = Submenu::new(app, "Open Recent", true)?;
+    let state = app.state::<AppState>();
+    let list = state.recent.lock().unwrap().clone();
+    fill_recent_menu(app, &recent, &list)?;
+    *state.recent_menu.lock().unwrap() = Some(recent.clone());
     let mut has_file_menu = false;
     for item in menu.items()? {
         if let MenuItemKind::Submenu(submenu) = item {
             if submenu.text()? == "File" {
                 submenu.prepend(&new_tab)?;
                 submenu.insert(&open, 1)?;
-                submenu.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+                submenu.insert(&recent, 2)?;
+                submenu.insert(&PredefinedMenuItem::separator(app)?, 3)?;
                 has_file_menu = true;
                 break;
             }
         }
     }
-    // Tauri's default menu has no File menu on Linux, so Open… (Ctrl+O) gets one of its own
-    // there. No New Tab: tabs are native macOS tabs.
+    // Tauri's default menu has no File menu on Linux, so Open… (Ctrl+O) and Open Recent get
+    // one of their own there. No New Tab: tabs are native macOS tabs.
     if !has_file_menu {
         let file = Submenu::with_items(
             app,
@@ -823,6 +955,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             true,
             &[
                 &open,
+                &recent,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::close_window(app, None)?,
             ],
@@ -866,6 +999,7 @@ pub fn run() {
             open_documents,
             show_open_dialog,
             list_markdown_files,
+            add_recent_documents,
             allow_asset_files,
             set_document_open,
             watch_document,
@@ -877,15 +1011,30 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle();
+            if let Some(file) = recent_file(handle) {
+                *handle.state::<AppState>().recent.lock().unwrap() = RecentList::load(&file);
+            }
             handle.set_menu(build_menu(handle)?)?;
             handle.on_menu_event(|app, event| {
-                if event.id() == OPEN_MENU_ID {
+                let id = event.id().as_ref();
+                let recent = id
+                    .strip_prefix(RECENT_MENU_PREFIX)
+                    .and_then(|i| i.parse().ok());
+                if id == OPEN_MENU_ID {
                     let preferred = focused_window(app).map(|w| w.label().to_string());
                     open_with_dialog(app, preferred);
-                } else if event.id() == NEW_TAB_MENU_ID {
+                } else if id == NEW_TAB_MENU_ID {
                     new_tab(app);
+                } else if let Some(index) = recent {
+                    open_recent(app, index);
+                } else if id == CLEAR_RECENT_MENU_ID {
+                    update_recent(app, |list| {
+                        let had_entries = !list.paths().is_empty();
+                        list.clear();
+                        had_entries
+                    });
                 } else {
-                    crash_reporting::handle_menu(app, event.id().as_ref());
+                    crash_reporting::handle_menu(app, id);
                 }
             });
             #[cfg(target_os = "macos")]
@@ -984,6 +1133,13 @@ mod tests {
         assert_eq!(doc.content, "# Hello\n");
         assert_eq!(doc.dir, format!("{}/", canonical_dir.display()));
         assert!(doc.path.ends_with("/notes.md"));
+    }
+
+    #[test]
+    fn menu_labels_keep_ampersands_literal() {
+        assert_eq!(menu_label("R&D.md"), "R&&D.md");
+        assert_eq!(menu_label("a&&b.md — x&y"), "a&&&&b.md — x&&y");
+        assert_eq!(menu_label("notes.md"), "notes.md");
     }
 
     #[test]

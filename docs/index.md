@@ -33,6 +33,8 @@ In Chrome, Edge and other Chromium browsers, a file you choose or drop keeps upd
 - use **File > Open…** (<kbd>⌘O</kbd>), or
 - from a terminal: `open -a Markydowny README.md`.
 
+**File > Open Recent** lists the last ten files and folders you opened, newest first, and keeps them after you quit. **Clear Menu** at its bottom empties it.
+
 Every document opens in its own native tab, and a document that's already open is brought to the front instead of opening twice. See [Tabs & windows](tabs.md).
 
 The app always live-reloads: when another editor or an AI agent changes the file, the window re-renders within a second and keeps your place.

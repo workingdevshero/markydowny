@@ -77,6 +77,13 @@ test('only desktop drops offer "Open all as tabs", which opens every file throug
     assert.match(openAll, /generation: \+\+watchGeneration/);
 });
 
+test('Open Recent records window drops itself, but not folders the app already routed', () => {
+    const desktopDrop = app.match(/async function handleDesktopDrop[\s\S]*?\n {4}}\n/)[0];
+    assert.match(desktopDrop, /if \(dropped\) invoke\('add_recent_documents', \{ paths \}\)/);
+    const pending = app.match(/async function loadPendingDocument[\s\S]*?\n {4}}\n/)[0];
+    assert.match(pending, /handleDesktopDrop\(\[pending\.folder\]\)/);
+});
+
 test('only the desktop app forwards ⌃Tab to switch tabs', () => {
     const initDesktop = app.match(/async function initDesktop[\s\S]*?\n {4}}\n/)[0];
     assert.match(initDesktop, /core\.tabStepForKey\(e\)/);
@@ -182,7 +189,7 @@ test('unsaved changes are guarded: closing the window, the browser tab, Open ano
     assert.match(app, /onCloseRequested\(async \(event\) => \{\s*if \(!\(await leaveEditor\(\)\)\) event\.preventDefault\(\);/);
     assert.match(app, /addEventListener\('beforeunload'/);
     assert.match(app, /backButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
-    assert.match(app, /leaveEditor\(\)\.then\(left => \{\s*if \(left\) handleDesktopDrop\(paths\);/);
+    assert.match(app, /leaveEditor\(\)\.then\(left => \{\s*if \(left\) handleDesktopDrop\(paths, \{ dropped: true \}\);/);
     // The file list stays up beside the document: picking from it, Cancel and Watch this folder.
     assert.match(app, /const pick = async \(\) => \{[\s\S]*?if \(!\(await leaveEditor\(\)\)\) return;/);
     assert.match(app, /cancelSelectorButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
