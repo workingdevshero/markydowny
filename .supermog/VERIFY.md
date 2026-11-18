@@ -255,6 +255,19 @@ What differs from the browser:
 macOS-only behaviour (tabs, the Dock, opening files from Finder) can't be seen on Linux. On a
 Linux round, say so rather than reporting it missing.
 
+## Docs
+
+The docs live at `/docs/`: static pages rendered from `docs/*.md` by `scripts/build-docs.mjs`
+and committed, so the same server serves them. When a change touches `docs/`:
+
+- Open `http://localhost:$PORT/docs/` and use the side navigation to reach every page. Each one
+  highlights itself in the navigation and has its own title in the tab.
+- The header's logo and **Open a file** go back to the app at `/`, **Docs** to `/docs/`, and
+  **Download** to the Install page. The homepage's footer links to the docs.
+- Check light and dark, and one look at a phone width (about 390px): the page list becomes a row
+  that scrolls sideways above the page, and tables scroll rather than overflow.
+- Headings show a `#` anchor on hover; links between pages land on the right section.
+
 ## Known quirks
 
 - The same `index.html` and `js/` are bundled into the macOS app (`scripts/build-frontend.mjs`

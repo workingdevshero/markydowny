@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/faq.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>FAQ · Markydowny docs</title>
+    <meta name="description" content="Answers to common questions about Markydowny, the markdown viewer for the web and macOS.">
+    <link rel="canonical" href="https://markydowny.com/docs/faq/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/faq/">
+    <meta property="og:title" content="FAQ · Markydowny docs">
+    <meta property="og:description" content="Answers to common questions about Markydowny, the markdown viewer for the web and macOS.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a class="current-section" href="/docs/">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/" aria-current="page">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="faq">FAQ</h1>
+<h2 id="is-markydowny-free"><a class="heading-anchor" href="#is-markydowny-free" aria-label="Link to this section">#</a>Is Markydowny free?</h2>
+<p>Yes. The website and the Mac app are free, and the source is on <a href="https://github.com/workingdevshero/markydowny">GitHub</a>.</p>
+<h2 id="are-my-files-uploaded-anywhere"><a class="heading-anchor" href="#are-my-files-uploaded-anywhere" aria-label="Link to this section">#</a>Are my files uploaded anywhere?</h2>
+<p>No. Files are read on your device, in your browser or in the app, and never sent anywhere. There are no analytics. See <a href="/docs/privacy/">Privacy</a>.</p>
+<h2 id="why-dont-my-images-show-up"><a class="heading-anchor" href="#why-dont-my-images-show-up" aria-label="Link to this section">#</a>Why don&#39;t my images show up?</h2>
+<p>On the web, drop the <strong>folder</strong> that holds the document, not just the file. A browser only lets the page read the files you give it, so a single file can&#39;t reach the images next to it. In the Mac app, relative images resolve from the file&#39;s location automatically. See <a href="/docs/#relative-images-and-links">Relative images and links</a>.</p>
+<h2 id="why-doesnt-the-page-update-when-my-file-changes"><a class="heading-anchor" href="#why-doesnt-the-page-update-when-my-file-changes" aria-label="Link to this section">#</a>Why doesn&#39;t the page update when my file changes?</h2>
+<p>Live reload on the web needs a Chromium browser (Chrome, Edge, Brave, Arc, Opera…) and a file opened with <strong>Choose File</strong> or dropped on its own. Safari and Firefox read the file once, and a dropped folder is read once. The Mac app always live-reloads. See <a href="/docs/live-reload/#browser-support">Browser support</a>.</p>
+<h2 id="why-did-the-page-stop-scrolling-to-changes"><a class="heading-anchor" href="#why-did-the-page-stop-scrolling-to-changes" aria-label="Link to this section">#</a>Why did the page stop scrolling to changes?</h2>
+<p>You scrolled, which pauses <a href="/docs/live-reload/#follow-and-resume">Follow</a> so the page doesn&#39;t jump away from what you&#39;re reading. Click <strong>Resume</strong>.</p>
+<h2 id="why-does-save-download-a-copy"><a class="heading-anchor" href="#why-does-save-download-a-copy" aria-label="Link to this section">#</a>Why does Save download a copy?</h2>
+<p>Your browser can&#39;t write files in place (Safari, Firefox), or the file came from a dropped folder. Open the file with <strong>Choose File</strong> in a Chromium browser, or use the Mac app, to save in place. See <a href="/docs/editor/#save">Save</a>.</p>
+<h2 id="will-saving-reformat-my-markdown"><a class="heading-anchor" href="#will-saving-reformat-my-markdown" aria-label="Link to this section">#</a>Will saving reformat my markdown?</h2>
+<p>No. Only the text you changed is different; line endings, spacing and everything else stay as they were. See <a href="/docs/editor/#only-your-edits-change">Only your edits change</a>.</p>
+<h2 id="which-files-can-it-open"><a class="heading-anchor" href="#which-files-can-it-open" aria-label="Link to this section">#</a>Which files can it open?</h2>
+<p><code>.md</code> and <code>.markdown</code> files, plain <code>.txt</code> files and other text files. The Mac app registers as a viewer for <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code> and <code>.mkdn</code>.</p>
+<h2 id="does-it-run-scripts-or-html-in-my-markdown"><a class="heading-anchor" href="#does-it-run-scripts-or-html-in-my-markdown" aria-label="Link to this section">#</a>Does it run scripts or HTML in my markdown?</h2>
+<p>HTML in a markdown file is rendered in both.</p>
+<ul>
+<li><strong>In the Mac app</strong>, scripts never run: the app&#39;s Content Security Policy blocks both <code>&lt;script&gt;</code> elements and inline event handlers (<code>onclick=…</code>).</li>
+<li><strong>On the web</strong>, <code>&lt;script&gt;</code> elements don&#39;t run, but inline event handlers in the file&#39;s HTML do, and its HTML can load remote resources. Only open files you trust there. See <a href="/docs/privacy/#on-the-web">Privacy</a>.</li>
+</ul>
+<h2 id="is-there-a-windows-or-linux-app"><a class="heading-anchor" href="#is-there-a-windows-or-linux-app" aria-label="Link to this section">#</a>Is there a Windows or Linux app?</h2>
+<p>Not packaged yet. The app builds on Linux from source, and the website works in any browser on any system. See <a href="/docs/install/">Install</a>.</p>
+<h2 id="why-cant-i-find-it-in-the-mac-app-store"><a class="heading-anchor" href="#why-cant-i-find-it-in-the-mac-app-store" aria-label="Link to this section">#</a>Why can&#39;t I find it in the Mac App Store?</h2>
+<p>The App Store requires sandboxing, which gets in the way of watching folders, opening any path you give it and the <a href="/docs/claude-code/">Claude Code hook</a>. Downloads come first; store editions are planned separately.</p>
+<h2 id="where-do-i-report-a-bug-or-ask-for-a-feature"><a class="heading-anchor" href="#where-do-i-report-a-bug-or-ask-for-a-feature" aria-label="Link to this section">#</a>Where do I report a bug or ask for a feature?</h2>
+<p>Open an issue on <a href="https://github.com/workingdevshero/markydowny/issues">GitHub</a>, or ask on <a href="https://discord.gg/UxNXrBukjZ">Discord</a>.</p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

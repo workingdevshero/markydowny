@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/index.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Markydowny docs</title>
+    <meta name="description" content="Get started with Markydowny, the markdown viewer for the web and macOS. Open a file or a folder, see relative images, and keep a document open while it changes.">
+    <link rel="canonical" href="https://markydowny.com/docs/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/">
+    <meta property="og:title" content="Markydowny docs">
+    <meta property="og:description" content="Get started with Markydowny, the markdown viewer for the web and macOS. Open a file or a folder, see relative images, and keep a document open while it changes.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a class="current-section" href="/docs/" aria-current="page">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/" aria-current="page">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="getting-started">Getting started</h1>
+<p>Markydowny renders markdown files, beautifully. Use it on the web at <a href="https://markydowny.com">markydowny.com</a>, or install the Mac app so <code>.md</code> files open in it when you double-click them. The two share the same viewer, and in both your files stay on your device.</p>
+<p><img src="/docs/media/drop-zone.png" alt="The Markydowny drop zone, waiting for a file"></p>
+<h2 id="on-the-website"><a class="heading-anchor" href="#on-the-website" aria-label="Link to this section">#</a>On the website</h2>
+<p>Open <a href="https://markydowny.com">markydowny.com</a> and either:</p>
+<ul>
+<li>drop a <code>.md</code>, <code>.markdown</code> or <code>.txt</code> file onto the page, or</li>
+<li>click <strong>Choose File</strong> (or press <kbd>Enter</kbd> on the drop zone) and pick one.</li>
+</ul>
+<p>The document renders straight away: headings, lists, tables, task lists, fenced code and images. <strong>Open another</strong> in the header takes you back to the drop zone, and the fullscreen button (⛶) hides everything but the document.</p>
+<p>Nothing is installed and nothing is uploaded. The page reads the file in your browser, works offline once it has loaded, and has no analytics. See <a href="/docs/privacy/">Privacy</a>.</p>
+<p>In Chrome, Edge and other Chromium browsers, a file you choose or drop keeps updating when it changes on disk. See <a href="/docs/live-reload/">Live reload &amp; Follow</a>.</p>
+<h2 id="in-the-mac-app"><a class="heading-anchor" href="#in-the-mac-app" aria-label="Link to this section">#</a>In the Mac app</h2>
+<p><a href="/docs/install/">Install the app</a>, then open markdown files the way you open anything else on a Mac:</p>
+<ul>
+<li>double-click a <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code> or <code>.mkdn</code> file in Finder (after making Markydowny the default, see <a href="/docs/install/#make-it-the-default-for-markdown">Install</a>),</li>
+<li>drag files or folders onto a Markydowny window or its Dock icon,</li>
+<li>use <strong>File &gt; Open…</strong> (<kbd>⌘O</kbd>), or</li>
+<li>from a terminal: <code>open -a Markydowny README.md</code>.</li>
+</ul>
+<p>Every document opens in its own native tab, and a document that&#39;s already open is brought to the front instead of opening twice. See <a href="/docs/tabs/">Tabs &amp; windows</a>.</p>
+<p>The app always live-reloads: when another editor or an AI agent changes the file, the window re-renders within a second and keeps your place.</p>
+<h2 id="folders"><a class="heading-anchor" href="#folders" aria-label="Link to this section">#</a>Folders</h2>
+<p>Drop a whole folder to read the markdown inside it.</p>
+<ul>
+<li>With one markdown file in the folder, it opens straight away.</li>
+<li>With several, Markydowny lists them (<em>Multiple markdown files found</em>) so you can pick one. <strong>Cancel</strong> goes back to the drop zone.</li>
+<li>In the Mac app, the list also offers <strong>Open all <em>N</em> as tabs</strong> (for up to 50 files) and <strong>Watch this folder</strong>, which follows whichever file changes next. See <a href="/docs/claude-code/#watch-this-folder">Watching Claude Code</a>.</li>
+</ul>
+<p>The Mac app skips hidden folders, <code>node_modules</code> and <code>target</code>. The website reads every folder inside the one you drop, those included.</p>
+<h2 id="relative-images-and-links"><a class="heading-anchor" href="#relative-images-and-links" aria-label="Link to this section">#</a>Relative images and links</h2>
+<p>Images with relative paths, like <code>![diagram](img/diagram.png)</code> or <code>../assets/logo.svg</code>, are found next to the document:</p>
+<ul>
+<li><strong>On the web</strong>, drop the folder rather than the single file. The browser only gives the page the files you hand it, so a single dropped file can&#39;t reach the images beside it.</li>
+<li><strong>In the Mac app</strong>, relative paths resolve from the file&#39;s location on disk, however you opened it.</li>
+</ul>
+<p>Links to other markdown files work too. On the web they open the linked file from the dropped folder; in the Mac app they open it in a new tab. Links to websites open in your browser, and in the app a link to any other kind of file shows it in Finder rather than running it.</p>
+<p>Click an image to see it full size; <kbd>Esc</kbd> closes it.</p>
+<h2 id="light-and-dark"><a class="heading-anchor" href="#light-and-dark" aria-label="Link to this section">#</a>Light and dark</h2>
+<p>Markydowny follows your system&#39;s appearance, on the web and in the app. There&#39;s nothing to set.</p>
+<h2 id="next"><a class="heading-anchor" href="#next" aria-label="Link to this section">#</a>Next</h2>
+<ul>
+<li><a href="/docs/live-reload/">Live reload &amp; Follow</a>: watch a document change as it&#39;s edited.</li>
+<li><a href="/docs/editor/">Editor</a>: edit the markdown and save it.</li>
+<li><a href="/docs/shortcuts/">Keyboard shortcuts</a>.</li>
+</ul>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

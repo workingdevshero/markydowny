@@ -6,6 +6,7 @@
   "scripts": {
     "build:frontend": "node scripts/build-frontend.mjs",
     "vendor": "node scripts/vendor.mjs",
+    "docs": "node scripts/build-docs.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
     "test": "node --test tests/*.test.js && cargo test --manifest-path src-tauri/Cargo.toml",

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/tabs.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Tabs &amp; windows · Markydowny docs</title>
+    <meta name="description" content="Markydowny for macOS opens documents as native tabs. Open several files at once, merge and drag tabs between windows, and keep the app open with no windows.">
+    <link rel="canonical" href="https://markydowny.com/docs/tabs/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/tabs/">
+    <meta property="og:title" content="Tabs &amp; windows · Markydowny docs">
+    <meta property="og:description" content="Markydowny for macOS opens documents as native tabs. Open several files at once, merge and drag tabs between windows, and keep the app open with no windows.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a class="current-section" href="/docs/">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/" aria-current="page">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="tabs-windows">Tabs &amp; windows</h1>
+<p><em>Mac app.</em> Markydowny uses macOS&#39;s own window tabs, the same ones as Finder and Safari, so they look and behave the way you expect.</p>
+<h2 id="every-document-gets-a-tab"><a class="heading-anchor" href="#every-document-gets-a-tab" aria-label="Link to this section">#</a>Every document gets a tab</h2>
+<ul>
+<li>Opening several files at once (selecting them in Finder, <strong>File &gt; Open…</strong>, or dropping them) opens each in its own tab, in order.</li>
+<li>A link from one markdown file to another opens the linked file in a new tab.</li>
+<li>Opening a file that&#39;s already open brings its tab to the front instead of opening it twice.</li>
+<li>An empty window (one showing the drop zone) is used first, before any new tab.</li>
+</ul>
+<p>The tab&#39;s title is the document&#39;s name. Files that share a name are told apart by their folders, as in <em>README.md — docs</em> and <em>README.md — src</em>. A dot (•) in front means it has unsaved changes.</p>
+<h2 id="new-tab"><a class="heading-anchor" href="#new-tab" aria-label="Link to this section">#</a>New Tab</h2>
+<p><strong>File &gt; New Tab</strong> (<kbd>⌘T</kbd>), or the <strong>+</strong> at the end of the tab bar, opens an empty tab with a drop zone. Drop a file or folder into it, or use <strong>File &gt; Open…</strong> (<kbd>⌘O</kbd>).</p>
+<h2 id="open-all-as-tabs"><a class="heading-anchor" href="#open-all-as-tabs" aria-label="Link to this section">#</a>Open all as tabs</h2>
+<p>Drop a folder with several markdown files, and the list of files offers <strong>Open all <em>N</em> as tabs</strong>, where <em>N</em> is the number of files: each file opens in a tab of its own. The button isn&#39;t shown for folders with more than 50 markdown files.</p>
+<h2 id="switching-tabs"><a class="heading-anchor" href="#switching-tabs" aria-label="Link to this section">#</a>Switching tabs</h2>
+<ul>
+<li><kbd>⌃Tab</kbd> and <kbd>⌃⇧Tab</kbd>: next and previous tab.</li>
+<li><kbd>⌘⇧]</kbd> and <kbd>⌘⇧[</kbd>: <strong>Window &gt; Show Next Tab</strong> and <strong>Show Previous Tab</strong>.</li>
+<li>Or click the tab.</li>
+</ul>
+<h2 id="merging-and-dragging-tabs"><a class="heading-anchor" href="#merging-and-dragging-tabs" aria-label="Link to this section">#</a>Merging and dragging tabs</h2>
+<ul>
+<li>Drag a tab out of the tab bar to give it its own window, or use <strong>Window &gt; Move Tab to New Window</strong>.</li>
+<li>Drag a tab onto another window&#39;s tab bar to move it there.</li>
+<li><strong>Window &gt; Merge All Windows</strong> gathers every window into tabs of one window.</li>
+</ul>
+<h2 id="closing"><a class="heading-anchor" href="#closing" aria-label="Link to this section">#</a>Closing</h2>
+<p><strong>File &gt; Close Window</strong> (<kbd>⌘W</kbd>) closes the current tab. If it has unsaved changes, Markydowny asks first.</p>
+<p>Like other Mac document apps, Markydowny stays open after its last window closes. Its Dock icon stays, and <strong>File &gt; Open…</strong>, dropping a file on the Dock icon, or double-clicking a file in Finder opens a new window. Quit with <kbd>⌘Q</kbd>.</p>
+<h2 id="on-linux"><a class="heading-anchor" href="#on-linux" aria-label="Link to this section">#</a>On Linux</h2>
+<p>The app also builds for Linux, without macOS-only parts: documents open in separate windows rather than tabs, and the app quits when its last window closes.</p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>
