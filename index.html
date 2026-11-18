@@ -1487,6 +1487,20 @@
             line-height: 1.7;
         }
 
+        /* The focus ring goes on the editor, not its editable text, and stands off it into the
+           host's padding, so the text keeps its column and doesn't sit on the ring. The text
+           itself can't take the offset: the editor's scroller would clip it. The editor sets
+           cm-focused while the text has focus. */
+        .editor-host .cm-content:focus-visible {
+            outline: none;
+        }
+
+        .editor-host .cm-editor.cm-focused {
+            outline: 2px solid var(--accent);
+            outline-offset: 14px;
+            border-radius: 2px;
+        }
+
         .edit-banner {
             display: flex;
             align-items: center;
