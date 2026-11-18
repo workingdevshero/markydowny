@@ -419,14 +419,17 @@
     // ------------------------------------------------------------------
 
     /**
-     * 'toggle' for ⌘E (Ctrl+E elsewhere), 'save' for ⌘S (Ctrl+S), otherwise null. On a Mac
-     * Ctrl+E is left alone: it moves to the end of the line in text fields and the editor.
+     * 'toggle' for ⌘E (Ctrl+E elsewhere), 'save' for ⌘S (Ctrl+S), 'mode' for ⌘/ (Ctrl+/),
+     * otherwise null. On a Mac Ctrl+E is left alone: it moves to the end of the line in text
+     * fields and the editor. '/' is a shifted key on some layouts, so Shift doesn't matter there.
      */
     function editorShortcut(event, isMac) {
-        if (!event || event.altKey || event.shiftKey) return null;
+        if (!event || event.altKey) return null;
         const modifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
         if (!modifier) return null;
         const key = String(event.key).toLowerCase();
+        if (key === '/') return 'mode';
+        if (event.shiftKey) return null;
         if (key === 'e') return 'toggle';
         if (key === 's') return 'save';
         return null;

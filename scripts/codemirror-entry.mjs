@@ -2,9 +2,9 @@
 // exposes this module as window.MarkyCodeMirror. CodeMirror ships only as ES modules, and the
 // site has no build step, so the bundle is checked in like marked.umd.js. app.js loads it the
 // first time a document is edited.
-import { EditorState, Transaction } from '@codemirror/state';
-import { EditorView, drawSelection, dropCursor, keymap } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { Compartment, EditorState, Facet, StateField, Transaction } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, WidgetType, drawSelection, dropCursor, keymap } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, undoDepth } from '@codemirror/commands';
 import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { tags } from '@lezer/highlight';
@@ -54,23 +54,41 @@ const highlight = HighlightStyle.define([
     { tag: tags.comment, color: 'var(--text-muted)', fontStyle: 'italic' },
 ]);
 
+// Rich mode styles the markup through classes (index.html styles them like the rendered view),
+// so it highlights without the heading sizes, which would compound with the heading lines'.
+const richHighlight = HighlightStyle.define([
+    { tag: tags.strong, fontWeight: '650' },
+    { tag: tags.emphasis, fontStyle: 'italic' },
+    { tag: tags.strikethrough, textDecoration: 'line-through' },
+    { tag: tags.url, color: 'var(--accent)' },
+    { tag: tags.monospace, fontFamily: 'var(--font-mono)' },
+    { tag: [tags.processingInstruction, tags.contentSeparator, tags.meta], color: 'var(--text-muted)' },
+    { tag: [tags.angleBracket, tags.tagName, tags.attributeName], color: 'var(--coral)' },
+    { tag: tags.comment, color: 'var(--text-muted)', fontStyle: 'italic' },
+]);
+
 /**
  * An editor for `doc` in `parent`. options: { lineSeparator, onChange(update), onUpdate(update),
- * topInset() }: lineSeparator is kept for every line break, so the text reads back with the file's
- * own line endings; onChange runs after each change to the text, onUpdate after anything that
- * can change the formatting at the cursor (the text, the selection, or more of the document
- * parsed); topInset is how much of the window's top is covered (sticky bars), which scrolling
- * the cursor into view stays clear of.
+ * topInset(), mode, isMac, resolveImage(src), openLink(href), renderInline(markdown) }:
+ * lineSeparator is kept for every line break, so the text reads back with the file's own line
+ * endings; onChange runs after each change to the text, onUpdate after anything that can change
+ * the formatting at the cursor (the text, the selection, or more of the document parsed);
+ * topInset is how much of the window's top is covered (sticky bars), which scrolling the cursor
+ * into view stays clear of. mode is 'rich' or 'markdown' (setMode switches it); the rest is for
+ * Rich mode: resolveImage gives an image's URL (or a promise of it), openLink opens a link
+ * ⌘-clicked (Ctrl-clicked off a Mac), renderInline renders a table cell's markdown as HTML.
  */
 export function createEditor(parent, doc, options = {}) {
     return new EditorView({ state: createState(doc, options), parent });
 }
 
 /** The editor's state for `doc`, with the options createEditor takes (no view needed). */
-export function createState(doc, { lineSeparator = '\n', onChange = () => {}, onUpdate = () => {}, topInset = () => 0 } = {}) {
+export function createState(doc, options = {}) {
+    const { lineSeparator = '\n', onChange = () => {}, onUpdate = () => {}, topInset = () => 0, mode = 'markdown' } = options;
     return EditorState.create({
         doc,
         extensions: [
+            editorOptions.of(options),
             EditorState.lineSeparator.of(lineSeparator),
             history(),
             drawSelection(),
@@ -79,7 +97,7 @@ export function createState(doc, { lineSeparator = '\n', onChange = () => {}, on
             bracketMatching(),
             EditorView.lineWrapping,
             markdown({ base: markdownLanguage }),
-            syntaxHighlighting(highlight),
+            modeCompartment.of(modeExtension(mode, options)),
             keymap.of([...defaultKeymap, ...historyKeymap]),
             theme,
             EditorView.contentAttributes.of({ 'aria-label': 'Markdown source', spellcheck: 'true' }),
@@ -162,4 +180,600 @@ export function formatState(state) {
     };
 }
 
-export { EditorView, Transaction };
+// ------------------------------------------------------------------
+// Rich mode: the same document, with the markup styled and its markers hidden off the lines
+// that have a cursor or selection. Switching modes reconfigures one compartment, so the text,
+// selection and undo history are untouched.
+// ------------------------------------------------------------------
+
+const modeCompartment = new Compartment();
+const editorOptions = Facet.define({ combine: values => values[0] || {} });
+
+function modeExtension(mode, options) {
+    return mode === 'rich' ? richMode(options) : syntaxHighlighting(highlight);
+}
+
+/** Switches `view` to 'rich' or 'markdown'. */
+export function setMode(view, mode) {
+    view.dispatch({ effects: modeCompartment.reconfigure(modeExtension(mode, view.state.facet(editorOptions))) });
+}
+
+/** Whether a line (by number) has a cursor or selection on it. */
+function activeLines(state) {
+    const spans = state.selection.ranges.map(r => [state.doc.lineAt(r.from).number, state.doc.lineAt(r.to).number]);
+    return (pos) => {
+        const n = state.doc.lineAt(pos).number;
+        return spans.some(([first, last]) => n >= first && n <= last);
+    };
+}
+
+const LINK_PARENTS = new Set(['Link', 'Image', 'Autolink', 'LinkReference']);
+
+/** The label a link reference definition is matched by. */
+function normalizeLabel(label) {
+    return label.slice(1, -1).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Blocks that can hold other blocks (tables, headings, link reference definitions).
+const BLOCK_CONTAINERS = new Set(['Document', 'Blockquote', 'BulletList', 'OrderedList', 'ListItem']);
+
+/** The URL of a [text][label] or [label] link, from its definition (if parsed). */
+function referenceUrl(state, label) {
+    const wanted = normalizeLabel(label);
+    let found = null;
+    syntaxTree(state).iterate({
+        enter(ref) {
+            if (found !== null) return false;
+            if (ref.name !== 'LinkReference') return BLOCK_CONTAINERS.has(ref.name);
+            const name = ref.node.getChild('LinkLabel');
+            const url = ref.node.getChild('URL');
+            if (name && url && normalizeLabel(state.sliceDoc(name.from, name.to)) === wanted) found = state.sliceDoc(url.from, url.to);
+            return false;
+        },
+    });
+    return found;
+}
+
+function linkHref(state, node, marks) {
+    const url = node.getChild('URL');
+    if (url) return state.sliceDoc(url.from, url.to).replace(/^<|>$/g, '');
+    const label = node.getChild('LinkLabel');
+    // [text][label]; [label][] and [label] on their own use the text.
+    if (label && normalizeLabel(state.sliceDoc(label.from, label.to))) return referenceUrl(state, state.sliceDoc(label.from, label.to));
+    if (marks.length >= 2) return referenceUrl(state, state.sliceDoc(marks[0].from, marks[1].to));
+    return null;
+}
+
+/** An autolink's target as the rendered view has it: www. gets http://, an email mailto:. */
+function autolinkHref(text) {
+    if (/^www\./i.test(text)) return `http://${text}`;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(text) && text.includes('@')) return `mailto:${text}`;
+    return text;
+}
+
+const BULLETS = ['•', '◦', '▪'];
+
+/**
+ * What Rich mode draws over `ranges` of the document (all of it by default), as plain data:
+ *   { kind: 'hide', from, to }                     markup hidden
+ *   { kind: 'replace', from, to, widget }          markup drawn as a widget
+ *   { kind: 'widget', from, widget }               a widget inserted after `from`
+ *   { kind: 'mark', from, to, className, href? }   styled text (href: a link's target)
+ *   { kind: 'line', from, className }              a styled line (from: the line's start)
+ * Widgets are { type: 'bullet', text } | { type: 'task', checked } | { type: 'image', src, alt }
+ * | { type: 'hr' } | { type: 'codeLabel', lang }. Tables off the cursor are richTables'.
+ */
+export function richDecorations(state, ranges = [{ from: 0, to: state.doc.length }]) {
+    const doc = state.doc;
+    const active = activeLines(state);
+    const out = [];
+    const seen = new Set();
+    const add = (spec) => {
+        // An empty mark (a link with no text) would throw when the decorations are built.
+        if (spec.kind === 'mark' && !(spec.to > spec.from)) return;
+        const key = `${spec.kind}:${spec.from}:${spec.to}:${spec.className || ''}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(spec);
+    };
+    // Hidden markup never crosses a line break (a plugin's decorations can't).
+    const hide = (from, to) => {
+        if (to > from && doc.lineAt(from).number === doc.lineAt(to).number) add({ kind: 'hide', from, to });
+    };
+    const replace = (from, to, widget) => {
+        if (to > from && doc.lineAt(from).number === doc.lineAt(to).number) add({ kind: 'replace', from, to, widget });
+    };
+    const lines = (from, to, className, rangeFrom, rangeTo, ends = false) => {
+        const first = doc.lineAt(Math.max(from, rangeFrom)).number;
+        const last = doc.lineAt(Math.min(to, rangeTo)).number;
+        const top = doc.lineAt(from).number;
+        const bottom = doc.lineAt(to).number;
+        for (let n = first; n <= last; n++) {
+            let name = className;
+            if (ends && n === top) name += ` ${className}-first`;
+            if (ends && n === bottom) name += ` ${className}-last`;
+            add({ kind: 'line', from: doc.line(n).from, className: name });
+        }
+    };
+    const spaceAfter = (pos) => {
+        const line = doc.lineAt(pos);
+        let end = pos;
+        while (end < line.to && (doc.sliceString(end, end + 1) === ' ' || doc.sliceString(end, end + 1) === '\t')) end++;
+        return end;
+    };
+    const children = (node, name) => node.getChildren(name);
+
+    for (const { from: rangeFrom, to: rangeTo } of ranges) {
+        syntaxTree(state).iterate({
+            from: rangeFrom,
+            to: rangeTo,
+            enter(ref) {
+                const name = ref.name;
+                const node = ref.node;
+                const heading = /^ATXHeading(\d)$/.exec(name);
+                if (heading) {
+                    add({ kind: 'line', from: doc.lineAt(ref.from).from, className: `cm-rich-h${heading[1]}` });
+                    if (active(ref.from)) return;
+                    const marks = children(node, 'HeaderMark');
+                    marks.forEach((mark, i) => {
+                        if (i === 0) {
+                            hide(mark.from, spaceAfter(mark.to));
+                        } else {
+                            let start = mark.from;
+                            while (start > ref.from && /[ \t]/.test(doc.sliceString(start - 1, start))) start--;
+                            hide(start, mark.to);
+                        }
+                    });
+                    return;
+                }
+                const setext = /^SetextHeading(\d)$/.exec(name);
+                if (setext) {
+                    const mark = node.getChild('HeaderMark');
+                    const underline = mark ? doc.lineAt(mark.from).number : doc.lineAt(ref.to).number + 1;
+                    for (let n = doc.lineAt(ref.from).number; n < underline; n++) {
+                        add({ kind: 'line', from: doc.line(n).from, className: `cm-rich-h${setext[1]}` });
+                    }
+                    if (mark && !active(mark.from)) {
+                        add({ kind: 'line', from: doc.lineAt(mark.from).from, className: 'cm-rich-setext-underline' });
+                        hide(doc.lineAt(mark.from).from, doc.lineAt(mark.from).to);
+                    }
+                    return;
+                }
+                switch (name) {
+                    case 'StrongEmphasis':
+                    case 'Emphasis':
+                    case 'Strikethrough':
+                    case 'InlineCode': {
+                        const style = { StrongEmphasis: 'strong', Emphasis: 'em', Strikethrough: 'strike', InlineCode: 'code' }[name];
+                        add({ kind: 'mark', from: ref.from, to: ref.to, className: `cm-rich-${style}` });
+                        const markName = { StrongEmphasis: 'EmphasisMark', Emphasis: 'EmphasisMark', Strikethrough: 'StrikethroughMark', InlineCode: 'CodeMark' }[name];
+                        for (const mark of children(node, markName)) {
+                            if (!active(mark.from)) hide(mark.from, mark.to);
+                        }
+                        return name !== 'InlineCode';
+                    }
+                    case 'Link': {
+                        const marks = children(node, 'LinkMark');
+                        if (marks.length < 2) return;
+                        add({ kind: 'mark', from: marks[0].to, to: marks[1].from, className: 'cm-rich-link', href: linkHref(state, node, marks) });
+                        if (!active(marks[0].from)) hide(marks[0].from, marks[0].to);
+                        if (!active(marks[1].from)) hide(marks[1].from, ref.to);
+                        return;
+                    }
+                    case 'Image': {
+                        const marks = children(node, 'LinkMark');
+                        const url = node.getChild('URL');
+                        const src = url ? doc.sliceString(url.from, url.to).replace(/^<|>$/g, '') : linkHref(state, node, marks);
+                        if (!active(ref.from)) add({ kind: 'mark', from: ref.from, to: ref.to, className: 'cm-rich-image-source' });
+                        if (src) {
+                            const alt = marks.length >= 2 ? doc.sliceString(marks[0].to, marks[1].from) : '';
+                            add({ kind: 'widget', from: ref.to, widget: { type: 'image', src, alt } });
+                        }
+                        return false;
+                    }
+                    case 'Autolink': {
+                        const url = node.getChild('URL');
+                        if (!url) return false;
+                        add({ kind: 'mark', from: url.from, to: url.to, className: 'cm-rich-link', href: autolinkHref(doc.sliceString(url.from, url.to)) });
+                        if (!active(ref.from)) {
+                            for (const mark of children(node, 'LinkMark')) hide(mark.from, mark.to);
+                        }
+                        return false;
+                    }
+                    case 'URL': {
+                        if (node.parent && LINK_PARENTS.has(node.parent.name)) return;
+                        add({ kind: 'mark', from: ref.from, to: ref.to, className: 'cm-rich-link', href: autolinkHref(doc.sliceString(ref.from, ref.to)) });
+                        return;
+                    }
+                    case 'ListMark': {
+                        if (active(ref.from)) return;
+                        const item = node.parent;
+                        const task = item && item.getChild('Task');
+                        const marker = task && task.getChild('TaskMarker');
+                        if (marker) {
+                            hide(ref.from, marker.from);
+                        } else if (item && item.parent && item.parent.name === 'BulletList') {
+                            let depth = 0;
+                            for (let p = item.parent; p; p = p.parent) if (p.name === 'BulletList') depth++;
+                            replace(ref.from, ref.to, { type: 'bullet', text: BULLETS[Math.min(depth, BULLETS.length) - 1] });
+                        } else {
+                            add({ kind: 'mark', from: ref.from, to: ref.to, className: 'cm-rich-list-mark' });
+                        }
+                        return;
+                    }
+                    case 'TaskMarker': {
+                        const checked = /x/i.test(doc.sliceString(ref.from, ref.to));
+                        if (checked && node.parent) add({ kind: 'mark', from: ref.to, to: node.parent.to, className: 'cm-rich-task-done' });
+                        if (!active(ref.from)) replace(ref.from, ref.to, { type: 'task', checked });
+                        return;
+                    }
+                    case 'Blockquote':
+                        lines(ref.from, ref.to, 'cm-rich-quote', rangeFrom, rangeTo);
+                        return;
+                    case 'QuoteMark':
+                        if (!active(ref.from)) hide(ref.from, Math.min(spaceAfter(ref.to), ref.to + 1));
+                        return;
+                    case 'FencedCode': {
+                        lines(ref.from, ref.to, 'cm-rich-codeblock', rangeFrom, rangeTo, true);
+                        const marks = children(node, 'CodeMark');
+                        const open = marks[0];
+                        if (open && !active(open.from)) {
+                            const info = node.getChild('CodeInfo');
+                            replace(open.from, doc.lineAt(open.from).to, { type: 'codeLabel', lang: info ? doc.sliceString(info.from, info.to) : '' });
+                        }
+                        const close = marks.length > 1 ? marks[marks.length - 1] : null;
+                        if (close && !active(close.from)) {
+                            add({ kind: 'line', from: doc.lineAt(close.from).from, className: 'cm-rich-fence-hidden' });
+                            hide(close.from, close.to);
+                        }
+                        return false;
+                    }
+                    case 'CodeBlock':
+                        lines(ref.from, ref.to, 'cm-rich-codeblock', rangeFrom, rangeTo, true);
+                        return false;
+                    case 'HorizontalRule':
+                        if (!active(ref.from)) replace(ref.from, ref.to, { type: 'hr' });
+                        return false;
+                    case 'Table': {
+                        // Off the cursor it's drawn whole (richTables); on it, its markdown shows.
+                        const from = doc.lineAt(ref.from).from;
+                        const to = doc.lineAt(ref.to).to;
+                        if (!state.selection.ranges.some(r => r.to >= from && r.from <= to)) return false;
+                        lines(ref.from, ref.to, 'cm-rich-table-source', rangeFrom, rangeTo);
+                        return;
+                    }
+                    case 'HTMLBlock':
+                    case 'CommentBlock':
+                    case 'ProcessingInstructionBlock':
+                        return false;
+                }
+            },
+        });
+    }
+    return out;
+}
+
+/** A table row's cells, as markdown: split at unescaped pipes, without the outer ones. */
+function tableCells(text) {
+    let row = text.trim();
+    if (row.startsWith('|')) row = row.slice(1);
+    if (row.endsWith('|') && !row.endsWith('\\|')) row = row.slice(0, -1);
+    return row.split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|'));
+}
+
+/**
+ * The document's tables: { from, to (their whole lines), active (a cursor or selection touches
+ * it), align: [null | 'left' | 'center' | 'right'], header: [cell], rows: [[cell]] }, cells as
+ * markdown.
+ */
+export function richTables(state) {
+    const doc = state.doc;
+    const tables = [];
+    syntaxTree(state).iterate({
+        enter(ref) {
+            if (ref.name !== 'Table') return BLOCK_CONTAINERS.has(ref.name);
+            const node = ref.node;
+            const headerNode = node.getChild('TableHeader');
+            const delimiter = node.getChildren('TableDelimiter').find(d => d.from > (headerNode ? headerNode.to : ref.from));
+            const header = headerNode ? tableCells(doc.sliceString(headerNode.from, headerNode.to)) : [];
+            const align = delimiter
+                ? tableCells(doc.sliceString(delimiter.from, delimiter.to)).map(spec => {
+                    const left = spec.startsWith(':');
+                    const right = spec.endsWith(':');
+                    return left && right ? 'center' : right ? 'right' : left ? 'left' : null;
+                })
+                : [];
+            const rows = node.getChildren('TableRow').map(row => tableCells(doc.sliceString(row.from, row.to)));
+            const from = doc.lineAt(ref.from).from;
+            const to = doc.lineAt(ref.to).to;
+            const active = state.selection.ranges.some(r => r.to >= from && r.from <= to);
+            tables.push({ from, to, active, align, header, rows });
+            return false;
+        },
+    });
+    return tables;
+}
+
+/** Toggles the task box `[ ]` / `[x]` at `pos` in `text`: the change, or null when there's none there. */
+export function toggleTask(text, pos) {
+    const marker = text.slice(pos, pos + 3);
+    if (!/^\[[ xX]\]$/.test(marker)) return null;
+    return { from: pos + 1, to: pos + 2, insert: marker[1] === ' ' ? 'x' : ' ' };
+}
+
+// What a rendered heading's textContent leaves out: markup, raw HTML tags, images.
+const HEADING_DROPPED = new Set(['HeaderMark', 'QuoteMark', 'EmphasisMark', 'StrikethroughMark', 'CodeMark', 'LinkMark', 'LinkTitle', 'LinkLabel', 'HTMLTag', 'Comment', 'ProcessingInstruction', 'Image']);
+
+/**
+ * The document's headings, { from, level, text }, for #anchors: text as the rendered heading's
+ * textContent reads, with entities (&amp;) passed through `decodeEntity`.
+ */
+export function headings(state, decodeEntity = (entity) => entity) {
+    const out = [];
+    syntaxTree(state).iterate({
+        enter(ref) {
+            const match = /^(?:ATX|Setext)Heading(\d)$/.exec(ref.name);
+            if (!match) return BLOCK_CONTAINERS.has(ref.name);
+            let text = '';
+            let pos = ref.from;
+            ref.node.toTree().iterate({
+                enter(child) {
+                    const from = ref.from + child.from;
+                    let to = ref.from + child.to;
+                    // Inside what was already dropped.
+                    if (from < pos) return false;
+                    let replacement;
+                    if (child.name === 'Entity') {
+                        replacement = decodeEntity(state.sliceDoc(from, to));
+                    } else if (child.name === 'Escape') {
+                        replacement = state.sliceDoc(from + 1, to);
+                    } else if (child.name === 'URL' && child.node.parent && child.node.parent.name === 'Link') {
+                        // A link's (url "title") goes as a whole.
+                        replacement = '';
+                        to = ref.from + child.node.parent.to;
+                    } else if (HEADING_DROPPED.has(child.name)) {
+                        replacement = '';
+                    } else {
+                        return;
+                    }
+                    text += state.sliceDoc(pos, from) + replacement;
+                    pos = to;
+                    return false;
+                },
+            });
+            text += state.sliceDoc(pos, ref.to);
+            out.push({ from: ref.from, level: Number(match[1]), text: text.trim() });
+            return false;
+        },
+    });
+    return out;
+}
+
+class BulletWidget extends WidgetType {
+    constructor(text) {
+        super();
+        this.text = text;
+    }
+    eq(other) {
+        return other.text === this.text;
+    }
+    toDOM() {
+        const span = document.createElement('span');
+        span.className = 'cm-rich-bullet';
+        span.textContent = this.text;
+        return span;
+    }
+}
+
+class TaskWidget extends WidgetType {
+    constructor(checked) {
+        super();
+        this.checked = checked;
+    }
+    eq(other) {
+        return other.checked === this.checked;
+    }
+    toDOM(view) {
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.className = 'cm-rich-task';
+        box.checked = this.checked;
+        box.tabIndex = -1;
+        box.setAttribute('aria-label', this.checked ? 'Done: mark as not done' : 'Mark as done');
+        // Toggled on press, without moving the cursor (which would show the line's markup).
+        box.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const pos = view.posAtDOM(box);
+            const change = toggleTask(view.state.sliceDoc(pos, pos + 3), 0);
+            if (change) {
+                view.dispatch({ changes: { from: pos + change.from, to: pos + change.to, insert: change.insert }, userEvent: 'input.toggle' });
+            }
+        });
+        box.addEventListener('click', (e) => e.preventDefault());
+        return box;
+    }
+    ignoreEvent() {
+        return true;
+    }
+}
+
+class ImageWidget extends WidgetType {
+    constructor(src, alt, resolve) {
+        super();
+        this.src = src;
+        this.alt = alt;
+        this.resolve = resolve;
+    }
+    eq(other) {
+        return other.src === this.src && other.alt === this.alt;
+    }
+    toDOM(view) {
+        const wrap = document.createElement('span');
+        wrap.className = 'cm-rich-image-wrap';
+        const img = document.createElement('img');
+        img.className = 'cm-rich-image';
+        img.alt = this.alt;
+        img.addEventListener('load', () => view.requestMeasure());
+        img.addEventListener('error', () => {
+            wrap.hidden = true;
+            view.requestMeasure();
+        });
+        Promise.resolve(this.resolve ? this.resolve(this.src) : this.src).then(url => {
+            if (url) img.src = url;
+        }, () => {});
+        wrap.appendChild(img);
+        return wrap;
+    }
+}
+
+class RuleWidget extends WidgetType {
+    eq() {
+        return true;
+    }
+    toDOM() {
+        const span = document.createElement('span');
+        span.className = 'cm-rich-hr';
+        return span;
+    }
+}
+
+class CodeLabelWidget extends WidgetType {
+    constructor(lang) {
+        super();
+        this.lang = lang;
+    }
+    eq(other) {
+        return other.lang === this.lang;
+    }
+    toDOM() {
+        const span = document.createElement('span');
+        span.className = 'cm-rich-code-label';
+        span.textContent = this.lang;
+        return span;
+    }
+}
+
+class TableWidget extends WidgetType {
+    constructor(table, renderInline) {
+        super();
+        this.table = table;
+        this.key = JSON.stringify([table.align, table.header, table.rows]);
+        this.renderInline = renderInline;
+    }
+    eq(other) {
+        return other.key === this.key;
+    }
+    toDOM() {
+        const wrap = document.createElement('div');
+        wrap.className = 'cm-rich-table';
+        const table = document.createElement('table');
+        const fill = (el, markdown, i) => {
+            if (this.renderInline) el.innerHTML = this.renderInline(markdown);
+            else el.textContent = markdown;
+            if (this.table.align[i]) el.style.textAlign = this.table.align[i];
+        };
+        const head = table.createTHead().insertRow();
+        this.table.header.forEach((cell, i) => {
+            const th = document.createElement('th');
+            fill(th, cell, i);
+            head.appendChild(th);
+        });
+        const body = table.createTBody();
+        for (const row of this.table.rows) {
+            const tr = body.insertRow();
+            this.table.header.forEach((_, i) => fill(tr.insertCell(), row[i] || '', i));
+        }
+        // A click places the cursor in the table (showing its markdown); links in it don't navigate.
+        table.addEventListener('click', (e) => e.preventDefault());
+        wrap.appendChild(table);
+        return wrap;
+    }
+    ignoreEvent() {
+        return false;
+    }
+}
+
+function widgetFor(spec, options) {
+    switch (spec.type) {
+        case 'bullet': return new BulletWidget(spec.text);
+        case 'task': return new TaskWidget(spec.checked);
+        case 'image': return new ImageWidget(spec.src, spec.alt, options.resolveImage);
+        case 'hr': return new RuleWidget();
+        default: return new CodeLabelWidget(spec.lang);
+    }
+}
+
+function toDecorations(specs, options) {
+    const hidden = Decoration.replace({});
+    const decorations = specs.map(spec => {
+        switch (spec.kind) {
+            case 'hide': return hidden.range(spec.from, spec.to);
+            case 'replace': return Decoration.replace({ widget: widgetFor(spec.widget, options) }).range(spec.from, spec.to);
+            case 'widget': return Decoration.widget({ widget: widgetFor(spec.widget, options), side: 1 }).range(spec.from);
+            case 'line': return Decoration.line({ class: spec.className }).range(spec.from);
+            default: {
+                const attributes = spec.href ? { 'data-href': spec.href, title: `${options.isMac ? '⌘' : 'Ctrl'}-click to open ${spec.href}` } : undefined;
+                return Decoration.mark({ class: spec.className, attributes }).range(spec.from, spec.to);
+            }
+        }
+    });
+    return Decoration.set(decorations, true);
+}
+
+function richMode(options) {
+    const plugin = ViewPlugin.fromClass(class {
+        constructor(view) {
+            this.decorations = toDecorations(richDecorations(view.state, view.visibleRanges), options);
+        }
+        update(update) {
+            if (update.docChanged || update.viewportChanged || update.selectionSet || syntaxTree(update.state) !== syntaxTree(update.startState)) {
+                this.decorations = toDecorations(richDecorations(update.state, update.view.visibleRanges), options);
+            }
+        }
+    }, { decorations: plugin => plugin.decorations });
+
+    // Tables replace whole lines, which only a state field may do. The tables are found again
+    // when the text (or its parse) changes; a cursor move only redraws.
+    const tableDecorations = (tables) => Decoration.set(tables.filter(table => !table.active).map(table =>
+        Decoration.replace({ widget: new TableWidget(table, options.renderInline), block: true }).range(table.from, table.to)));
+    const tableField = StateField.define({
+        create(state) {
+            const tables = richTables(state);
+            return { tables, decorations: tableDecorations(tables) };
+        },
+        update(value, tr) {
+            if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState)) {
+                const tables = richTables(tr.state);
+                return { tables, decorations: tableDecorations(tables) };
+            }
+            if (!tr.selection) return value;
+            const ranges = tr.state.selection.ranges;
+            const tables = value.tables.map(table => ({ ...table, active: ranges.some(r => r.to >= table.from && r.from <= table.to) }));
+            if (tables.every((table, i) => table.active === value.tables[i].active)) return value;
+            return { tables, decorations: tableDecorations(tables) };
+        },
+        provide: field => EditorView.decorations.from(field, value => value.decorations),
+    });
+
+    const links = EditorView.domEventHandlers({
+        mousedown(event) {
+            const modifier = options.isMac ? event.metaKey : event.ctrlKey;
+            if (!modifier || event.button !== 0) return false;
+            const link = event.target.closest && event.target.closest('.cm-rich-link[data-href]');
+            if (!link) return false;
+            event.preventDefault();
+            if (options.openLink) options.openLink(link.getAttribute('data-href'));
+            return true;
+        },
+    });
+
+    return [
+        syntaxHighlighting(richHighlight),
+        plugin,
+        tableField,
+        links,
+        EditorView.editorAttributes.of({ class: 'cm-rich' }),
+    ];
+}
+
+export { EditorView, Transaction, undoDepth };
