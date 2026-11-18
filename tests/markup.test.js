@@ -128,6 +128,17 @@ test('the editor and the conflict banner sit outside the rendered markdown', () 
     assert.match(banner[1], /id="bannerKeep"[^>]*>Keep mine</);
 });
 
+test('desktop: below the Edit controls, the toolbar and the conflict banner share the text column', () => {
+    const rule = html.match(/body\.desktop\.toolbar-below:not\(\.split-view\) \.format-toolbar,\s*body\.desktop\.toolbar-below:not\(\.split-view\) \.edit-banner\s*\{([^}]*)\}/);
+    assert.ok(rule, 'shared toolbar/banner column rule not found');
+    // The column is the editor's, less its padding.
+    const width = Number(html.match(/body\.desktop \.markdown-content,\s*body\.desktop \.editor-host,\s*body\.desktop \.file-selector\s*\{[^}]*max-width: (\d+)px/)[1]);
+    const pad = Number(html.match(/body\.desktop \.markdown-content,\s*body\.desktop \.editor-host\s*\{\s*padding: \d+px (\d+)px/)[1]);
+    const gutter = `max(${pad}px, calc((100% - ${width - 2 * pad}px) / 2))`;
+    assert.ok(rule[1].includes(`margin-left: ${gutter};`), `expected margin-left: ${gutter}`);
+    assert.ok(rule[1].includes(`margin-right: ${gutter};`), `expected margin-right: ${gutter}`);
+});
+
 test('CodeMirror is loaded only when editing starts, never by the page itself', () => {
     assert.doesNotMatch(html, /codemirror/i, 'index.html must not load the editor');
     const mentions = [...app.matchAll(/js\/vendor\/codemirror\.js/g)];

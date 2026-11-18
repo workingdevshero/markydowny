@@ -1549,6 +1549,15 @@
             top: 116px;
         }
 
+        /* Outside split view, both line up with the text column below them: the editor's
+           900px column less its 48px padding on each side. */
+        body.desktop.toolbar-below:not(.split-view) .format-toolbar,
+        body.desktop.toolbar-below:not(.split-view) .edit-banner {
+            max-width: none;
+            margin-left: max(48px, calc((100% - 804px) / 2));
+            margin-right: max(48px, calc((100% - 804px) / 2));
+        }
+
         /* Changed blocks: a tint (drawn with shadows, so the block's own background survives)
            that fades out. Removed blocks: a thin line where they were. */
         .markdown-content .block-changed {
