@@ -4,3 +4,6 @@ src-tauri/target/
 src-tauri/gen/
 .DS_Store
 src-tauri/bugsplat-helpers/
+
+# scripts/release-mac.sh output
+dist-release/
