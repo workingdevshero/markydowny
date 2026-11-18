@@ -185,3 +185,17 @@ test('the formatting toolbar has a labelled control for every command', () => {
         assert.match(toolbar, new RegExp(`role="menuitemcheckbox"[^>]*data-command="${command}"`), `${command} in the overflow menu`);
     }
 });
+
+test('the Rich | Markdown switch sits beside the pencil, a radio group of the two views', () => {
+    const actions = html.match(/<div class="topbar-actions">[\s\S]*?\n {12}<\/div>\n/)[0];
+    const group = actions.match(/<div class="mode-switch" id="modeSwitch"[^>]*>([\s\S]*?)<\/div>/);
+    assert.ok(group, 'the switch is in the top bar');
+    assert.match(group[0], /role="radiogroup"/);
+    assert.match(group[0], /aria-label="Editor view"/);
+    assert.match(group[0], /hidden>/, 'hidden until editing');
+    const modes = [...group[1].matchAll(/<button[^>]*role="radio"[^>]*data-mode="(\w+)"[^>]*>(\w+)</g)].map(m => [m[1], m[2]]);
+    assert.deepEqual(modes, [['rich', 'Rich'], ['markdown', 'Markdown']]);
+    assert.ok(actions.indexOf('id="modeSwitch"') < actions.indexOf('id="editButton"'), 'next to the pencil');
+    // Rich unless the reader last chose Markdown.
+    assert.match(app, /getItem\(MODE_KEY\) === 'markdown' \? 'markdown' : 'rich'/);
+});

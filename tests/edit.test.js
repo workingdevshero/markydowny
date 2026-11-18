@@ -78,6 +78,13 @@ test('editorShortcut: ⌘E and ⌘S on a Mac, Ctrl+E and Ctrl+S elsewhere', () =
     assert.equal(core.editorShortcut(key('e', { metaKey: true, altKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e'), true), null);
     assert.equal(core.editorShortcut(key('x', { metaKey: true }), true), null);
+    // ⌘/ switches between Rich and Markdown; '/' is Shift+7 on a German keyboard.
+    assert.equal(core.editorShortcut(key('/', { metaKey: true }), true), 'mode');
+    assert.equal(core.editorShortcut(key('/', { metaKey: true, shiftKey: true }), true), 'mode');
+    assert.equal(core.editorShortcut(key('/', { ctrlKey: true }), false), 'mode');
+    assert.equal(core.editorShortcut(key('/', { ctrlKey: true }), true), null);
+    assert.equal(core.editorShortcut(key('/', { metaKey: true, altKey: true }), true), null);
+    assert.equal(core.editorShortcut(key('/'), true), null);
     assert.equal(core.editorShortcut(null, true), null);
 });
 

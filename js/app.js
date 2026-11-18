@@ -48,9 +48,11 @@
     const blockMenu = $('blockMenu');
     const moreButton = $('moreButton');
     const moreMenu = $('moreMenu');
+    const modeSwitch = $('modeSwitch');
 
     const BLOCK_MARK = 'markydowny-block:';
     const FOLLOW_KEY = 'markydowny.follow';
+    const MODE_KEY = 'markydowny.editorMode';
     const HIGHLIGHT_FADE_MS = 2400;
     const HIGHLIGHT_STATIC_MS = 4000;
     const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
@@ -111,6 +113,11 @@
     let editing = null;
     let codeMirrorLoad = null;
     let toolbarReady = false;
+    // The editor's view: 'rich' (the markup styled, its markers shown on the cursor's lines) or
+    // 'markdown' (the plain source). Rich unless the reader last chose otherwise.
+    let editorMode = loadEditorMode();
+    // Desktop: images Rich mode has asked the app to serve (path -> the request's promise).
+    const allowedAssets = new Map();
     // Whether the title on screen carries the unsaved-changes mark.
     let titleMarked = false;
     // Desktop: the close-requested listener (a promise of its unlisten), while there are
@@ -162,6 +169,12 @@
     bannerKeep.addEventListener('click', () => dispatchEdit({ type: 'keepMine', text: editorText() }));
     // Capturing, so the shortcuts work wherever the focus is, the editor included.
     window.addEventListener('keydown', onEditShortcut, true);
+    modeSwitch.addEventListener('click', onModeSwitchClick);
+    modeSwitch.addEventListener('keydown', onModeSwitchKeydown);
+    // Like the toolbar: clicking a mode leaves the focus (and the selection) in the editor.
+    modeSwitch.addEventListener('mousedown', (e) => {
+        if (e.target.closest('[data-mode]')) e.preventDefault();
+    });
     formatToolbar.addEventListener('click', onToolbarClick);
     formatToolbar.addEventListener('keydown', onToolbarKeydown);
     formatToolbar.addEventListener('focusin', (e) => {
@@ -1336,6 +1349,12 @@
         if (action === 'toggle') {
             e.preventDefault();
             if (!editButton.hidden && !editButton.disabled) toggleEditing();
+        } else if (action === 'mode') {
+            if (!editing) return;
+            // Before the editor's own keymap (⌘/ there toggles an HTML comment).
+            e.preventDefault();
+            e.stopPropagation();
+            setEditorMode(editorMode === 'rich' ? 'markdown' : 'rich');
         } else if (editing) {
             e.preventDefault();
             saveDocument();
@@ -1496,7 +1515,149 @@
                 if (editing === session) renderToolbar();
             },
             topInset: editorTopInset,
+            mode: editorMode,
+            isMac: IS_MAC,
+            resolveImage: editorImageSrc,
+            openLink: openEditorLink,
+            renderInline: (markdown) => marked.parseInline(markdown),
         };
+    }
+
+    // ------------------------------------------------------------------
+    // Rich mode and the Rich | Markdown switch
+    // ------------------------------------------------------------------
+
+    function loadEditorMode() {
+        try {
+            return window.localStorage.getItem(MODE_KEY) === 'markdown' ? 'markdown' : 'rich';
+        } catch (_) {
+            return 'rich';
+        }
+    }
+
+    /**
+     * Switches the editor between Rich and Markdown. It's the same document with other
+     * decorations, so the text, cursor, selection and undo history stay as they are; the line
+     * at the top of the window stays there.
+     */
+    function setEditorMode(mode) {
+        editorMode = mode;
+        try {
+            window.localStorage.setItem(MODE_KEY, mode);
+        } catch (_) {
+            // Private browsing: remembered for this page only.
+        }
+        renderModeSwitch();
+        if (!editing) return;
+        const view = editing.view;
+        const top = editorTopInset();
+        const line = view.lineBlockAtHeight(top - view.documentTop);
+        const offset = view.documentTop + line.top - top;
+        editing.cm.setMode(view, mode);
+        view.requestMeasure({
+            read: () => view.documentTop + view.lineBlockAt(line.from).top - top,
+            write: (now) => {
+                if (Math.abs(now - offset) > 1) window.scrollBy(0, now - offset);
+            },
+        });
+    }
+
+    function renderModeSwitch() {
+        modeSwitch.hidden = !editing;
+        modeSwitch.querySelectorAll('[data-mode]').forEach(button => {
+            const on = button.dataset.mode === editorMode;
+            button.setAttribute('aria-checked', String(on));
+            button.tabIndex = on ? 0 : -1;
+            button.title = `${button.dataset.mode === 'rich' ? 'Rich: formatted as you type' : 'Markdown: the plain source'} (${IS_MAC ? '⌘/' : 'Ctrl+/'})`;
+        });
+    }
+
+    function onModeSwitchClick(e) {
+        const button = e.target.closest('[data-mode]');
+        if (!button) return;
+        let mode = button.dataset.mode;
+        // On a phone only the current mode shows: pressing it switches.
+        const other = modeSwitch.querySelector(`[data-mode]:not([data-mode="${mode}"])`);
+        if (mode === editorMode && other.getClientRects().length === 0) mode = other.dataset.mode;
+        if (mode !== editorMode) setEditorMode(mode);
+        if (editing) editing.view.focus();
+    }
+
+    /** A radio group: the arrow keys pick the other mode. */
+    function onModeSwitchKeydown(e) {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        setEditorMode(editorMode === 'rich' ? 'markdown' : 'rich');
+        const checked = modeSwitch.querySelector('[aria-checked="true"]');
+        if (checked && checked.getClientRects().length) checked.focus();
+    }
+
+    /**
+     * An image's URL in Rich mode, resolved as the rendered view resolves it (resolveImages):
+     * from the dropped folder, or through the asset protocol on the desktop.
+     */
+    function editorImageSrc(src) {
+        if (!src || core.isExternalUrl(src) || !currentSource) return src;
+        const path = core.resolveRelativePath(currentSource.dir, src);
+        if (!path) return src;
+        if (currentSource.kind === 'folder') {
+            const file = folderFiles.get(path);
+            return file ? blobUrlFor(file) : src;
+        }
+        if (currentSource.kind === 'desktop') {
+            // Widgets are redrawn as they scroll into view: each file is allowed once.
+            if (!allowedAssets.has(path)) {
+                allowedAssets.set(path, invoke('allow_asset_files', { paths: [path] })
+                    .catch(err => console.error('Could not allow local images:', err)));
+            }
+            return allowedAssets.get(path).then(() => tauri.core.convertFileSrc(path));
+        }
+        return src;
+    }
+
+    /** A link ⌘-clicked (Ctrl-clicked) in Rich mode, handled as in the rendered view. */
+    function openEditorLink(href) {
+        switch (core.classifyLink(href)) {
+            case 'anchor':
+                scrollEditorToAnchor(href);
+                break;
+            case 'external':
+                openExternal(href);
+                break;
+            case 'relative': {
+                // Another file of a dropped folder replaces this one: leave the editor first.
+                const path = currentSource && core.resolveRelativePath(currentSource.dir, href);
+                if (currentSource && currentSource.kind === 'folder' && path && core.isMarkdownName(path)) {
+                    leaveEditor().then(left => {
+                        if (!left) return;
+                        closeEditor();
+                        openRelative(href);
+                    });
+                } else {
+                    openRelative(href);
+                }
+                break;
+            }
+        }
+    }
+
+    /** #anchor in the editor: the cursor goes to the heading with that id (as refreshHeadingIds names them). */
+    function scrollEditorToAnchor(href) {
+        if (!editing) return;
+        let id = href.slice(1);
+        try {
+            id = decodeURIComponent(id);
+        } catch (_) {
+            // use raw id
+        }
+        const used = new Set();
+        const heading = editing.cm.headings(editing.view.state).find(h => core.uniqueSlug(h.text, used) === id);
+        if (!heading) return;
+        editing.view.dispatch({
+            selection: { anchor: heading.from },
+            effects: editing.cm.EditorView.scrollIntoView(heading.from, { y: 'start', yMargin: 24 }),
+        });
+        editing.view.focus();
     }
 
     /** Removes the editor (and its unsaved changes, if any) without asking. */
@@ -1656,6 +1817,7 @@
             : `Edit the markdown (${IS_MAC ? '⌘E' : 'Ctrl+E'})`;
         saveButton.hidden = !on;
         revertButton.hidden = !on;
+        renderModeSwitch();
         editBanner.hidden = !(on && editing.state.conflict !== null);
         if (on) {
             const download = saveMode() === 'download';
