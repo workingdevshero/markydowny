@@ -101,6 +101,14 @@ npm test                      # JS + Rust tests
 
 Requirements: Node 18+, Rust (the version is pinned in `rust-toolchain.toml`, so rustup installs it automatically), and Xcode command line tools.
 
+To build a debug app on a fresh machine or VM, for testing:
+
+```bash
+scripts/build-desktop.sh   # prints the built artifact's path as its last line
+```
+
+On macOS that's `Markydowny.app`; on Linux it's the `markydowny` binary. The app builds and runs on Linux without the macOS-only parts: window tabs, staying open with no windows, and Finder's open events. The script installs Rust, Node, CMake and Ninja if they're missing, and on Debian or Ubuntu the WebKitGTK build dependencies and Clang. Linux needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04), and Clang rather than GCC, for BugSplat's Crashpad.
+
 ### Crash reporting
 
 The desktop app reports crashes to [BugSplat](https://www.bugsplat.com) with

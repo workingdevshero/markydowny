@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::docs::{DocumentRouter, Placement};
 
 /// Shared by every document window, including `main` in `tauri.conf.json`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const TABBING_IDENTIFIER: &str = "markydowny-document";
 
 /// Separates a document name from the folder that tells it apart.
@@ -135,6 +136,7 @@ pub struct LaunchQueue {
 
 impl LaunchQueue {
     /// Returns the paths to open now, or holds them until [`Self::finish`].
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn offer(&mut self, paths: Vec<PathBuf>) -> Option<Vec<PathBuf>> {
         if self.ready {
             Some(paths)
@@ -306,6 +308,7 @@ impl TabStep {
 }
 
 /// A Window menu command that AppKit routes to the key window.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct TabMenuItem {
     pub title: &'static str,
     /// NSWindow action selector.
@@ -317,6 +320,7 @@ pub struct TabMenuItem {
 /// Window menu items for tabs, named and bound as in Safari and Finder.
 /// (⌃Tab can't be a menu shortcut: the webview takes it first. The page
 /// forwards it with the `select_tab` command instead.)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const WINDOW_MENU_TAB_ITEMS: &[TabMenuItem] = &[
     TabMenuItem {
         title: "Show Previous Tab",
