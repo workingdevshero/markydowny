@@ -55,6 +55,7 @@ The same viewer ships as a small native app built with [Tauri](https://tauri.app
 - 🔄 **Live reload**: when the file changes on disk (another editor, an agent), the window re-renders it within a second and keeps your place
 - 👀 **Follow**: changed blocks light up briefly, and with **Follow** on the window keeps the latest change in view (scroll away to pause it, click *Resume* to jump back). Handy for watching an agent edit a document
 - ⌘O **File > Open…**, plus drag & drop of files or folders onto any window
+- 🕘 **File > Open Recent** lists the last ten files and folders you opened, however you opened them, and survives relaunching
 - 🌙 **Dark mode**: follows your macOS appearance
 - 🔗 **Links** open in your default browser
 - 📂 **Watch a folder**: drop a folder (or `open -a Markydowny path/to/repo`) and choose **Watch this folder**. The window shows the most recently changed markdown file and switches to whichever one changes next, skipping hidden folders, `node_modules` and `target`. Pick a file from the list to stay on it

@@ -393,6 +393,8 @@
             alert('No markdown files found. Drop a .md or .markdown file, or a folder containing them.');
             return false;
         }
+        // File > Open Recent lists what was dropped (other opens go through the app already).
+        invoke('add_recent_documents', { paths }).catch(console.error);
         if (entries.length === 1) {
             closeFileSelector();
             desktopFolder = null;
