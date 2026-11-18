@@ -34,12 +34,23 @@
     const followLabel = $('followLabel');
     const liveStatus = $('liveStatus');
     const watchFolderButton = $('watchFolderButton');
+    const editButton = $('editButton');
+    const editLabel = $('editLabel');
+    const saveButton = $('saveButton');
+    const revertButton = $('revertButton');
+    const editorHost = $('editorHost');
+    const editBanner = $('editBanner');
+    const bannerReload = $('bannerReload');
+    const bannerKeep = $('bannerKeep');
 
     const BLOCK_MARK = 'markydowny-block:';
     const FOLLOW_KEY = 'markydowny.follow';
     const HIGHLIGHT_FADE_MS = 2400;
     const HIGHLIGHT_STATIC_MS = 4000;
     const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+    // The editor, loaded the first time a document is edited so viewing stays as fast as before.
+    const CODEMIRROR_SRC = 'js/vendor/codemirror.js';
+    const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
@@ -48,6 +59,8 @@
     let currentSource = null;
     // Bumped by every render, so a slow render can't overwrite a newer one.
     let renderSeq = 0;
+    // Bumped whenever a different document (or the drop zone) is shown, unlike reloads.
+    let documentSeq = 0;
     // Bumped by every desktop watch request (a document, a folder, the drop zone), so the app
     // ignores one that finishes after a newer one. Starts from the clock so it keeps growing
     // across reloads of the page.
@@ -74,6 +87,14 @@
     let webWatched = null;
     // The file selector's "Open all as tabs" action (desktop only), or null.
     let openAllAction = null;
+    // While editing: { view, cm, separator, state (core.editReducer), saving }.
+    let editing = null;
+    let codeMirrorLoad = null;
+    // Whether the title on screen carries the unsaved-changes mark.
+    let titleMarked = false;
+    // Desktop: the close-requested listener (a promise of its unlisten), while there are
+    // unsaved changes.
+    let closeGuard = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -103,8 +124,26 @@
     openAllTabsButton.addEventListener('click', () => {
         if (openAllAction) openAllAction();
     });
-    backButton.addEventListener('click', showDropZone);
+    backButton.addEventListener('click', () => {
+        leaveEditor().then(left => {
+            if (left) showDropZone();
+        });
+    });
     fullscreenButton.addEventListener('click', toggleFullscreen);
+    editButton.addEventListener('click', toggleEditing);
+    saveButton.addEventListener('click', saveDocument);
+    revertButton.addEventListener('click', () => dispatchEdit({ type: 'revert' }));
+    bannerReload.addEventListener('click', () => dispatchEdit({ type: 'reload' }));
+    bannerKeep.addEventListener('click', () => dispatchEdit({ type: 'keepMine', text: editorText() }));
+    // Capturing, so the shortcuts work wherever the focus is, the editor included.
+    window.addEventListener('keydown', onEditShortcut, true);
+    if (!isDesktop) {
+        window.addEventListener('beforeunload', (e) => {
+            if (!hasUnsavedChanges()) return;
+            e.preventDefault();
+            e.returnValue = '';
+        });
+    }
     markdownContent.addEventListener('click', handleContentClick);
 
     lightboxClose.addEventListener('click', closeLightbox);
@@ -178,7 +217,9 @@
                 unhighlight();
             } else if (type === 'drop') {
                 unhighlight();
-                handleDesktopDrop(paths);
+                leaveEditor().then(left => {
+                    if (left) handleDesktopDrop(paths);
+                });
             }
         });
 
@@ -328,6 +369,10 @@
             return;
         }
         hideMissingNotice();
+        if (editing) {
+            dispatchEdit({ type: 'disk', content: doc.content, text: editorText() });
+            return;
+        }
         if (doc.content === currentSource.markdown) {
             // Already showing this content, but switched to without knowing what changed
             // (opened while following): the watch's report still has the edit to highlight.
@@ -430,12 +475,16 @@
         }
     }
 
-    /** Tells the app what this window shows; the path lets it tell same-named tabs apart. */
+    /**
+     * Tells the app what this window shows; the path lets it tell same-named tabs apart, and
+     * `edited` marks the title while there are unsaved changes.
+     */
     function setDocumentOpen(open, title, path) {
         if (!isDesktop) return;
         // Closing stops the window's watch, which is a watch request of its own.
         const generation = open ? null : ++watchGeneration;
-        invoke('set_document_open', { open, title: title || null, path: path || null, generation }).catch(console.error);
+        const edited = open && hasUnsavedChanges();
+        invoke('set_document_open', { open, title: title || null, path: path || null, generation, edited }).catch(console.error);
     }
 
     // ------------------------------------------------------------------
@@ -558,7 +607,8 @@
             alert('Error loading the markdown file. Please try again.');
             return;
         }
-        const source = { kind: 'file', dir: '', title: file.name };
+        // The handle saves edits in place (#7's live reload watches it too).
+        const source = { kind: 'file', dir: '', title: file.name, handle };
         await renderMarkdown(text, source);
         if (currentSource !== source || isDesktop) return;
         startWebWatch(handle, file, webWatch.observer);
@@ -580,7 +630,12 @@
                 } catch (_) {
                     return;
                 }
-                if (!isCurrent() || text === currentSource.markdown) return;
+                if (!isCurrent()) return;
+                if (editing) {
+                    dispatchEdit({ type: 'disk', content: text, text: editorText() });
+                    return;
+                }
+                if (text === currentSource.markdown) return;
                 renderMarkdown(text, { ...currentSource }, { reload: true });
             },
             onUnavailable: () => {
@@ -681,8 +736,12 @@
      */
     async function renderMarkdown(markdownText, source, { reload = false, previous = null } = {}) {
         const seq = ++renderSeq;
+        const editorAtStart = editing;
         currentSource = source;
-        if (!reload) revokeBlobUrls();
+        if (!reload) {
+            documentSeq++;
+            revokeBlobUrls();
+        }
 
         let built;
         try {
@@ -697,6 +756,8 @@
         source.markdown = markdownText;
 
         if (!reload || !rendered) {
+            // A different document replaces the one being edited (its changes were asked about).
+            if (editing && editing === editorAtStart) closeEditor();
             commitBlocks(built, null);
             anchorHold = null;
             dispatchFollow({ type: 'reset' });
@@ -1032,7 +1093,7 @@
 
     /** Reader input that scrolls the page: releases the anchor and pauses Follow. */
     function onUserInput(e) {
-        if (e.type === 'keydown' && (!SCROLL_KEYS.has(e.key) || e.target.closest('button, input, textarea, select'))) return;
+        if (e.type === 'keydown' && (!SCROLL_KEYS.has(e.key) || e.target.closest('button, input, textarea, select, [contenteditable]'))) return;
         if (e.type === 'mousedown') {
             // Only a press on the page's scrollbar scrolls; clicks on content don't.
             const root = document.documentElement;
@@ -1173,6 +1234,337 @@
     }
 
     // ------------------------------------------------------------------
+    // Editing the markdown source
+    // ------------------------------------------------------------------
+
+    function hasUnsavedChanges() {
+        return Boolean(editing && editing.state.dirty);
+    }
+
+    /** ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves while editing. */
+    function onEditShortcut(e) {
+        const action = core.editorShortcut(e, IS_MAC);
+        if (!action || !currentSource || lightbox.style.display === 'block') return;
+        if (action === 'toggle') {
+            e.preventDefault();
+            if (!editButton.hidden && !editButton.disabled) toggleEditing();
+        } else if (editing) {
+            e.preventDefault();
+            saveDocument();
+        }
+    }
+
+    /** Loads the editor bundle (once), which sets window.MarkyCodeMirror. */
+    function loadCodeMirror() {
+        if (window.MarkyCodeMirror) return Promise.resolve(window.MarkyCodeMirror);
+        if (!codeMirrorLoad) {
+            codeMirrorLoad = new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = CODEMIRROR_SRC;
+                script.onload = () => (window.MarkyCodeMirror
+                    ? resolve(window.MarkyCodeMirror)
+                    : reject(new Error('The editor did not load')));
+                script.onerror = () => reject(new Error(`Could not load ${CODEMIRROR_SRC}`));
+                document.head.appendChild(script);
+            });
+            // A failed load can be retried.
+            codeMirrorLoad.catch(() => {
+                codeMirrorLoad = null;
+            });
+        }
+        return codeMirrorLoad;
+    }
+
+    function toggleEditing() {
+        if (editing) {
+            finishEditing();
+        } else {
+            startEditing().catch(err => {
+                console.error('Could not start editing:', err);
+                alert(`Could not open the editor: ${err && err.message ? err.message : err}`);
+            });
+        }
+    }
+
+    /** Edit: swaps the rendered view for the markdown, with the cursor where the reader was. */
+    async function startEditing() {
+        if (editing || !currentSource || typeof currentSource.markdown !== 'string') return;
+        const seq = documentSeq;
+        editButton.disabled = true;
+        try {
+            // A followed folder switches files by itself; editing pins the one on screen, which
+            // is also the document the app then lets this window save.
+            if (isFollowingFolder() && currentSource.path) {
+                desktopFolder.following = false;
+                renderWatchFolderButton();
+                await watchDesktopDocument(currentSource.path);
+            }
+            const cm = await loadCodeMirror();
+            if (seq !== documentSeq || editing || !currentSource) return;
+
+            const text = currentSource.markdown;
+            const raws = rendered ? rendered.blocks.map(block => block.raw) : [];
+            const anchor = rendered && markdownContent.style.display !== 'none' ? captureAnchor() : null;
+            const separator = core.lineSeparator(text);
+            const session = { cm, separator, view: null, state: null, saving: false };
+            session.state = core.editReducer(null, { type: 'open', content: text }).state;
+            editorHost.replaceChildren();
+            session.view = cm.createEditor(editorHost, text, {
+                lineSeparator: separator,
+                onChange: () => {
+                    if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
+                },
+            });
+            editing = session;
+
+            markdownContent.style.display = 'none';
+            editorHost.hidden = false;
+            document.body.classList.add('editing');
+            anchorHold = null;
+            renderEditControls();
+
+            const pos = docPosition(text, core.blockOffset(raws, text, anchor ? anchor.index : 0), separator);
+            session.view.dispatch({
+                selection: { anchor: pos },
+                effects: cm.EditorView.scrollIntoView(pos, { y: 'start', yMargin: topInset() + 24 }),
+            });
+            session.view.focus();
+        } finally {
+            editButton.disabled = false;
+        }
+    }
+
+    /** Done: back to the rendered view, near where the cursor was. Unsaved changes are asked about. */
+    async function finishEditing() {
+        if (!editing) return;
+        editButton.disabled = true;
+        let left;
+        try {
+            left = await leaveEditor();
+        } finally {
+            editButton.disabled = false;
+        }
+        if (!left) return;
+        // leaveEditor kept the editor open for this: it shows what's saved.
+        const session = editing;
+        if (!session || !currentSource) return;
+        const text = session.state.base;
+        const head = session.view.state.selection.main.head;
+        const offset = textOffset(session.view.state, head, session.separator);
+        closeEditor();
+        const source = { ...currentSource, markdown: text };
+        await renderMarkdown(text, source);
+        if (currentSource !== source || !rendered) return;
+        const index = core.blockIndexAt(rendered.blocks.map(block => block.raw), text, offset);
+        if (index !== null && index > 0) scrollToBlockTop(index);
+    }
+
+    /**
+     * Asks before unsaved changes are thrown away (Open another, Done, a drop, closing).
+     * Resolves true when it's fine to go on: nothing was unsaved, or the reader chose to
+     * discard. Discarding drops the changes; the editor stays open for the caller to close.
+     */
+    async function leaveEditor() {
+        if (!hasUnsavedChanges()) return true;
+        if (!(await confirmDiscard())) return false;
+        if (editing) dispatchEdit({ type: 'revert' });
+        return true;
+    }
+
+    async function confirmDiscard() {
+        const name = currentSource ? currentSource.title : '';
+        if (isDesktop) {
+            try {
+                return await invoke('confirm_discard', { name });
+            } catch (err) {
+                console.error('Could not ask about unsaved changes:', err);
+            }
+        }
+        return window.confirm(name ? `Discard your unsaved changes to ${name}?` : 'Discard your unsaved changes?');
+    }
+
+    /** Removes the editor (and its unsaved changes, if any) without asking. */
+    function closeEditor() {
+        if (!editing) return;
+        const session = editing;
+        editing = null;
+        session.view.destroy();
+        editorHost.replaceChildren();
+        editorHost.hidden = true;
+        document.body.classList.remove('editing');
+        renderEditControls();
+    }
+
+    /** The editor's text, with the document's own line breaks. */
+    function editorText() {
+        return editing ? editing.view.state.sliceDoc() : '';
+    }
+
+    /** Runs an event through core.editReducer and applies what it says to the editor. */
+    function dispatchEdit(event) {
+        if (!editing) return;
+        const session = editing;
+        const result = core.editReducer(session.state, event);
+        session.state = result.state;
+        if (result.apply !== null) replaceEditorText(session, result.apply);
+        renderEditControls();
+    }
+
+    /**
+     * Puts `text` in the editor as one minimal change (only the span that differs), so the
+     * cursor, selection and undo history survive. Text with other line breaks than the editor's
+     * replaces the editor's state outright.
+     */
+    function replaceEditorText(session, text) {
+        const view = session.view;
+        if (core.lineSeparator(text) !== session.separator) {
+            const offset = textOffset(view.state, view.state.selection.main.head, session.separator);
+            editorHost.replaceChildren();
+            view.destroy();
+            session.separator = core.lineSeparator(text);
+            session.view = session.cm.createEditor(editorHost, text, {
+                lineSeparator: session.separator,
+                onChange: () => {
+                    if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
+                },
+            });
+            const pos = Math.min(docPosition(text, offset, session.separator), session.view.state.doc.length);
+            session.view.dispatch({ selection: { anchor: pos } });
+            return;
+        }
+        // CodeMirror counts a line break as one position, whatever the separator.
+        const flat = (value) => (session.separator === '\r\n' ? value.split('\r\n').join('\n') : value);
+        const change = core.textChange(flat(view.state.sliceDoc()), flat(text));
+        if (!change) return;
+        view.dispatch({
+            changes: change,
+            annotations: session.cm.Transaction.addToHistory.of(false),
+        });
+    }
+
+    /** Editor position of a text offset (the two differ by one per '\r\n' line break). */
+    function docPosition(text, offset, separator) {
+        if (separator !== '\r\n') return offset;
+        return offset - text.slice(0, offset).split('\r\n').length + 1;
+    }
+
+    /** Text offset of an editor position. */
+    function textOffset(state, pos, separator) {
+        return separator === '\r\n' ? pos + state.doc.lineAt(pos).number - 1 : pos;
+    }
+
+    /** How the editor saves: in place (desktop, or a writable file handle), or as a download. */
+    function saveMode() {
+        if (isDesktop) return 'save';
+        const handle = currentSource && currentSource.handle;
+        return handle && typeof handle.createWritable === 'function' ? 'save' : 'download';
+    }
+
+    async function saveDocument() {
+        if (!editing || editing.saving || !currentSource) return;
+        const session = editing;
+        if (!session.state.dirty) return;
+        const source = currentSource;
+        const content = editorText();
+        const base = session.state.base;
+        session.saving = true;
+        renderEditControls();
+        try {
+            const mode = saveMode();
+            if (isDesktop) {
+                await invoke('write_document', { path: source.path, base, content });
+            } else if (mode === 'save') {
+                const current = await (await source.handle.getFile()).text();
+                if (current !== base) {
+                    if (editing === session) dispatchEdit({ type: 'saveConflict', content: current, text: editorText() });
+                    return;
+                }
+                const writable = await source.handle.createWritable();
+                await writable.write(content);
+                await writable.close();
+            } else {
+                downloadText(content, source.title);
+            }
+            if (editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
+        } catch (err) {
+            if (err && err.kind === 'conflict' && editing === session) {
+                dispatchEdit({ type: 'saveConflict', content: err.content, text: editorText() });
+                return;
+            }
+            if (err && err.name === 'AbortError') return; // the browser's permission prompt was declined
+            console.error('Save failed:', err);
+            alert(`Could not save: ${err && err.message ? err.message : err}`);
+        } finally {
+            session.saving = false;
+            renderEditControls();
+        }
+    }
+
+    /** Web without a writable handle: saves a copy under the original file name. */
+    function downloadText(text, name) {
+        const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name || 'document.md';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    /** Edit / Done, Save, Revert, the conflict banner, the unsaved-changes mark and close guard. */
+    function renderEditControls() {
+        const on = Boolean(editing);
+        const dirty = hasUnsavedChanges();
+        editLabel.textContent = on ? 'Done' : 'Edit';
+        editButton.setAttribute('aria-pressed', String(on));
+        editButton.title = on
+            ? `Back to the rendered view (${IS_MAC ? '⌘E' : 'Ctrl+E'})`
+            : `Edit the markdown (${IS_MAC ? '⌘E' : 'Ctrl+E'})`;
+        saveButton.hidden = !on;
+        revertButton.hidden = !on;
+        editBanner.hidden = !(on && editing.state.conflict !== null);
+        if (on) {
+            const download = saveMode() === 'download';
+            saveButton.textContent = download ? 'Download' : 'Save';
+            saveButton.title = download
+                ? 'This browser can\'t save in place: download a copy'
+                : `Save (${IS_MAC ? '⌘S' : 'Ctrl+S'})`;
+            saveButton.disabled = !dirty || editing.saving;
+            revertButton.disabled = !dirty && editing.state.conflict === null;
+        }
+        if (dirty !== titleMarked && currentSource) showTitle(currentSource.title);
+        syncCloseGuard(dirty);
+    }
+
+    /** Desktop: while there are unsaved changes, closing the window asks first. */
+    function syncCloseGuard(dirty) {
+        if (!isDesktop || !tauri.window) return;
+        if (dirty && !closeGuard) {
+            const guard = tauri.window.getCurrentWindow().onCloseRequested(async (event) => {
+                if (hasUnsavedChanges() && !(await confirmDiscard())) event.preventDefault();
+            });
+            closeGuard = guard;
+            guard.catch(err => {
+                console.error('Could not guard closing the window:', err);
+                if (closeGuard === guard) closeGuard = null;
+            });
+        } else if (!dirty && closeGuard) {
+            const guard = closeGuard;
+            closeGuard = null;
+            guard.then(unlisten => unlisten(), () => {});
+        }
+    }
+
+    /** Scrolls so block `index` sits just below the top bar. */
+    function scrollToBlockTop(index) {
+        const [el] = blockElements(index);
+        if (!el) return;
+        const top = el.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo(0, Math.max(0, top - topInset() - 16));
+    }
+
+    // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
 
@@ -1181,12 +1573,21 @@
         if (!container.classList.contains('file-selector-active')) {
             fileSelector.style.display = 'none';
         }
-        markdownContent.style.display = 'block';
+        markdownContent.style.display = editing ? 'none' : 'block';
         backButton.style.display = 'inline-flex';
         fullscreenButton.style.display = 'inline-flex';
-        docTitle.textContent = title || '';
-        document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
+        editButton.hidden = false;
+        document.body.classList.add('document-open');
         hideMissingNotice();
+        showTitle(title);
+    }
+
+    /** Puts the document's title in the top bar, the page title and (desktop) the window. */
+    function showTitle(title) {
+        titleMarked = hasUnsavedChanges();
+        const mark = titleMarked ? '• ' : '';
+        docTitle.textContent = title ? mark + title : '';
+        document.title = title ? `${mark}${title} - Markydowny` : DEFAULT_TITLE;
         // In a folder the title names the folder too, so the app uses it as is. Otherwise the
         // path lets the app tell same-named tabs apart.
         const path = currentSource && currentSource.kind === 'desktop' && !desktopFolder ? currentSource.path : null;
@@ -1202,8 +1603,11 @@
         dropZone.style.display = 'flex';
         markdownContent.style.display = 'none';
         closeFileSelector();
+        closeEditor();
         backButton.style.display = 'none';
         fullscreenButton.style.display = 'none';
+        editButton.hidden = true;
+        document.body.classList.remove('document-open');
 
         if (container.classList.contains('fullscreen')) {
             toggleFullscreen();
@@ -1212,6 +1616,7 @@
         folderFiles.clear();
         revokeBlobUrls();
         renderSeq++;
+        documentSeq++;
         currentSource = null;
         rendered = null;
         anchorHold = null;
@@ -1242,6 +1647,9 @@
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
+        // Shown again with the file picked from the list. (Unsaved changes were asked about.)
+        closeEditor();
+        editButton.hidden = true;
         fileList.replaceChildren();
         renderWatchFolderButton();
 

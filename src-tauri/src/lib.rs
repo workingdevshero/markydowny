@@ -8,10 +8,12 @@
 //! * grouping those windows as native macOS tabs (see `tabs`);
 //! * reading files and folders by path, so relative images resolve;
 //! * scoped access to local images through Tauri's asset protocol;
-//! * live reload: each window watches the document it shows (`watch.rs`).
+//! * live reload: each window watches the document it shows (`watch.rs`);
+//! * saving an edited document, checked and atomic (`save.rs`).
 
 mod crash_reporting;
 mod docs;
+mod save;
 mod tabs;
 mod watch;
 
@@ -28,7 +30,7 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, Manager, RunEvent, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
@@ -243,8 +245,9 @@ fn allow_asset_files(app: AppHandle, paths: Vec<String>) {
 }
 
 /// Tracks whether a window is showing a document, and updates its title. With the document's
-/// `path`, tabs that share a file name are titled apart. Returning to the drop zone (which
-/// carries a watch `generation`) stops the window's live reload.
+/// `path`, tabs that share a file name are titled apart; `edited` marks unsaved changes.
+/// Returning to the drop zone (which carries a watch `generation`) stops the window's live
+/// reload.
 #[tauri::command]
 fn set_document_open(
     app: AppHandle,
@@ -254,8 +257,10 @@ fn set_document_open(
     title: Option<String>,
     path: Option<String>,
     generation: Option<u64>,
+    edited: Option<bool>,
 ) {
     let label = window.label();
+    let edited = open && edited.unwrap_or(false);
     if open {
         state.router.lock().unwrap().set_occupied(label, true);
     } else if let Some(generation) = generation {
@@ -268,14 +273,14 @@ fn set_document_open(
     }
     let path = path.filter(|p| open && !p.is_empty()).map(PathBuf::from);
     let plain_title = path.is_none().then(|| match (open, title) {
-        (true, Some(t)) if !t.is_empty() => t,
+        (true, Some(t)) if !t.is_empty() => tabs::edited_title(&t, edited),
         _ => "Markydowny".to_string(),
     });
-    state
-        .open_documents
-        .lock()
-        .unwrap()
-        .set(window.label(), path);
+    {
+        let mut open_documents = state.open_documents.lock().unwrap();
+        open_documents.set(window.label(), path);
+        open_documents.set_edited(window.label(), edited);
+    }
     let _ = app.run_on_main_thread(move || {
         if let Some(title) = plain_title {
             let _ = window.set_title(&title);
@@ -317,6 +322,53 @@ fn watch_document(
         .into_iter()
         .next()
         .map(|(path, content)| document_for(&path, content)))
+}
+
+/// Saves the calling window's document: `path` has to be the document it shows, and the file
+/// must still hold `base` (the content the editor started from), or the save is refused with
+/// the file's current content. See `save.rs`.
+#[tauri::command(async)]
+fn write_document(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    path: String,
+    base: String,
+    content: String,
+) -> Result<(), save::SaveError> {
+    let showing = state
+        .router
+        .lock()
+        .unwrap()
+        .showing(window.label())
+        .map(Path::to_path_buf);
+    save::save_document(
+        showing.as_deref(),
+        Path::new(&path),
+        &base,
+        &content,
+        read_text,
+    )
+}
+
+/// Asks whether to throw away unsaved changes (closing the window, leaving the editor).
+/// Returns true to discard them.
+#[tauri::command(async)]
+fn confirm_discard(app: AppHandle, name: Option<String>) -> bool {
+    let message = match name {
+        Some(name) if !name.is_empty() => {
+            format!("Discard your unsaved changes to {name}?")
+        }
+        _ => "Discard your unsaved changes?".to_string(),
+    };
+    app.dialog()
+        .message(message)
+        .title("Unsaved changes")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Discard".to_string(),
+            "Cancel".to_string(),
+        ))
+        .blocking_show()
 }
 
 /// Follows a folder in the calling window: watches every markdown file under it (the same
@@ -724,6 +776,8 @@ pub fn run() {
             set_document_open,
             watch_document,
             watch_folder,
+            write_document,
+            confirm_discard,
             select_tab,
         ])
         .setup(|app| {

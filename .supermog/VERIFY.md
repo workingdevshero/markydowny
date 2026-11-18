@@ -108,6 +108,41 @@ about 2.4 s, so look within that). Then:
 - **Follow** scrolls a change that's out of view into view. Scrolling yourself (wheel, keys)
   pauses it, and the button reads *Resume* until clicked.
 
+## Editing
+
+A pencil button (*Edit*, ⌘E on a Mac, Ctrl+E elsewhere) sits in the top bar next to fullscreen
+while a document is open. It swaps the rendered view for a CodeMirror editor showing the
+markdown, with the same width and fonts, and reads *Done*; *Done* renders the result and scrolls
+near where the cursor was. *Save* (⌘S / Ctrl+S) and *Revert* appear while editing. Unsaved
+changes put a dot before the title in the top bar and the page title ("• live.md - Markydowny").
+
+- **Lazy loading.** CodeMirror is `js/vendor/codemirror.js`, loaded the first time *Edit* is
+  pressed. Before that, `window.MarkyCodeMirror` is undefined and the network log has no
+  request for it; viewing a document must never load it.
+- **Saving in place (Chromium).** Open an Origin Private File System handle with
+  `MarkyApp.openFileHandle(handle)` as in *Live reload* above, press *Edit*, click into the text,
+  type, and press Ctrl+S (or *Save*). Read the file back with
+  `await (await handle.getFile()).text()`: it holds exactly the edit, no other bytes, and the dot
+  clears. The save must not come back through live reload as a change or a banner.
+- **Live reload while editing.** With nothing unsaved, writing the file from `browser_evaluate`
+  updates the editor in place: typing afterwards lands where the cursor was. With unsaved
+  changes, the same write shows *This file changed on disk* with *Reload* (takes the file, drops
+  the changes) and *Keep mine* (hides the banner; the next save overwrites the file).
+- **Revert** puts back the saved text and clears the dot.
+- **Download fallback (Safari, Firefox).** With the File System Access API deleted by an init
+  script (see *Without the API* above), a file opened through *Choose File* has no handle: the
+  save button reads *Download* and saving downloads a copy under the original file name. A file
+  with Windows (CRLF) line endings comes back with CRLF intact.
+- **Unsaved-changes guard.** With unsaved changes, *Open another* and *Done* ask first
+  (`confirm`; *Cancel* keeps editing), and reloading or closing the tab triggers the browser's
+  "Leave site?" prompt (`beforeunload`). Without unsaved changes none of them ask.
+- **Phone width.** While editing, the pencil goes icon-only and fullscreen steps aside, so
+  *Revert* and *Save* fit in the top bar.
+
+The desktop app saves through `write_document` (atomic, permission-keeping, refused when the file
+changed since the editor read it) and asks before closing a window with unsaved changes; that
+side can't run here, and its Rust is covered by `cargo test`.
+
 ## Known quirks
 
 - The same `index.html` and `js/` are bundled into the macOS app (`scripts/build-frontend.mjs`

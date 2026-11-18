@@ -155,10 +155,24 @@ impl LaunchQueue {
 // Tab titles
 // ---------------------------------------------------------------------------
 
+/// Put before the title of a window with unsaved changes.
+pub const EDITED_MARK: &str = "• ";
+
+/// `title`, marked when its document has unsaved changes.
+pub fn edited_title(title: &str, edited: bool) -> String {
+    if edited {
+        format!("{EDITED_MARK}{title}")
+    } else {
+        title.to_string()
+    }
+}
+
 /// The documents shown in each window, for titling tabs.
 #[derive(Debug, Default)]
 pub struct OpenDocuments {
     paths: HashMap<String, PathBuf>,
+    /// Windows with unsaved changes.
+    edited: HashSet<String>,
 }
 
 impl OpenDocuments {
@@ -166,13 +180,29 @@ impl OpenDocuments {
     pub fn set(&mut self, label: &str, path: Option<PathBuf>) {
         match path {
             Some(path) => self.paths.insert(label.to_string(), path),
-            None => self.paths.remove(label),
+            None => {
+                self.edited.remove(label);
+                self.paths.remove(label)
+            }
         };
+    }
+
+    /// Records whether `label`'s document has unsaved changes.
+    pub fn set_edited(&mut self, label: &str, edited: bool) {
+        if edited {
+            self.edited.insert(label.to_string());
+        } else {
+            self.edited.remove(label);
+        }
     }
 
     /// Title for every window showing a document.
     pub fn titles(&self) -> BTreeMap<String, String> {
-        tab_titles(self.paths.iter().map(|(l, p)| (l.as_str(), p.as_path())))
+        let mut titles = tab_titles(self.paths.iter().map(|(l, p)| (l.as_str(), p.as_path())));
+        for (label, title) in titles.iter_mut() {
+            *title = edited_title(title, self.edited.contains(label));
+        }
+        titles
     }
 }
 
@@ -831,6 +861,27 @@ mod tests {
             open.titles().into_iter().collect::<Vec<_>>(),
             expect(&[("main", "README.md")])
         );
+    }
+
+    #[test]
+    fn unsaved_changes_mark_the_title() {
+        let mut open = OpenDocuments::default();
+        open.set("main", Some("/p/docs/README.md".into()));
+        open.set("doc-1", Some("/p/src/README.md".into()));
+        open.set_edited("main", true);
+        assert_eq!(
+            open.titles().into_iter().collect::<Vec<_>>(),
+            expect(&[("doc-1", "README.md — src"), ("main", "• README.md — docs")])
+        );
+        open.set_edited("main", false);
+        assert_eq!(open.titles()["main"], "README.md — docs");
+
+        // Closing the document forgets the mark.
+        open.set_edited("doc-1", true);
+        open.set("doc-1", None);
+        open.set("doc-1", Some("/p/src/README.md".into()));
+        assert_eq!(open.titles()["doc-1"], "README.md — src");
+        assert_eq!(edited_title("Folder › a.md", true), "• Folder › a.md");
     }
 
     #[test]

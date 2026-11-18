@@ -414,7 +414,199 @@
         };
     }
 
+    // ------------------------------------------------------------------
+    // Editing the markdown source
+    // ------------------------------------------------------------------
+
+    /**
+     * 'toggle' for ⌘E (Ctrl+E elsewhere), 'save' for ⌘S (Ctrl+S), otherwise null. On a Mac
+     * Ctrl+E is left alone: it moves to the end of the line in text fields and the editor.
+     */
+    function editorShortcut(event, isMac) {
+        if (!event || event.altKey || event.shiftKey) return null;
+        const modifier = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+        if (!modifier) return null;
+        const key = String(event.key).toLowerCase();
+        if (key === 'e') return 'toggle';
+        if (key === 's') return 'save';
+        return null;
+    }
+
+    /**
+     * The line break the editor should use for `text`: '\r\n' when every line ends that way,
+     * otherwise '\n' (any other '\r' stays in the text as it is), so saving changes no bytes
+     * the reader didn't edit.
+     */
+    function lineSeparator(text) {
+        const s = String(text);
+        return s.includes('\r\n') && !/(^|[^\r])\n/.test(s) ? '\r\n' : '\n';
+    }
+
+    function isHighSurrogate(code) {
+        return code >= 0xd800 && code <= 0xdbff;
+    }
+
+    function isLowSurrogate(code) {
+        return code >= 0xdc00 && code <= 0xdfff;
+    }
+
+    /**
+     * The smallest single replacement that turns `oldText` into `newText`: everything between
+     * their common prefix and common suffix. Returns { from, to, insert } (positions in
+     * `oldText`), or null when they're equal. Never splits a surrogate pair.
+     */
+    function textChange(oldText, newText) {
+        if (oldText === newText) return null;
+        const limit = Math.min(oldText.length, newText.length);
+        let start = 0;
+        while (start < limit && oldText.charCodeAt(start) === newText.charCodeAt(start)) start++;
+        if (start > 0 && isHighSurrogate(oldText.charCodeAt(start - 1))) start--;
+        // The suffix may not overlap the prefix.
+        let suffix = 0;
+        while (
+            suffix < limit - start &&
+            oldText.charCodeAt(oldText.length - 1 - suffix) === newText.charCodeAt(newText.length - 1 - suffix)
+        ) {
+            suffix++;
+        }
+        if (suffix > 0 && isLowSurrogate(oldText.charCodeAt(oldText.length - suffix))) suffix--;
+        return {
+            from: start,
+            to: oldText.length - suffix,
+            insert: newText.slice(start, newText.length - suffix),
+        };
+    }
+
+    /**
+     * Where each block's raw text starts in `text`: the blocks come from the markdown lexer, in
+     * order, so each is found after the one before. A block that can't be found starts where
+     * the previous one ended.
+     */
+    function blockStarts(raws, text) {
+        const starts = [];
+        let at = 0;
+        for (const raw of raws) {
+            const found = raw ? text.indexOf(raw, at) : -1;
+            const start = found === -1 ? at : found;
+            starts.push(start);
+            at = start + (found === -1 ? 0 : raw.length);
+        }
+        return starts;
+    }
+
+    /** The block the text offset `offset` falls in (the last one starting at or before it). */
+    function blockIndexAt(raws, text, offset) {
+        const starts = blockStarts(raws, text);
+        let index = 0;
+        for (let i = 0; i < starts.length; i++) {
+            if (starts[i] <= offset) index = i;
+        }
+        return starts.length === 0 ? null : index;
+    }
+
+    /** Where block `index` starts in `text` (0 when unknown). */
+    function blockOffset(raws, text, index) {
+        if (index === null || index === undefined) return 0;
+        const starts = blockStarts(raws, text);
+        if (starts.length === 0) return 0;
+        return starts[Math.min(Math.max(index, 0), starts.length - 1)];
+    }
+
+    /** How many recent saves are remembered, so their echo from the file watch is recognised. */
+    const MAX_WRITTEN = 4;
+
+    /**
+     * Unsaved changes and conflicts with the file on disk, as a reducer.
+     * state: { base, dirty, conflict, written }
+     *   base: the file's content the editor's changes are against (what's on disk, as far as
+     *     the page knows). Saving checks the file still has it.
+     *   dirty: the editor's text differs from base.
+     *   conflict: content that arrived on disk while there were unsaved changes, or null.
+     *   written: what this page saved recently, so a save coming back through the file watch
+     *     isn't taken for someone else's change.
+     *
+     * Events (`text` is the editor's text when the event happens):
+     *   { type: 'open', content } - editing starts from content.
+     *   { type: 'edit', text } - the editor's text changed.
+     *   { type: 'disk', content, text } - the file changed on disk.
+     *   { type: 'saved', content, text } - content was written.
+     *   { type: 'saveConflict', content, text } - a save was refused: the file holds content.
+     *   { type: 'reload' } - the banner's Reload: take the file, drop the changes.
+     *   { type: 'keepMine', text } - the banner's Keep mine: the next save overwrites the file.
+     *   { type: 'revert' } - drop the changes.
+     * Returns { state, apply }: apply is text to put in the editor, or null.
+     */
+    function editReducer(state, event) {
+        const next = state
+            ? { base: state.base, dirty: state.dirty, conflict: state.conflict, written: state.written }
+            : { base: '', dirty: false, conflict: null, written: [] };
+        let apply = null;
+        switch (event.type) {
+            case 'open':
+                next.base = event.content;
+                next.dirty = false;
+                next.conflict = null;
+                next.written = [];
+                break;
+            case 'edit':
+                next.dirty = event.text !== next.base;
+                break;
+            case 'disk':
+            case 'saveConflict':
+                if (event.content === next.base) {
+                    // Back to what the editor started from: nothing to choose between.
+                    next.conflict = null;
+                } else if (event.type === 'disk' && next.written.includes(event.content)) {
+                    // One of this page's own saves, reported late.
+                } else if (event.content === event.text) {
+                    next.base = event.content;
+                    next.dirty = false;
+                    next.conflict = null;
+                } else if (!next.dirty) {
+                    next.base = event.content;
+                    next.conflict = null;
+                    apply = event.content;
+                } else {
+                    next.conflict = event.content;
+                }
+                break;
+            case 'saved':
+                next.base = event.content;
+                next.dirty = event.text !== event.content;
+                next.conflict = null;
+                next.written = next.written.concat(event.content).slice(-MAX_WRITTEN);
+                break;
+            case 'reload':
+                if (next.conflict === null) break;
+                next.base = next.conflict;
+                next.dirty = false;
+                next.conflict = null;
+                apply = next.base;
+                break;
+            case 'keepMine':
+                if (next.conflict === null) break;
+                next.base = next.conflict;
+                next.conflict = null;
+                next.dirty = event.text !== next.base;
+                break;
+            case 'revert':
+                // With a change on disk too, revert to that: it's what the file holds now.
+                if (next.conflict !== null) next.base = next.conflict;
+                apply = next.dirty || next.conflict !== null ? next.base : null;
+                next.dirty = false;
+                next.conflict = null;
+                break;
+        }
+        return { state: next, apply };
+    }
+
     return {
+        editorShortcut,
+        lineSeparator,
+        textChange,
+        blockIndexAt,
+        blockOffset,
+        editReducer,
         fileWatchSupport,
         pollDecision,
         createFilePoller,

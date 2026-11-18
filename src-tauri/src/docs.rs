@@ -192,6 +192,11 @@ impl DocumentRouter {
         }
     }
 
+    /// The document a window shows (canonical), if it shows one rather than a followed folder.
+    pub fn showing(&self, label: &str) -> Option<&Path> {
+        self.showing.get(label).map(PathBuf::as_path)
+    }
+
     /// Records the folder a window follows (`None`: none).
     pub fn set_folder(&mut self, label: &str, root: Option<&Path>) {
         match root {
@@ -380,6 +385,10 @@ mod tests {
         );
         router.set_showing("main", Some(&file));
         assert_eq!(
+            router.showing("main"),
+            Some(file.canonicalize().unwrap().as_path())
+        );
+        assert_eq!(
             router.route(file.clone(), &windows, None),
             Placement::Showing("main".into())
         );
@@ -501,6 +510,9 @@ mod tests {
             router.route(outside, &windows, None),
             Placement::New("doc-1".into())
         );
+
+        // A followed folder isn't a document the window can save.
+        assert_eq!(router.showing("main"), None);
 
         // Pinning a file stops the folder claiming files.
         router.set_showing("main", Some(&inside));
