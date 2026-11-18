@@ -121,7 +121,7 @@ test('the release workflow runs on v* tags, and dry-runs on PRs and workflow_dis
     assert.deepEqual(Object.keys(jobs()), ['version', 'mac', 'linux', 'release']);
 });
 
-test('only the release job can write, and it runs only for a pushed tag, after every build', () => {
+test('only the release job can write, and it runs only for a tag, after every build', () => {
     // Read-only by default.
     assert.match(workflow, /^permissions:\n {2}contents: read\n/m);
     const all = jobs();
@@ -131,7 +131,9 @@ test('only the release job can write, and it runs only for a pushed tag, after e
     }
     const release = all.release;
     assert.match(release, /^ {4}permissions:\n {6}contents: write\n(?! {6})/m);
-    assert.match(release, /^ {4}if: github\.event_name == 'push' && github\.ref_type == 'tag'$/m);
+    // A tag pushed by hand, or one tag-release.yml made and dispatched this workflow on. Pull
+    // requests and dispatches on a branch have a branch ref, so they never get here.
+    assert.match(release, /^ {4}if: github\.ref_type == 'tag'$/m);
     assert.match(release, /^ {4}needs: \[version, mac, linux\]$/m);
 });
 
