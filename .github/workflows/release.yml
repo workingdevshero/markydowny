@@ -1,0 +1,260 @@
+name: Release
+
+# Pushing a version tag (v1.2.0, or v1.2.0-beta.1 for a prerelease) builds the desktop app for
+# macOS and Linux and attaches it to a draft release, to be looked over and published by hand.
+# Pull requests that change the release build, and workflow_dispatch on any branch, run the same
+# builds as a dry run: everything except the release job.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release-mac.sh
+      - scripts/build-frontend.mjs
+      - scripts/check-release-version.mjs
+      - src-tauri/build.rs
+      - src-tauri/tauri.conf.json
+  workflow_dispatch:
+
+# Read-only everywhere; only the release job can write.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # A newer push to a PR supersedes its dry run; a tag's run always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # On a tag, the tag must match package.json, src-tauri/Cargo.toml and tauri.conf.json, or
+      # the run stops here, naming the file that's wrong. A dry run checks the three agree.
+      - id: check
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
+          else
+            node scripts/check-release-version.mjs
+          fi
+
+  mac:
+    needs: version
+    runs-on: macos-latest
+    # A universal build compiles everything twice, once per architecture.
+    timeout-minutes: 90
+    # As in ci.yml's desktop job: no debug info and no incremental artifacts keep linking light,
+    # and two jobs leave headroom on the 3-core, 7 GB runner, which otherwise dies mid-build.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
+      BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+      # Empty when the secret isn't set (a fork's PR): the build then has crash reporting off.
+      BUGSPLAT_DATABASE: ${{ secrets.BUGSPLAT_DATABASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Not src-tauri/target: a tag's cache is only ever visible to that tag, so caching the
+      # build only speeds up re-runs, and a universal release build is gigabytes.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            .crashpad-cache
+          key: release-${{ runner.os }}-universal-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      # Ad-hoc signed and not notarized until #26.
+      # TODO(#26): import the Developer ID certificate into a temporary keychain and store a
+      # notarytool keychain profile from repository secrets, then replace
+      # `--identity - --no-notarize` with `--identity "<Developer ID Application: …>"`, so
+      # release-mac.sh signs, notarizes and staples.
+      - name: Build, sign (ad-hoc) and package
+        run: scripts/release-mac.sh --arch universal --identity - --no-notarize
+      - name: Crash reporting
+        run: |
+          if [[ -n "$BUGSPLAT_DATABASE" ]]; then
+            echo "macOS: crash reporting is on." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "macOS: crash reporting is **off**: the BUGSPLAT_DATABASE secret isn't set." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # One .dSYM per architecture: Tauri lipos the binaries of a universal build, not the dSYMs.
+      - name: Upload symbols
+        if: github.ref_type == 'tag'
+        # A failed upload leaves crashes unsymbolicated, but shouldn't hold back the release.
+        continue-on-error: true
+        env:
+          SYMBOL_UPLOAD_CLIENT_ID: ${{ secrets.SYMBOL_UPLOAD_CLIENT_ID }}
+          SYMBOL_UPLOAD_CLIENT_SECRET: ${{ secrets.SYMBOL_UPLOAD_CLIENT_SECRET }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -z "$BUGSPLAT_DATABASE" || -z "$SYMBOL_UPLOAD_CLIENT_ID" || -z "$SYMBOL_UPLOAD_CLIENT_SECRET" ]]; then
+            echo "macOS: symbols not uploaded: the BugSplat secrets aren't all set." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            npx symbol-upload -a Markydowny -v "$VERSION" -d "src-tauri/target/$triple/release" -f markydowny.dSYM -m
+          done
+          echo "macOS: symbols uploaded for $VERSION." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-universal
+          path: dist-release/*.dmg
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 2
+      # Crashpad's headers need Clang; GCC rejects them.
+      CC: clang
+      CXX: clang++
+      # Keep the line tables in the binary rather than a .dwp, so dump_syms reads them directly.
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: "off"
+      BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+      BUGSPLAT_DATABASE: ${{ secrets.BUGSPLAT_DATABASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            .crashpad-cache
+          key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      # The packages scripts/build-desktop.sh installs: Tauri's WebKitGTK prerequisites, and
+      # CMake, Ninja and Clang for BugSplat's native code.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            build-essential clang file pkg-config cmake ninja-build libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev
+      # --include=dev: the Tauri CLI is a devDependency.
+      - run: npm ci --include=dev --no-audit --no-fund
+      - name: Build .deb and .AppImage
+        env:
+          # linuxdeploy is itself an AppImage, and the runners have no FUSE to mount it.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: npx tauri build --bundles deb,appimage
+      # bugsplat-native looks for its helpers next to the executable (/usr/bin), where
+      # tauri.conf.json's bundle.linux files put them. Without them crash reporting is off.
+      - name: Check the crash reporting helpers are packaged
+        run: |
+          contents=$(dpkg-deb -c src-tauri/target/release/bundle/deb/*.deb)
+          appdir=$(echo src-tauri/target/release/bundle/appimage/*.AppDir)
+          for helper in BugSplatMonitor BugSplatReporter; do
+            grep -q "/usr/bin/$helper\$" <<< "$contents" || { echo "$helper is missing from the .deb"; exit 1; }
+            [[ -x "$appdir/usr/bin/$helper" ]] || { echo "$helper is missing from the AppImage"; exit 1; }
+          done
+      - name: Crash reporting
+        run: |
+          if [[ -n "$BUGSPLAT_DATABASE" ]]; then
+            echo "Linux ${{ matrix.arch }}: crash reporting is on." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Linux ${{ matrix.arch }}: crash reporting is **off**: the BUGSPLAT_DATABASE secret isn't set." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload symbols
+        if: github.ref_type == 'tag'
+        continue-on-error: true
+        env:
+          SYMBOL_UPLOAD_CLIENT_ID: ${{ secrets.SYMBOL_UPLOAD_CLIENT_ID }}
+          SYMBOL_UPLOAD_CLIENT_SECRET: ${{ secrets.SYMBOL_UPLOAD_CLIENT_SECRET }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -z "$BUGSPLAT_DATABASE" || -z "$SYMBOL_UPLOAD_CLIENT_ID" || -z "$SYMBOL_UPLOAD_CLIENT_SECRET" ]]; then
+            echo "Linux ${{ matrix.arch }}: symbols not uploaded: the BugSplat secrets aren't all set." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npx symbol-upload -a Markydowny -v "$VERSION" -d src-tauri/target/release -f markydowny -m
+          echo "Linux ${{ matrix.arch }}: symbols uploaded for $VERSION." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  release:
+    # Only for a pushed tag: dry runs stop after the builds.
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [version, mac, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Installing
+
+          **macOS** (Apple silicon and Intel, macOS 12 or later): open the `.dmg` and drag Markydowny to Applications. This build isn't notarized yet, so macOS refuses to open a copy downloaded with a browser. Clear the quarantine flag once:
+
+              xattr -dr com.apple.quarantine /Applications/Markydowny.app
+
+          Or download it with `gh release download`, which doesn't set the flag.
+
+          **Linux** (x86_64 and arm64): the `.deb` and `.AppImage` need glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39 and later.
+
+          `SHA256SUMS.txt` has a checksum for every file (`sha256sum -c SHA256SUMS.txt --ignore-missing`).
+          NOTES
+      # Re-running a tag replaces the draft's files rather than making a second release. A
+      # release that's already published is left alone.
+      - name: Create or update the draft release
+        run: |
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .draft")
+          if [[ "$draft" == "true" ]]; then
+            gh release upload "$TAG" artifacts/* --clobber
+            echo "Replaced the files on the draft release for $TAG." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -n "$draft" ]]; then
+            echo "::error::$TAG is already published; delete the release to rebuild it."
+            exit 1
+          else
+            prerelease=()
+            [[ "$PRERELEASE" == "true" ]] && prerelease=(--prerelease)
+            gh release create "$TAG" artifacts/* --draft --verify-tag --generate-notes \
+              --notes-file notes.md --title "Markydowny $VERSION" "${prerelease[@]}"
+            echo "Created a draft release for $TAG." >> "$GITHUB_STEP_SUMMARY"
+          fi
