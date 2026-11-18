@@ -380,3 +380,31 @@ test('formatWordCount reads "1,204 words" and "37 of 1,204 words"', () => {
     assert.equal(core.formatWordCount(5, 0), '0 of 5 words');
     assert.equal(core.formatWordCount(1, 1), '1 of 1 word');
 });
+
+test('the editor\'s focus ring stands off the text, on the editor rather than the text itself', () => {
+    const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '../index.html'), 'utf8');
+    const rule = selector => {
+        const match = html.match(new RegExp(`\\n {8}${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`));
+        assert.ok(match, `${selector} has a rule`);
+        return match[1];
+    };
+    // The editor's scroller clips anything drawn outside the editable text, so its ring is off.
+    assert.match(rule('.editor-host .cm-content:focus-visible'), /outline: none;/);
+    const ring = rule('.editor-host .cm-editor.cm-focused');
+    assert.match(ring, /outline: 2px solid var\(--accent\);/);
+    const offset = Number(ring.match(/outline-offset: (\d+)px;/)[1]);
+    assert.ok(offset >= 12 && offset <= 16, `${offset}px between the ring and the text`);
+    assert.match(ring, /border-radius: \d+px;/);
+    // The ring is drawn in the host's padding, so the narrowest padding has to hold it.
+    let checked = 0;
+    for (const [, selectors, body] of html.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!selectors.split(',').some(selector => /\.editor-host(:not\(\[hidden\]\))?$/.test(selector.trim()))) continue;
+        for (const [, padding] of body.matchAll(/\bpadding(?:-\w+)?: ([^;]+);/g)) {
+            for (const px of padding.match(/\d+(?=px)/g)) {
+                assert.ok(Number(px) >= offset + 2, `padding ${padding} holds a ${offset}px ring`);
+                checked++;
+            }
+        }
+    }
+    assert.ok(checked >= 6, 'the web, fullscreen, phone, desktop and split paddings');
+});
