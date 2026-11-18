@@ -15,6 +15,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 - ⛶ **Fullscreen Mode**: Expand content for distraction-free reading
 - 🔄 **Live reload in Chrome, Edge and other Chromium browsers**: a file opened with *Choose File* or dropped on the page re-renders when it changes on disk, with the changes highlighted and an optional **Follow** mode (Safari and Firefox read the file once, as before)
 - ✏️ **Edit the markdown**: *Edit* (⌘E) opens the source in an editor; ⌘S saves it in place in the desktop app and in Chromium (for files opened with *Choose File* or dropped), and downloads a copy elsewhere. Changes made on disk while you edit are applied, or offered in a banner if you have unsaved changes
+- 🔤 **Formatting toolbar**: while editing, headings, quotes, code blocks, bold (⌘B), italic (⌘I), strikethrough (⌘⇧X), inline code (⌘⇧C), links (⌘K) and bulleted, numbered and task lists (⌘⇧8, ⌘⇧7, ⌘⇧9), with ⌘⌥0–3 for paragraph and headings (Ctrl instead of ⌘ outside the Mac). It edits the markdown in the document's own style (`*` or `_`, `-` or `*`) and shows the formatting at the cursor
 - 📱 **Responsive Design**: Works great on desktop and mobile
 - ↩️ **Easy Reset**: *Open another* takes you back to the drop zone to load another file
 
@@ -130,6 +131,7 @@ the [`bugsplat`](https://crates.io/crates/bugsplat) and
 ```
 index.html, js/, *.svg, *.png   The web app (served as-is by GitHub Pages from the repo root)
 js/core.js                      Pure helpers shared by web + desktop (unit tested)
+js/format.js                    The editor toolbar's commands, pure functions on the markdown text (unit tested); loaded on first edit
 js/app.js                       UI; detects Tauri and switches to native file handling
 js/vendor/marked.umd.js         Vendored markdown parser (refresh with `npm run vendor`)
 js/vendor/codemirror.js         Vendored editor, bundled from scripts/codemirror-entry.mjs by `npm run vendor`; loaded on first edit

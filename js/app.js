@@ -42,6 +42,12 @@
     const editBanner = $('editBanner');
     const bannerReload = $('bannerReload');
     const bannerKeep = $('bannerKeep');
+    const formatToolbar = $('formatToolbar');
+    const blockButton = $('blockButton');
+    const blockLabel = $('blockLabel');
+    const blockMenu = $('blockMenu');
+    const moreButton = $('moreButton');
+    const moreMenu = $('moreMenu');
 
     const BLOCK_MARK = 'markydowny-block:';
     const FOLLOW_KEY = 'markydowny.follow';
@@ -50,6 +56,19 @@
     const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
     // The editor, loaded the first time a document is edited so viewing stays as fast as before.
     const CODEMIRROR_SRC = 'js/vendor/codemirror.js';
+    // The toolbar's commands, loaded with it.
+    const FORMAT_SRC = 'js/format.js';
+    const BLOCK_NAMES = {
+        paragraph: 'Paragraph',
+        h1: 'Heading 1',
+        h2: 'Heading 2',
+        h3: 'Heading 3',
+        h4: 'Heading 4',
+        h5: 'Heading 5',
+        h6: 'Heading 6',
+        quote: 'Quote',
+        codeBlock: 'Code block',
+    };
     const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
@@ -91,6 +110,7 @@
     // written, a promise, or null) }.
     let editing = null;
     let codeMirrorLoad = null;
+    let toolbarReady = false;
     // Whether the title on screen carries the unsaved-changes mark.
     let titleMarked = false;
     // Desktop: the close-requested listener (a promise of its unlisten), while there are
@@ -142,6 +162,26 @@
     bannerKeep.addEventListener('click', () => dispatchEdit({ type: 'keepMine', text: editorText() }));
     // Capturing, so the shortcuts work wherever the focus is, the editor included.
     window.addEventListener('keydown', onEditShortcut, true);
+    formatToolbar.addEventListener('click', onToolbarClick);
+    formatToolbar.addEventListener('keydown', onToolbarKeydown);
+    formatToolbar.addEventListener('focusin', (e) => {
+        if (e.target.matches('[data-tool]')) setRovingItem(e.target);
+    });
+    // Clicking a button leaves the focus (and the selection it acts on) in the editor.
+    formatToolbar.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.tool, .tool-menu-item')) e.preventDefault();
+    });
+    document.addEventListener('pointerdown', (e) => {
+        if (!e.target.closest('.tool-menu-wrap')) closeMenus();
+    });
+    window.addEventListener('resize', () => {
+        if (editing) syncRovingItem();
+        placeToolbar();
+    });
+    // The floating Edit controls change width as Save, Revert and Follow come and go.
+    if (isDesktop && typeof ResizeObserver === 'function') {
+        new ResizeObserver(() => placeToolbar()).observe(document.querySelector('.topbar'));
+    }
     if (!isDesktop) {
         window.addEventListener('beforeunload', (e) => {
             if (!hasUnsavedChanges()) return;
@@ -951,6 +991,31 @@
         return bar.getBoundingClientRect().height;
     }
 
+    /**
+     * While editing: the top bar, the formatting toolbar under it and (on desktop, where it's
+     * sticky too) the conflict banner, which cover the editor's top.
+     */
+    function editorTopInset() {
+        const covers = [formatToolbar];
+        if (!editBanner.hidden && getComputedStyle(editBanner).position === 'sticky') covers.push(editBanner);
+        const bottoms = covers.map(el => el.getBoundingClientRect()).filter(rect => rect.height > 0).map(rect => rect.bottom);
+        return Math.max(topInset(), ...bottoms);
+    }
+
+    /**
+     * Desktop: the toolbar sits beside the floating Edit controls, or below them when the
+     * window is too narrow for both (the controls are fixed over the page, so it would slide
+     * under them).
+     */
+    function placeToolbar() {
+        if (!isDesktop || !editing) return;
+        document.body.classList.remove('toolbar-below');
+        const controls = document.querySelector('.topbar').getBoundingClientRect();
+        if (controls.width > 0 && formatToolbar.getBoundingClientRect().right > controls.left - 8) {
+            document.body.classList.add('toolbar-below');
+        }
+    }
+
     /** Page position of each rendered block (blocks without elements sit where the last ended). */
     function blockRects() {
         if (!rendered) return [];
@@ -1255,6 +1320,17 @@
 
     /** ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves while editing. */
     function onEditShortcut(e) {
+        if (editing && window.MarkyFormat && lightbox.style.display !== 'block') {
+            const command = window.MarkyFormat.shortcutCommand(e, IS_MAC);
+            if (command) {
+                // Before the editor's own keymap (⌘I there selects the enclosing syntax).
+                e.preventDefault();
+                e.stopPropagation();
+                closeMenus();
+                runFormat(command);
+                return;
+            }
+        }
         const action = core.editorShortcut(e, IS_MAC);
         if (!action || !currentSource || lightbox.style.display === 'block') return;
         if (action === 'toggle') {
@@ -1266,25 +1342,38 @@
         }
     }
 
-    /** Loads the editor bundle (once), which sets window.MarkyCodeMirror. */
+    /**
+     * Loads the editor bundle and the toolbar's commands (once), which set window.MarkyCodeMirror
+     * and window.MarkyFormat. Resolves to MarkyCodeMirror.
+     */
     function loadCodeMirror() {
-        if (window.MarkyCodeMirror) return Promise.resolve(window.MarkyCodeMirror);
+        if (window.MarkyCodeMirror && window.MarkyFormat) return Promise.resolve(window.MarkyCodeMirror);
         if (!codeMirrorLoad) {
-            codeMirrorLoad = new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = CODEMIRROR_SRC;
-                script.onload = () => (window.MarkyCodeMirror
-                    ? resolve(window.MarkyCodeMirror)
-                    : reject(new Error('The editor did not load')));
-                script.onerror = () => reject(new Error(`Could not load ${CODEMIRROR_SRC}`));
-                document.head.appendChild(script);
-            });
+            codeMirrorLoad = Promise.all([
+                loadScript(CODEMIRROR_SRC, 'MarkyCodeMirror'),
+                loadScript(FORMAT_SRC, 'MarkyFormat'),
+            ]).then(([cm]) => cm);
             // A failed load can be retried.
             codeMirrorLoad.catch(() => {
                 codeMirrorLoad = null;
             });
         }
         return codeMirrorLoad;
+    }
+
+    /** Adds a script to the page, resolving to the global `name` it sets. */
+    function loadScript(src, name) {
+        if (window[name]) return Promise.resolve(window[name]);
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = () => (window[name] ? resolve(window[name]) : reject(new Error('The editor did not load')));
+            script.onerror = () => {
+                script.remove();
+                reject(new Error(`Could not load ${src}`));
+            };
+            document.head.appendChild(script);
+        });
     }
 
     function toggleEditing() {
@@ -1321,24 +1410,22 @@
             const session = { cm, separator, view: null, state: null, saving: null };
             session.state = core.editReducer(null, { type: 'open', content: text }).state;
             editorHost.replaceChildren();
-            session.view = cm.createEditor(editorHost, text, {
-                lineSeparator: separator,
-                onChange: () => {
-                    if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
-                },
-            });
+            session.view = cm.createEditor(editorHost, text, editorOptions(session));
             editing = session;
+            setUpToolbar();
 
             markdownContent.style.display = 'none';
             editorHost.hidden = false;
             document.body.classList.add('editing');
             anchorHold = null;
             renderEditControls();
+            renderToolbar();
+            placeToolbar();
 
             const pos = docPosition(text, core.blockOffset(raws, text, anchor ? anchor.index : 0), separator);
             session.view.dispatch({
                 selection: { anchor: pos },
-                effects: cm.EditorView.scrollIntoView(pos, { y: 'start', yMargin: topInset() + 24 }),
+                effects: cm.EditorView.scrollIntoView(pos, { y: 'start', yMargin: 24 }),
             });
             session.view.focus();
         } finally {
@@ -1398,11 +1485,26 @@
         return window.confirm(name ? `Discard your unsaved changes to ${name}?` : 'Discard your unsaved changes?');
     }
 
+    /** createEditor's options for `session`: its line breaks, and keeping the page in step with it. */
+    function editorOptions(session) {
+        return {
+            lineSeparator: session.separator,
+            onChange: () => {
+                if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
+            },
+            onUpdate: () => {
+                if (editing === session) renderToolbar();
+            },
+            topInset: editorTopInset,
+        };
+    }
+
     /** Removes the editor (and its unsaved changes, if any) without asking. */
     function closeEditor() {
         if (!editing) return;
         const session = editing;
         editing = null;
+        closeMenus();
         session.view.destroy();
         editorHost.replaceChildren();
         editorHost.hidden = true;
@@ -1437,12 +1539,7 @@
             editorHost.replaceChildren();
             view.destroy();
             session.separator = core.lineSeparator(text);
-            session.view = session.cm.createEditor(editorHost, text, {
-                lineSeparator: session.separator,
-                onChange: () => {
-                    if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
-                },
-            });
+            session.view = session.cm.createEditor(editorHost, text, editorOptions(session));
             const pos = Math.min(docPosition(text, offset, session.separator), session.view.state.doc.length);
             session.view.dispatch({ selection: { anchor: pos } });
             return;
@@ -1592,6 +1689,190 @@
             const guard = closeGuard;
             closeGuard = null;
             guard.then(unlisten => unlisten(), () => {});
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Formatting toolbar
+    // ------------------------------------------------------------------
+
+    /** Applies a formatting command (format.js) to the editor's text and selection, as one undoable change. */
+    function runFormat(command) {
+        if (!editing || !window.MarkyFormat) return;
+        const view = editing.view;
+        const state = view.state;
+        // Positions count a line break as one character, as in the editor; '\r\n' comes back
+        // on the way in.
+        const text = state.doc.toString();
+        const main = state.selection.main;
+        const out = window.MarkyFormat.apply(command, { text, selection: { anchor: main.anchor, head: main.head } });
+        // Only the span that differs, so nothing outside what the command touched changes.
+        const change = core.textChange(text, out.text);
+        view.dispatch({
+            changes: change ? { from: change.from, to: change.to, insert: change.insert.split('\n').join(state.lineBreak) } : [],
+            selection: out.selection,
+            scrollIntoView: true,
+            userEvent: 'input.format',
+        });
+        view.focus();
+    }
+
+    /** Fills in the tooltips and shortcuts (they depend on the platform). Once. */
+    function setUpToolbar() {
+        if (toolbarReady) return;
+        toolbarReady = true;
+        const format = window.MarkyFormat;
+        formatToolbar.querySelectorAll('[data-command]').forEach(el => {
+            const command = el.dataset.command;
+            const shortcut = format.shortcutLabel(command, IS_MAC);
+            if (!shortcut) return;
+            el.setAttribute('aria-keyshortcuts', format.ariaKeyShortcuts(command, IS_MAC));
+            if (el.classList.contains('tool')) {
+                el.title = `${el.getAttribute('aria-label')} (${shortcut})`;
+            } else {
+                const hint = document.createElement('span');
+                hint.className = 'tool-shortcut';
+                hint.setAttribute('aria-hidden', 'true');
+                hint.textContent = shortcut;
+                el.appendChild(hint);
+            }
+        });
+        // One tab stop, on the first item (the block style menu, which never overflows).
+        setRovingItem(formatToolbar.querySelector('[data-tool]'));
+    }
+
+    /** Shows the formatting at the cursor: pressed buttons, checked menu items, the block style. */
+    function renderToolbar() {
+        if (!editing || !editing.cm.formatState) return;
+        const state = editing.cm.formatState(editing.view.state);
+        const isOn = (command) => {
+            if (command.startsWith('block:')) return state.block === command.slice(6);
+            if (command === 'bulletList') return state.list === 'bullet';
+            if (command === 'orderedList') return state.list === 'ordered';
+            if (command === 'taskList') return state.list === 'task';
+            return Boolean(state[command]);
+        };
+        formatToolbar.querySelectorAll('[data-command]').forEach(el => {
+            const on = String(isOn(el.dataset.command));
+            const attribute = el.hasAttribute('aria-pressed') ? 'aria-pressed' : 'aria-checked';
+            if (el.getAttribute(attribute) !== on) el.setAttribute(attribute, on);
+        });
+        const name = BLOCK_NAMES[state.block] || BLOCK_NAMES.paragraph;
+        if (blockLabel.textContent !== name) blockLabel.textContent = name;
+        blockButton.setAttribute('aria-label', `Block style: ${name}`);
+    }
+
+    function onToolbarClick(e) {
+        const menuButton = e.target.closest('[aria-haspopup="menu"]');
+        if (menuButton) {
+            const menu = $(menuButton.getAttribute('aria-controls'));
+            if (menu.hidden) openMenu(menuButton, menu, 'checked');
+            else closeMenus();
+            return;
+        }
+        const item = e.target.closest('[data-command]');
+        if (!item) return;
+        closeMenus();
+        runFormat(item.dataset.command);
+    }
+
+    /** The toolbar's items on screen (the overflow hides some), for arrow keys and tabindex. */
+    function toolbarItems() {
+        return [...formatToolbar.querySelectorAll('[data-tool]')].filter(el => el.getClientRects().length > 0);
+    }
+
+    /** Roving tabindex: only `item` is in the tab order, so Tab enters and leaves the toolbar in one step. */
+    function setRovingItem(item) {
+        formatToolbar.querySelectorAll('[data-tool]').forEach(el => {
+            el.tabIndex = el === item ? 0 : -1;
+        });
+    }
+
+    /** Keeps the tab stop on an item that's on screen (the overflow changes with the width). */
+    function syncRovingItem() {
+        const items = toolbarItems();
+        const current = items.find(el => el.tabIndex === 0);
+        if (!current && items.length) setRovingItem(items[0]);
+    }
+
+    function onToolbarKeydown(e) {
+        const menu = e.target.closest('[role="menu"]');
+        if (menu) {
+            onMenuKeydown(e, menu);
+            return;
+        }
+        if (!e.target.matches('[data-tool]')) return;
+        if (e.target.getAttribute('aria-haspopup') === 'menu' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+            e.preventDefault();
+            openMenu(e.target, $(e.target.getAttribute('aria-controls')), e.key === 'ArrowDown' ? 'checked' : 'last');
+            return;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (editing) editing.view.focus();
+            return;
+        }
+        if (moveAlongToolbar(e.target, e.key)) e.preventDefault();
+    }
+
+    /** Arrow keys, Home and End along the toolbar. Returns whether `key` moved the focus. */
+    function moveAlongToolbar(from, key) {
+        const items = toolbarItems();
+        const index = items.indexOf(from);
+        let next = null;
+        if (key === 'ArrowRight') next = items[(index + 1) % items.length];
+        else if (key === 'ArrowLeft') next = items[(index - 1 + items.length) % items.length];
+        else if (key === 'Home') next = items[0];
+        else if (key === 'End') next = items[items.length - 1];
+        if (!next) return false;
+        closeMenus();
+        setRovingItem(next);
+        next.focus();
+        return true;
+    }
+
+    function onMenuKeydown(e, menu) {
+        const items = [...menu.querySelectorAll('[role^="menuitem"]')];
+        const index = items.indexOf(document.activeElement);
+        const button = formatToolbar.querySelector(`[aria-controls="${menu.id}"]`);
+        let next = null;
+        if (e.key === 'ArrowDown') next = items[(index + 1) % items.length];
+        else if (e.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
+        else if (e.key === 'Home') next = items[0];
+        else if (e.key === 'End') next = items[items.length - 1];
+        else if (e.key === 'Escape' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            e.stopPropagation();
+            closeMenus();
+            // Left and right go on along the toolbar, as from the button.
+            if (e.key === 'Escape' || !moveAlongToolbar(button, e.key)) button.focus();
+            return;
+        } else if (e.key === 'Tab') {
+            closeMenus();
+            return;
+        }
+        if (!next) return;
+        e.preventDefault();
+        next.focus();
+    }
+
+    /** Opens a toolbar menu, focusing its checked item ('checked', or the first), or its last. */
+    function openMenu(button, menu, focus) {
+        closeMenus();
+        menu.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+        const items = [...menu.querySelectorAll('[role^="menuitem"]')];
+        const target = focus === 'last'
+            ? items[items.length - 1]
+            : items.find(item => item.getAttribute('aria-checked') === 'true' && focus === 'checked') || items[0];
+        if (target) target.focus();
+    }
+
+    function closeMenus() {
+        for (const menu of [blockMenu, moreMenu]) {
+            if (menu.hidden) continue;
+            menu.hidden = true;
+            formatToolbar.querySelector(`[aria-controls="${menu.id}"]`).setAttribute('aria-expanded', 'false');
         }
     }
 
