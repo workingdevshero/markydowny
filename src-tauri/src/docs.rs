@@ -89,7 +89,29 @@ pub struct DocumentRouter {
 impl DocumentRouter {
     /// Picks a window for `path` and, unless it's already showing, queues the path for it.
     /// `windows` lists open window labels in order of preference.
-    pub fn route(&mut self, path: PathBuf, windows: &[String], preferred: Option<&str>) -> Placement {
+    pub fn route(
+        &mut self,
+        path: PathBuf,
+        windows: &[String],
+        preferred: Option<&str>,
+    ) -> Placement {
+        self.place(path, windows, preferred, true)
+    }
+
+    /// Like [`Self::route`], but never reuses an idle window: a document that isn't already
+    /// open (or in a followed folder) gets a new window. For the rest of a batch, which
+    /// opens as new tabs beside the first document instead of scattering into idle windows.
+    pub fn route_new(&mut self, path: PathBuf, windows: &[String]) -> Placement {
+        self.place(path, windows, None, false)
+    }
+
+    fn place(
+        &mut self,
+        path: PathBuf,
+        windows: &[String],
+        preferred: Option<&str>,
+        reuse_idle: bool,
+    ) -> Placement {
         let path = canonical(&path);
         let open = windows.iter().find(|w| {
             self.showing.get(*w) == Some(&path)
@@ -109,7 +131,7 @@ impl DocumentRouter {
             return Placement::InFolder(label.clone());
         }
 
-        let idle = |label: &str| !self.occupied.contains(label);
+        let idle = |label: &str| reuse_idle && !self.occupied.contains(label);
         let existing = preferred
             .filter(|p| windows.iter().any(|w| w == p) && idle(p))
             .map(str::to_string)
@@ -554,7 +576,10 @@ mod tests {
 
         let found = collect_markdown_files(&[root.clone(), loose.clone(), not_md]);
         let displays: Vec<&str> = found.iter().map(|(_, d)| d.as_str()).collect();
-        assert_eq!(displays, vec!["docs/README.md", "docs/guide/intro.markdown", "loose.md"]);
+        assert_eq!(
+            displays,
+            vec!["docs/README.md", "docs/guide/intro.markdown", "loose.md"]
+        );
         assert_eq!(found[2].0, loose);
     }
 }

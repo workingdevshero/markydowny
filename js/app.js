@@ -24,6 +24,7 @@
     const fileSelector = $('fileSelector');
     const fileList = $('fileList');
     const cancelSelectorButton = $('cancelSelector');
+    const openAllTabsButton = $('openAllTabs');
     const lightbox = $('lightbox');
     const lightboxImage = $('lightboxImage');
     const lightboxClose = $('lightboxClose');
@@ -71,6 +72,8 @@
     const webWatch = isDesktop ? core.fileWatchSupport(null) : core.fileWatchSupport(window);
     // The handle being watched: { handle, poller, observer }.
     let webWatched = null;
+    // The file selector's "Open all as tabs" action (desktop only), or null.
+    let openAllAction = null;
 
     // ------------------------------------------------------------------
     // Wiring
@@ -97,6 +100,9 @@
         chooseFile();
     });
     cancelSelectorButton.addEventListener('click', showDropZone);
+    openAllTabsButton.addEventListener('click', () => {
+        if (openAllAction) openAllAction();
+    });
     backButton.addEventListener('click', showDropZone);
     fullscreenButton.addEventListener('click', toggleFullscreen);
     markdownContent.addEventListener('click', handleContentClick);
@@ -176,6 +182,14 @@
             }
         });
 
+        // ⌃Tab / ⌃⇧Tab switch tabs; the webview gets these keys before the menu.
+        document.addEventListener('keydown', (e) => {
+            const direction = core.tabStepForKey(e);
+            if (!direction) return;
+            e.preventDefault();
+            invoke('select_tab', { direction }).catch(console.error);
+        });
+
         await loadPendingDocument();
     }
 
@@ -229,8 +243,32 @@
             display: entry.display,
             path: entry.path,
             load: () => loadDesktopPath(entry.path),
-        })));
+        })), () => openAllAsTabs(entries.map(entry => entry.path)));
         return true;
+    }
+
+    /**
+     * Opens every file from the selector, each in its own tab: the first in
+     * this window if it isn't showing a document, the rest beside it.
+     */
+    async function openAllAsTabs(paths) {
+        closeFileSelector();
+        // The files open as tabs of their own, so this window stops offering (or following)
+        // the folder. The app has to know that before it places them, or it keeps routing
+        // them here: so it's awaited, and carries a watch generation that also supersedes a
+        // folder watch still starting.
+        desktopFolder = null;
+        renderWatchFolderButton();
+        if (currentSource && currentSource.kind === 'desktop' && currentSource.path) {
+            showMarkdownContent(currentSource.title);
+            await watchDesktopDocument(currentSource.path);
+        } else {
+            // Back to idle, so the first file lands here.
+            dropZone.style.display = 'flex';
+            await invoke('set_document_open', { open: false, title: null, path: null, generation: ++watchGeneration })
+                .catch(console.error);
+        }
+        invoke('open_documents', { paths }).catch(console.error);
     }
 
     /** Shows a file picked by hand. In a watched folder this pins it: the window stops switching. */
@@ -392,11 +430,12 @@
         }
     }
 
-    function setDocumentOpen(open, title) {
+    /** Tells the app what this window shows; the path lets it tell same-named tabs apart. */
+    function setDocumentOpen(open, title, path) {
         if (!isDesktop) return;
         // Closing stops the window's watch, which is a watch request of its own.
         const generation = open ? null : ++watchGeneration;
-        invoke('set_document_open', { open, title: title || null, generation }).catch(console.error);
+        invoke('set_document_open', { open, title: title || null, path: path || null, generation }).catch(console.error);
     }
 
     // ------------------------------------------------------------------
@@ -1115,7 +1154,7 @@
         if (!path) return;
 
         if (currentSource.kind === 'desktop') {
-            // Linked markdown opens in its own window, like double-clicking it.
+            // Linked markdown opens in a new tab, like double-clicking it.
             // Anything else is revealed in Finder rather than launched, so a
             // document can't trick a click into running a script or app.
             const command = core.isMarkdownName(path)
@@ -1148,7 +1187,10 @@
         docTitle.textContent = title || '';
         document.title = title ? `${title} - Markydowny` : DEFAULT_TITLE;
         hideMissingNotice();
-        setDocumentOpen(true, title);
+        // In a folder the title names the folder too, so the app uses it as is. Otherwise the
+        // path lets the app tell same-named tabs apart.
+        const path = currentSource && currentSource.kind === 'desktop' && !desktopFolder ? currentSource.path : null;
+        setDocumentOpen(true, title, path);
     }
 
     function closeFileSelector() {
@@ -1191,14 +1233,22 @@
         fullscreenButton.setAttribute('aria-pressed', String(entering));
     }
 
-    /** entries: [{ name, display, path?, load }] */
-    function showFileSelector(entries) {
+    /**
+     * entries: [{ name, display, path?, load }]
+     * openAll: opens every entry as a tab (desktop), or undefined to hide that button.
+     */
+    function showFileSelector(entries, openAll) {
         dropZone.style.display = 'none';
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
         fileList.replaceChildren();
         renderWatchFolderButton();
+
+        const openAllLabel = openAll ? core.openAllLabel(entries.length) : null;
+        openAllAction = openAllLabel ? openAll : null;
+        openAllTabsButton.hidden = !openAllLabel;
+        if (openAllLabel) openAllTabsButton.textContent = openAllLabel;
 
         for (const entry of entries) {
             const item = document.createElement('div');
