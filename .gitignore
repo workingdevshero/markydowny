@@ -8,3 +8,6 @@ src-tauri/bugsplat-helpers/
 # Python bytecode (plugins/markychecky)
 __pycache__/
 *.pyc
+
+# scripts/release-mac.sh output
+dist-release/
