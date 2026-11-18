@@ -455,11 +455,13 @@
         });
         s = s
             .replace(/<!--[\s\S]*?-->/g, ' ')
+            // Reference definitions ([id]: url "title"; the url may be in <> or on the next
+            // line, and the title on the next line). Before tags, so <url> isn't taken for one.
+            .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\n?[ \t]*(?:<[^<>\n]*>|\S+)(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gm, ' ')
             // Autolinks show their URL, so it counts; other tags are markup.
             .replace(/<((?:[a-z][a-z0-9+.-]*:|mailto:)[^\s<>]+|[^\s<>@]+@[^\s<>@]+)>/gi, ' $1 ')
             .replace(/<\/?[a-z][^<>]*>/gi, ' ')
-            // Reference definitions ([id]: url "title") and footnote markers ([^1]).
-            .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\S+(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gm, ' ')
+            // Footnote markers ([^1]).
             .replace(/\[\^[^\]\s]+\]:?/g, ' ');
         // Images inside links resolve first; a link's text and an image's alt text count.
         let previous;
@@ -510,7 +512,8 @@
         };
         for (const line of lines) {
             if (fence) {
-                const close = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+                // The closer sits behind the same blockquote markers and list indent as the opener.
+                const close = line.match(/^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})[ \t]*$/);
                 if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
                     fence = null;
                 } else {

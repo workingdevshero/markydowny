@@ -323,6 +323,8 @@ test('countWords counts link text, not URLs', () => {
     assert.equal(core.countWords('[spaced](<a url with spaces.md>) here'), 2);
     assert.equal(core.countWords('Bare <https://example.com> autolink'), 3, 'an autolink shows its URL');
     assert.equal(core.countWords('Note[^1] here.\n\n[^1]: The footnote text.'), 5);
+    assert.equal(core.countWords('[foo]: /url\n"title words here"\n\nSee [foo].'), 2, 'a title on the next line');
+    assert.equal(core.countWords('[ref]: <my file.md> "Title words"\n\nSee [ref].'), 2, 'a <destination> with spaces');
 });
 
 test('countWords counts image alt text, not the path', () => {
@@ -343,6 +345,9 @@ test('countWords counts code but not fences or info strings', () => {
     assert.equal(core.countWords('```\n[x](y) **z**\n````\nafter'), 3, 'markup inside code is code');
     assert.equal(core.countWords('- item\n  ```sh\n  ls -la\n  ```'), 3);
     assert.equal(core.countWords('```\nunclosed fence\nruns to the end'), 6);
+    const link = '\n\nSee [docs](https://example.com "title words")';
+    assert.equal(core.countWords('> ```\n> code\n> ```' + link), 3, 'a fence in a blockquote closes');
+    assert.equal(core.countWords('- item\n    ```\n    code word\n    ```' + link), 5, 'an indented fence in a list closes');
     assert.equal(core.countWords('``` not a fence ``` x'), 4, 'backticks with a backtick after are inline code');
 });
 
