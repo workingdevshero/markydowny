@@ -16,6 +16,8 @@ fn main() {
         markydowny_lib::markychecky::main(&args);
         std::process::exit(0);
     }
+    #[cfg(unix)]
+    markydowny_lib::markychecky::remember_app_image();
     // First, so crashes anywhere in startup are reported. Held until exit.
     let _crash_reporting = markydowny_lib::start_crash_reporting();
     markydowny_lib::run()

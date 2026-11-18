@@ -4,8 +4,9 @@
 #
 #   1. Markydowny itself, as `markydowny markychecky task|end`: the app in /Applications or
 #      ~/Applications, `markydowny` on PATH (the Linux .deb's /usr/bin/markydowny), or the
-#      AppImage whose path is saved in the plugin's data folder, in `markydowny-path`. An app
-#      binary has to have the mode (it carries the marker below): an older Markydowny would
+#      AppImage whose path is saved in `markydowny-path`, in the plugin's data folder (by an
+#      installer) or in ~/.cache/markychecky (by the AppImage itself, each time it starts). An
+#      app binary has to have the mode (it carries the marker below): an older Markydowny would
 #      open its window instead.
 #   2. python3 markychecky.py. On a Mac without the Command Line Tools, /usr/bin/python3 is a
 #      stub that asks to install them, so it's used only when `xcode-select -p` succeeds.
@@ -29,10 +30,15 @@ for app in /Applications/Markydowny.app/Contents/MacOS/markydowny \
         exec "$app" markychecky "$command"
     fi
 done
-# An AppImage is compressed, so there's no marker to find; the installer only saves a new one.
-if [ -f "$data/markydowny-path" ] && IFS= read -r app < "$data/markydowny-path" && [ -n "$app" ] && [ -x "$app" ]; then
-    exec "$app" markychecky "$command"
-fi
+# An AppImage is compressed, so there's no marker to find; only one with the mode is saved.
+for saved in "$data/markydowny-path" "$HOME/.cache/markychecky/markydowny-path"; do
+    app=
+    # read fails on a last line with no newline, but has still read it.
+    [ -f "$saved" ] && { IFS= read -r app < "$saved" || :; }
+    if [ -n "$app" ] && [ -f "$app" ] && [ -x "$app" ]; then
+        exec "$app" markychecky "$command"
+    fi
+done
 
 python=$(command -v python3 2>/dev/null)
 if [ -n "$python" ] && [ "$(uname -s)" = Darwin ] && [ "$python" = "${MARKYCHECKY_PYTHON_STUB:-/usr/bin/python3}" ] \

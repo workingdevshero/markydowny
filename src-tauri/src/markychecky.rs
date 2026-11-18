@@ -51,6 +51,26 @@ pub fn main(args: &[String]) {
     log(args, &message);
 }
 
+/// Run as an AppImage, saves its path where markychecky's launcher looks for it: an AppImage is
+/// compressed, so the launcher can't find the marker in it, and it's rarely on PATH. Only an
+/// AppImage with this mode saves itself, so the launcher can trust the path.
+pub fn remember_app_image() {
+    if let Some(app_image) = std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()) {
+        let dir = format!("{}/.cache/markychecky", expand_user("~"));
+        let _ = save_app_image(&app_image.to_string_lossy(), &dir);
+    }
+}
+
+fn save_app_image(app_image: &str, dir: &str) -> std::io::Result<()> {
+    let file = format!("{dir}/markydowny-path");
+    let line = format!("{app_image}\n");
+    if fs::read_to_string(&file).is_ok_and(|saved| saved == line) {
+        return Ok(());
+    }
+    fs::create_dir_all(dir)?;
+    fs::write(&file, line)
+}
+
 fn run(args: &[String]) -> Result<()> {
     let command = args.first().map(String::as_str).unwrap_or("");
     if command == "--version" {
@@ -390,6 +410,29 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+/// The first digit of each run of ten Unicode decimal digits (category Nd), as Python's
+/// `unicodedata` 15.1 has them.
+const DECIMAL_ZEROS: [u32; 68] = [
+    0x30, 0x660, 0x6F0, 0x7C0, 0x966, 0x9E6, 0xA66, 0xAE6, 0xB66, 0xBE6, 0xC66, 0xCE6, 0xD66,
+    0xDE6, 0xE50, 0xED0, 0xF20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90,
+    0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+    0x104A0, 0x10D30, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0, 0x11450, 0x114D0, 0x11650,
+    0x116C0, 0x11730, 0x118E0, 0x11950, 0x11C50, 0x11D50, 0x11DA0, 0x11F50, 0x16A60, 0x16AC0,
+    0x16B50, 0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6, 0x1E140, 0x1E2F0, 0x1E4F0, 0x1E950,
+    0x1FBF0,
+];
+
+/// The value of a Unicode decimal digit: a match for `\d` in a Python `str` pattern, and what
+/// `int()` reads it as.
+fn decimal(c: char) -> Option<u32> {
+    let c = c as u32;
+    let at = DECIMAL_ZEROS
+        .partition_point(|&zero| zero <= c)
+        .checked_sub(1)?;
+    let value = c - DECIMAL_ZEROS[at];
+    (value < 10).then_some(value)
+}
+
 /// Text on one line, with `<!--` shown as typed rather than opening a comment, so text can't
 /// hide itself or end a section early with a copy of its marker.
 fn one_line(text: &str) -> String {
@@ -590,7 +633,7 @@ fn ref_at(c: &[char], i: usize) -> Option<Ref> {
         let end = digits
             + c[digits..]
                 .iter()
-                .take_while(|ch| ch.is_ascii_digit())
+                .take_while(|&&ch| decimal(ch).is_some())
                 .count();
         if end == digits || c.get(end).is_some_and(|&ch| is_word(ch) || ch == ']') {
             return None;
@@ -660,12 +703,17 @@ fn link_refs(text: &str, repo: &str) -> String {
     out
 }
 
-/// The task ids in order: numbers first, by value, then the rest by text.
+/// The task ids in order: numbers first, by value, then the rest by text. A number may be in
+/// any script's decimal digits (`١` is 1), as Python's `int()` reads it. Python would fail on an
+/// id like `²`, which `isdigit()` accepts and `int()` doesn't; here it sorts with the text.
 fn task_order(id: &str) -> (u128, &str) {
-    let number = if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
-        id.parse().unwrap_or(u128::MAX)
-    } else {
-        1 << 30
+    let digits: Option<Vec<u32>> = id.chars().map(decimal).collect();
+    let number = match digits {
+        Some(digits) if !digits.is_empty() => digits
+            .iter()
+            .try_fold(0u128, |n, &d| n.checked_mul(10)?.checked_add(d.into()))
+            .unwrap_or(u128::MAX),
+        _ => 1 << 30,
     };
     (number, id)
 }
@@ -1192,18 +1240,12 @@ fn parse_iso(text: &str) -> Option<i64> {
         .map(|sep| &text[10 + sep.len_utf8()..])?;
     let offset_at = time.find(['+', '-', 'Z'])?;
     let (clock, zone) = time.split_at(offset_at);
-    let clock_micros = parse_clock(clock, true)?;
+    let clock_micros = parse_clock(clock)?;
     let offset = match zone {
         "Z" => 0,
         _ => {
             let sign = if zone.starts_with('-') { -1 } else { 1 };
-            let zone = &zone[1..];
-            let zone = if zone.len() == 4 && !zone.contains(':') {
-                format!("{}:{}", &zone[..2], &zone[2..])
-            } else {
-                zone.into()
-            };
-            sign * parse_clock(&zone, false)?
+            sign * parse_clock(&zone[1..])?
         }
     };
     let micros =
@@ -1211,18 +1253,24 @@ fn parse_iso(text: &str) -> Option<i64> {
     Some(micros)
 }
 
-/// `HH[:MM[:SS[.ffffff]]]` in microseconds. A time of day must have its minutes; an offset
-/// may be `HH:MM`, `HH:MM:SS` or `HH:MM:SS.ffffff`.
-fn parse_clock(text: &str, time_of_day: bool) -> Option<i64> {
+/// A time of day or a UTC offset in microseconds, as `fromisoformat` reads both: `HH[:MM[:SS]]`
+/// or `HH[MM[SS]]`, then optionally `.` or `,` and a fraction.
+fn parse_clock(text: &str) -> Option<i64> {
     let (whole, fraction) = match text.find(['.', ',']) {
         Some(at) => (&text[..at], Some(&text[at + 1..])),
         None => (text, None),
     };
-    let parts: Vec<&str> = whole.split(':').collect();
-    if parts.len() > 3
-        || (!time_of_day && parts.len() < 2)
-        || (fraction.is_some() && parts.len() != 3)
-    {
+    let parts: Vec<&str> = if whole.contains(':') {
+        whole.split(':').collect()
+    } else if whole.is_ascii() && whole.len() % 2 == 0 {
+        (0..whole.len())
+            .step_by(2)
+            .map(|i| &whole[i..i + 2])
+            .collect()
+    } else {
+        return None;
+    };
+    if parts.is_empty() || parts.len() > 3 {
         return None;
     }
     let mut values = [0i64; 3];
@@ -1510,6 +1558,22 @@ mod tests {
     }
 
     #[test]
+    fn references_take_any_scripts_decimal_digits_as_python_does() {
+        assert_eq!(
+            link("(#١) widgets#1١ #１"),
+            "([#١](https://github.com/acme/widgets/issues/١)) \
+             [widgets#1١](https://github.com/acme/widgets/issues/1١) \
+             [#１](https://github.com/acme/widgets/issues/１)"
+        );
+        // A superscript is a digit to `isdigit()`, not to `\d`.
+        assert_eq!(link("#²"), "#²");
+        let ids = ["10", "x", "2", "١", "²"];
+        let mut sorted = ids;
+        sorted.sort_by(|a, b| task_order(a).cmp(&task_order(b)));
+        assert_eq!(sorted, ["١", "2", "10", "x", "²"]);
+    }
+
+    #[test]
     fn links_code_spans_and_words_are_left_alone() {
         for text in [
             "see [#9](https://x) and [top](#12)",
@@ -1647,6 +1711,29 @@ mod tests {
             parse_iso("2000-01-01 00:00-0130"),
             Some(946_684_800_000_000 + 5_400_000_000)
         );
+        // Every form of an offset or a time `fromisoformat` reads, and not a mix of them.
+        for text in [
+            "2000-01-01T00:00:00+00",
+            "2000-01-01T00:00:00+000000",
+            "2000-01-01T00:00:00+00:00:00",
+            "2000-01-01T0000+00:00",
+            "2000-01-01T00,0+00:00",
+            "2000-01-01T00+00",
+        ] {
+            assert_eq!(parse_iso(text), Some(946_684_800_000_000), "{text}");
+        }
+        assert_eq!(
+            parse_iso("2000-01-01T00:00:00-05"),
+            Some(946_684_800_000_000 + 18_000_000_000)
+        );
+        for text in [
+            "2000-01-01T00:00:00+0",
+            "2000-01-01T00:00:00+005",
+            "2000-01-01T00:00:00+24",
+            "2000-01-01T00:0000+00:00",
+        ] {
+            assert_eq!(parse_iso(text), None, "{text}");
+        }
         assert_eq!(parse_iso("2000-02-30T00:00:00+00:00"), None);
         assert_eq!(parse_iso("2000-01-01T00:00:00"), None);
         assert_eq!(parse_iso("2000-01-01"), None);
@@ -1700,6 +1787,24 @@ mod tests {
     }
 
     // Writing
+
+    #[test]
+    fn an_app_image_saves_its_path_for_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join(".cache/markychecky");
+        let cache_s = cache.to_str().unwrap();
+        save_app_image("/opt/Mark ydowny.AppImage", cache_s).unwrap();
+        let saved = cache.join("markydowny-path");
+        assert_eq!(
+            fs::read_to_string(&saved).unwrap(),
+            "/opt/Mark ydowny.AppImage\n"
+        );
+        save_app_image("/home/me/Markydowny.AppImage", cache_s).unwrap();
+        assert_eq!(
+            fs::read_to_string(&saved).unwrap(),
+            "/home/me/Markydowny.AppImage\n"
+        );
+    }
 
     #[test]
     fn writes_are_atomic_keep_the_mode_and_leave_nothing_behind() {

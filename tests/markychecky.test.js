@@ -364,11 +364,13 @@ function githubRepo(box) {
 function corpus() {
     const pieces = ['#', '#1', '#12', '`', '``', '[', ']', '(', ')', '!', '/', 'a', 'widgets', 'acme', 'Widgets',
         '-', '.', '_', '1', ' ', '  ', '\t', '\n', '\u00a0', '\u001f', 'é', '١', '<!--', '-->', 'x#3', 'C#', '](#4)',
-        '[#5](u)', '`#6`', 'o/r#7', 'acme/#8', '#9]', '#10x', '<!-- markychecky:end s1 -->'];
+        '[#5](u)', '`#6`', 'o/r#7', 'acme/#8', '#9]', '#10x', '<!-- markychecky:end s1 -->',
+        '#١', '١٢', '#１', '²', '#²'];
     let seed = 54;
     const random = n => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
     const texts = ['Merge #18, then widgets#19 and other-org/tools#5', 'Ship [Open Recent (#36)](https://x/36) and `fixes (#40)`',
-        '``a` #1 `b``', '![img](a(#2)b) #3', '[a [b] #4](c) #5', '[x][#6] #7', 'issue#3 (#4) -#5 /#6 [#7 .#8', ''];
+        '``a` #1 `b``', '![img](a(#2)b) #3', '[a [b] #4](c) #5', '[x][#6] #7', 'issue#3 (#4) -#5 /#6 [#7 .#8',
+        '(#١) widgets#1١ #١٢ #１ #²', ''];
     for (let i = 0; i < 400; i++) texts.push(Array.from({ length: 1 + random(8) }, () => pieces[random(pieces.length)]).join(''));
     return texts;
 }
@@ -382,11 +384,16 @@ test('both engines write byte-identical boards for the same events', both, () =>
         fs.writeFileSync(box.board, 'Notes before.\r\n\r\n');
         hook(engine, box, 'task', { session_id: 'old', cwd, ...create('old', 1, 'Old work') });
         hook(engine, box, 'end', { session_id: 'old' });
-        fs.writeFileSync(box.board, read(box).replace(/ended=\S+/, 'ended=2000-01-01T00:00:00.5+01:00'));
+        hook(engine, box, 'task', { session_id: 'old2', cwd, ...create('old2', 1, 'Older work') });
+        hook(engine, box, 'end', { session_id: 'old2' });
+        // Both long over: one in the engines' own form, one with an hour-only offset.
+        const stamps = ['ended=2000-01-01T00:00:00.5+01:00', 'ended=2000-01-01T00+00'];
+        fs.writeFileSync(box.board, read(box).replace(/ended=\S+/g, () => stamps.shift()));
         hook(engine, box, 'task', { session_id: 's1', cwd, tool_name: 'TodoWrite', tool_input: { todos } });
         hook(engine, box, 'task', { cwd, ...create('s2', 7, 'Seven (#7)', 'Making #7') });
         hook(engine, box, 'task', { cwd, ...create('s2', 10, 'Ten') });
         hook(engine, box, 'task', { cwd, ...create('s2', 'x', 'Named') });
+        hook(engine, box, 'task', { cwd, ...create('s2', '١', 'Arabic one') });
         hook(engine, box, 'task', { cwd, ...update('s2', 7, { status: 'in_progress', subject: 'Seven, renamed' }) });
         hook(engine, box, 'task', { cwd, ...update('s2', 10, { status: 'deleted' }) });
         hook(engine, box, 'task', { cwd, session_id: 's 3/é!', tool_name: 'TaskCreate', tool_input: { subject: 42 }, tool_response: {} });
@@ -394,7 +401,8 @@ test('both engines write byte-identical boards for the same events', both, () =>
         // The end time differs between runs, not between engines.
         return read(box).replace(/ended=\S+/g, 'ended=T').replace(/ended at \d\d:\d\d/g, 'ended at HH:MM');
     });
-    assert.ok(!boards[0].includes('markychecky:start old'), 'the old section was swept');
+    assert.ok(!boards[0].includes('markychecky:start old'), 'the old sections were swept');
+    assert.ok(boards[0].indexOf('Arabic one') < boards[0].indexOf('Seven'), '١ sorts as 1');
     assert.equal(boards[1], boards[0]);
 });
 
@@ -483,6 +491,22 @@ test('the launcher skips a Markydowny without the mode, and uses an AppImage the
     fs.writeFileSync(path.join(l.env.CLAUDE_PLUGIN_DATA, 'markydowny-path'), `${appImage}\n`);
     assert.equal(l.launch('task').calls, 'appimage markychecky task\n{"session_id":"s1"}');
 });
+
+test('the launcher uses an AppImage that saved itself, even without a trailing newline', { skip: installedApp }, () => {
+    const l = launcherBox();
+    l.fake(path.join(l.bin, 'python3'), 'python');
+    const appImage = path.join(l.box.dir, 'Markydowny.AppImage');
+    l.fake(appImage, 'appimage');
+    const cache = path.join(l.home, '.cache', 'markychecky');
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'markydowny-path'), appImage);
+    assert.equal(l.launch('end').calls, 'appimage markychecky end\n{"session_id":"s1"}');
+    // One that has since been deleted is passed over.
+    fs.rmSync(path.join(l.box.dir, 'calls'));
+    fs.rmSync(appImage);
+    assert.match(l.launch('end').calls, /^python /);
+});
+
 
 test('on a Mac, the launcher skips the python3 stub when the Command Line Tools aren\'t installed', () => {
     const l = launcherBox({ darwin: true });
