@@ -171,7 +171,7 @@ changes put a dot before the title in the top bar and the page title ("• live.
 
 While editing, a toolbar sticks under the top bar (`role="toolbar"`, `#formatToolbar`): a block
 style menu (Paragraph, Heading 1-3, Quote, Code block), Bold, Italic, Strikethrough, Inline code,
-Link, and bulleted, numbered and task lists. Each button's tooltip names its shortcut (Ctrl on
+Link, bulleted, numbered and task lists, and Insert table, Insert image and Horizontal rule. Each button's tooltip names its shortcut (Ctrl on
 Linux and Windows, ⌘ on a Mac): Ctrl+B, Ctrl+I, Ctrl+Shift+X, Ctrl+Shift+C, Ctrl+K,
 Ctrl+Shift+8/7/9, and Ctrl+Alt+0-3 for paragraph and headings. `js/format.js` is loaded with
 CodeMirror, on first edit, never before.
@@ -187,14 +187,28 @@ CodeMirror, on first edit, never before.
   to place a selection from `browser_evaluate`.
 - **Keyboard.** One toolbar item is in the tab order; arrow keys, Home and End move between
   items. ArrowDown on the block menu opens it at the current style; Enter picks, Escape closes.
-- **Phone width.** Strikethrough, Inline code, Numbered list and Task list move into a *More
-  formatting* (⋯) menu, and the toolbar fits without scrolling sideways.
+- **Phone width.** Strikethrough, Inline code, Numbered list, Task list and the three inserts move
+  into a *More formatting* (⋯) menu (*Table…*, *Image*, *Horizontal rule*; *Table…* opens the size
+  picker under ⋯), and the toolbar fits without scrolling sideways.
+- **Insert table.** The table button (`#tableButton`) opens a grid (`#tablePicker`, 8 columns by 6
+  rows); hovering or arrowing over it highlights the size and reads it out below ("3 × 2"; the
+  header row counts). Picking inserts an empty GFM table on lines of its own, with a blank line
+  either side, and the cursor in its first cell. Escape closes the grid back to the button.
+- **Tab between cells (Rich mode).** In a table Tab selects the next cell's text (an empty cell
+  gets the cursor), past the delimiter row, and Shift-Tab the previous; Tab in the last cell adds
+  an empty row and moves into it. Outside a table Tab leaves the editor as before. In Markdown
+  and Split, Tab is unchanged.
+- **Insert image (web).** Inserts `![alt](path)` at the cursor with `path` selected (a one-line
+  selection becomes the alt text). Rich mode then tries to load `path`, so one 404 for `/path` in
+  the network log is expected until it's filled in.
+- **Horizontal rule.** Inserts `---` on a line of its own with blank lines around it (so it's
+  never read as a heading underline), the cursor on the line after.
 
-### Rich mode and the Rich | Markdown switch
+### Rich mode and the Rich | Markdown | Split switch
 
-While editing, a two-option switch (*Rich* | *Markdown*, `#modeSwitch`, `role="radiogroup"`)
-sits next to the pencil. ⌘/ (Ctrl+/ elsewhere) flips it. Rich is the default; the last choice is
-kept in `localStorage` under `markydowny.editorMode`. Both are the same CodeMirror document:
+While editing, a three-option switch (*Rich* | *Markdown* | *Split*, `#modeSwitch`,
+`role="radiogroup"`) sits next to the pencil. ⌘/ (Ctrl+/ elsewhere) goes round them. Rich is the
+default; the last choice is kept in `localStorage` under `markydowny.editorMode`. Both are the same CodeMirror document:
 Rich adds the class `cm-rich` to `.cm-editor` and draws the markup over it, Markdown shows the
 plain source.
 
@@ -222,7 +236,15 @@ plain source.
   the top of the window; undo (Ctrl+Z) after a switch undoes the edit made before it. The
   formatting toolbar behaves the same in both.
 - **Phone width.** Only the current view's label shows in the switch; pressing it switches.
-
+  Split isn't offered there: a stored Split shows as Markdown, and widening the window again
+  brings Split back.
+- **Split.** The markdown (as in Markdown mode) on the left, the document rendered as the
+  rendered view would show it on the right (`#splitPreview`), with `split-view` on `<body>`.
+  Typing updates the right side within a moment. Scrolling either side brings the other to the
+  same block (scroll the page for the editor, the right pane on its own): with a long document,
+  the heading at the top of one is at or near the top of the other. Links on the right open as
+  Rich mode's ⌘-click does, `#anchors` scroll the right side, images open the lightbox. Take a
+  screenshot in light and in dark. *Done* returns to the single rendered view.
 The desktop app saves through `write_document` (atomic, permission-keeping, refused when the file
 changed since the editor read it) and asks before closing a window with unsaved changes; that
 side can't run here, and its Rust is covered by `cargo test`.
@@ -261,6 +283,11 @@ What differs from the browser:
   file changes) and, on macOS, *Open all N as tabs*.
 - **Editing.** The pencil (⌘E) and *Save* (⌘S) as in the browser, but saving always writes the
   file in place. Closing a window with unsaved changes asks first.
+- **Insert image.** The image button opens the Open panel in the document's folder, filtered to
+  images. A picked image is linked by its path from the document (`![name](img/shot.png)`, the
+  name selected) and shows in Rich mode. One from outside the document's folder asks first:
+  *Copy* puts a copy next to the document (numbered, `shot-1.png`, if another file has the name)
+  and links that; *Link Where It Is* links it with `../`.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
 - **Links** open in the default browser, not in the app.

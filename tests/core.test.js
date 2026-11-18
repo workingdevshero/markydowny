@@ -148,3 +148,66 @@ test('tabStepForKey maps ⌃Tab and ⌃⇧Tab to tab switches', () => {
     assert.equal(core.tabStepForKey(key({ key: 'a', ctrlKey: true })), null);
     assert.equal(core.tabStepForKey(null), null);
 });
+
+test('relativePath links a file from a document\'s folder', () => {
+    assert.equal(core.relativePath('/a/docs/', '/a/docs/shot.png'), 'shot.png');
+    assert.equal(core.relativePath('/a/docs/', '/a/docs/img/shot.png'), 'img/shot.png');
+    assert.equal(core.relativePath('/a/docs/', '/a/shot.png'), '../shot.png');
+    assert.equal(core.relativePath('/a/docs/guide/', '/a/img/shot.png'), '../../img/shot.png');
+    assert.equal(core.relativePath('/a/docs', '/b/shot.png'), '../../b/shot.png');
+    assert.equal(core.relativePath('/', '/shot.png'), 'shot.png');
+    // A folder named like the file isn't one it shares.
+    assert.equal(core.relativePath('/a/shot.png/', '/a/shot.png'), '../shot.png');
+    assert.equal(core.relativePath('docs/', 'docs/img/a.png'), 'img/a.png');
+    assert.equal(core.relativePath('docs/', '/abs/a.png'), null);
+    // It reads back as the file, the way the page resolves links.
+    for (const [dir, file] of [['/a/docs/guide/', '/a/img/shot.png'], ['/a/docs/', '/a/docs/x/y.png'], ['/x/', '/y/z/w.png']]) {
+        assert.equal(core.resolveRelativePath(dir, core.relativePath(dir, file)), file);
+    }
+});
+
+test('mapScrollPosition keeps the split view\'s panes on the same block', () => {
+    // Three blocks: the editor's are 100px apart, the rendering's 300px; then the ends.
+    const editor = [0, 100, 200, 300];
+    const preview = [50, 350, 650, 950];
+    // At a block's top: the same block's top.
+    assert.equal(core.mapScrollPosition(editor, preview, 100), 350);
+    assert.equal(core.mapScrollPosition(preview, editor, 650), 200);
+    // Partway through a block: as far through the other one.
+    assert.equal(core.mapScrollPosition(editor, preview, 150), 500);
+    assert.equal(core.mapScrollPosition(preview, editor, 425), 125);
+    // Above the first block (the rendering's padding): scaled from the top.
+    assert.equal(core.mapScrollPosition(preview, editor, 25), 0);
+    assert.equal(core.mapScrollPosition([20, 40], [100, 200], 10), 50);
+    // Past the end: one for one.
+    assert.equal(core.mapScrollPosition(editor, preview, 320), 970);
+    // Blocks with no height (a link definition renders nothing) don't divide by zero.
+    assert.equal(core.mapScrollPosition([0, 100, 100, 200], [0, 50, 50, 100], 100), 50);
+    assert.equal(core.mapScrollPosition([0, 100, 100, 200], [0, 50, 50, 100], 150), 75);
+    assert.equal(core.mapScrollPosition([], [], 40), 40);
+});
+
+test('the scroll mapping uses block starts from the markdown, as the rendered view has them', () => {
+    const text = '# Title\n\nPara one.\n\n- a\n- b\n\nEnd.\n';
+    const raws = ['# Title', 'Para one.', '- a\n- b', 'End.'];
+    assert.deepEqual(core.blockStarts(raws, text), [0, 9, 20, 29]);
+    // CRLF files: offsets in the text as it is.
+    assert.deepEqual(core.blockStarts(raws, text.replace(/\n/g, '\r\n')), [0, 11, 24, 36]);
+});
+
+test('editorView shows Split as Markdown where it isn\'t offered', () => {
+    assert.equal(core.editorView('rich', true), 'rich');
+    assert.equal(core.editorView('split', true), 'split');
+    assert.equal(core.editorView('split', false), 'markdown');
+    assert.equal(core.editorView('nonsense', true), 'rich');
+});
+
+test('nextEditorMode goes round Rich, Markdown and Split (⌘/)', () => {
+    assert.equal(core.nextEditorMode('rich', true), 'markdown');
+    assert.equal(core.nextEditorMode('markdown', true), 'split');
+    assert.equal(core.nextEditorMode('split', true), 'rich');
+    // At phone widths: Rich and Markdown only, Split counting as the Markdown it shows.
+    assert.equal(core.nextEditorMode('markdown', false), 'rich');
+    assert.equal(core.nextEditorMode('rich', false), 'markdown');
+    assert.equal(core.nextEditorMode('split', false), 'rich');
+});

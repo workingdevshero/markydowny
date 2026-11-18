@@ -51,6 +51,11 @@
     const moreButton = $('moreButton');
     const moreMenu = $('moreMenu');
     const modeSwitch = $('modeSwitch');
+    const tableButton = $('tableButton');
+    const tablePicker = $('tablePicker');
+    const tableGrid = $('tableGrid');
+    const tableSize = $('tableSize');
+    const splitPreview = $('splitPreview');
 
     const BLOCK_MARK = 'markydowny-block:';
     const FOLLOW_KEY = 'markydowny.follow';
@@ -76,6 +81,16 @@
     const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
     // The word count waits for a pause in typing, so a large document stays responsive.
     const WORD_COUNT_DELAY_MS = 200;
+    // Insert table: the size picker's grid, columns by rows (the header row counts).
+    const TABLE_PICKER_COLUMNS = 8;
+    const TABLE_PICKER_ROWS = 6;
+    // Phone widths (as index.html's small-screen styles), where Split isn't offered.
+    const phoneWidth = window.matchMedia('(max-width: 700px)');
+    const MODE_TITLES = {
+        rich: 'Rich: formatted as you type',
+        markdown: 'Markdown: the plain source',
+        split: 'Split: the markdown beside the rendered document',
+    };
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
@@ -120,9 +135,16 @@
     let wordCountTimer = null;
     let codeMirrorLoad = null;
     let toolbarReady = false;
-    // The editor's view: 'rich' (the markup styled, its markers shown on the cursor's lines) or
-    // 'markdown' (the plain source). Rich unless the reader last chose otherwise.
+    // The editor's view: 'rich' (the markup styled, its markers shown on the cursor's lines),
+    // 'markdown' (the plain source) or 'split' (the source beside the rendered document; shown
+    // as Markdown at phone widths). Rich unless the reader last chose otherwise.
     let editorMode = loadEditorMode();
+    // While the split view is on screen: { blocks, linksKey (as `rendered` has them), seq,
+    // timer, frame, expectWindow, expectPreview (scroll positions set to keep the panes in step,
+    // so their scroll events aren't taken for the reader's) }.
+    let split = null;
+    // The button the table picker was opened from, while it's open.
+    let tablePickerFrom = null;
     // Desktop: images Rich mode has asked the app to serve (path -> the request's promise).
     const allowedAssets = new Map();
     // Whether the title on screen carries the unsaved-changes mark.
@@ -208,15 +230,29 @@
     });
     // Clicking a button leaves the focus (and the selection it acts on) in the editor.
     formatToolbar.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.tool, .tool-menu-item')) e.preventDefault();
+        if (e.target.closest('.tool, .tool-menu-item, .table-cell')) e.preventDefault();
     });
     document.addEventListener('pointerdown', (e) => {
-        if (!e.target.closest('.tool-menu-wrap')) closeMenus();
+        if (!e.target.closest('.tool-menu-wrap, .table-picker, #tableButton')) closeMenus();
+    });
+    tableGrid.addEventListener('mouseover', (e) => {
+        const cell = e.target.closest('.table-cell');
+        if (cell) markTableSize(cell);
+    });
+    tableGrid.addEventListener('focusin', (e) => {
+        const cell = e.target.closest('.table-cell');
+        if (cell) markTableSize(cell);
     });
     window.addEventListener('resize', () => {
         if (editing) syncRovingItem();
         placeToolbar();
+        placeSplitPreview();
     });
+    // Split is offered above phone widths only: crossing that width changes the view shown.
+    phoneWidth.addEventListener('change', () => applyEditorView());
+    window.addEventListener('scroll', () => syncSplitSoon('editor'), { passive: true });
+    splitPreview.addEventListener('scroll', () => syncSplitSoon('preview'), { passive: true });
+    splitPreview.addEventListener('click', onSplitPreviewClick);
     // The floating Edit controls change width as Save, Revert and Follow come and go.
     if (isDesktop && typeof ResizeObserver === 'function') {
         new ResizeObserver(() => placeToolbar()).observe(document.querySelector('.topbar'));
@@ -1021,25 +1057,7 @@
      * the changed ones are swapped in.
      */
     function commitBlocks(built, diff) {
-        let blocks;
-        if (diff && rendered) {
-            const old = rendered.blocks;
-            for (const block of old.slice(diff.start, diff.oldEnd)) {
-                block.nodes.forEach(node => node.remove());
-            }
-            const fresh = built.blocks.slice(diff.start, diff.end);
-            const after = old.slice(diff.oldEnd).find(block => block.nodes.length > 0);
-            const fragment = document.createDocumentFragment();
-            fresh.forEach(block => block.nodes.forEach(node => fragment.appendChild(node)));
-            markdownContent.insertBefore(fragment, after ? after.nodes[0] : null);
-            blocks = old.slice(0, diff.start).concat(fresh, old.slice(diff.oldEnd));
-            blocks.forEach((block, i) => {
-                block.raw = built.blocks[i].raw;
-            });
-        } else {
-            blocks = built.blocks;
-            markdownContent.replaceChildren(...blocks.flatMap(block => block.nodes));
-        }
+        const blocks = placeBlocks(markdownContent, rendered && rendered.blocks, built, diff);
         blocks.forEach((block, index) => {
             for (const node of block.nodes) {
                 if (node.nodeType === Node.ELEMENT_NODE) node.dataset.block = String(index);
@@ -1047,6 +1065,30 @@
         });
         rendered = { blocks, linksKey: built.linksKey };
         refreshHeadingIds();
+    }
+
+    /**
+     * Puts built blocks in `container`, which holds `old` (or nothing), returning the blocks it
+     * now holds. With a diff, only the changed blocks are swapped in (commitBlocks).
+     */
+    function placeBlocks(container, old, built, diff) {
+        if (!diff || !old) {
+            container.replaceChildren(...built.blocks.flatMap(block => block.nodes));
+            return built.blocks;
+        }
+        for (const block of old.slice(diff.start, diff.oldEnd)) {
+            block.nodes.forEach(node => node.remove());
+        }
+        const fresh = built.blocks.slice(diff.start, diff.end);
+        const after = old.slice(diff.oldEnd).find(block => block.nodes.length > 0);
+        const fragment = document.createDocumentFragment();
+        fresh.forEach(block => block.nodes.forEach(node => fragment.appendChild(node)));
+        container.insertBefore(fragment, after ? after.nodes[0] : null);
+        const blocks = old.slice(0, diff.start).concat(fresh, old.slice(diff.oldEnd));
+        blocks.forEach((block, i) => {
+            block.raw = built.blocks[i].raw;
+        });
+        return blocks;
     }
 
     function renderError(markdownText) {
@@ -1441,7 +1483,7 @@
             // Before the editor's own keymap (⌘/ there toggles an HTML comment).
             e.preventDefault();
             e.stopPropagation();
-            setEditorMode(editorMode === 'rich' ? 'markdown' : 'rich');
+            setEditorMode(core.nextEditorMode(editorMode, splitOffered()));
         } else if (action === 'find') {
             if (!editing) return;
             e.preventDefault();
@@ -1532,6 +1574,7 @@
             renderEditControls();
             renderToolbar();
             placeToolbar();
+            showSplit(currentView() === 'split');
 
             const pos = docPosition(text, core.blockOffset(raws, text, anchor ? anchor.index : 0), separator);
             session.view.dispatch({
@@ -1604,6 +1647,7 @@
                 if (editing !== session) return;
                 dispatchEdit({ type: 'edit', text: editorText() });
                 scheduleWordCount();
+                renderSplitSoon();
             },
             onSelect: () => {
                 if (editing === session) scheduleWordCount();
@@ -1612,7 +1656,7 @@
                 if (editing === session) renderToolbar();
             },
             topInset: editorTopInset,
-            mode: editorMode,
+            mode: editorModeFor(currentView()),
             isMac: IS_MAC,
             resolveImage: editorImageSrc,
             openLink: openEditorLink,
@@ -1621,22 +1665,33 @@
     }
 
     // ------------------------------------------------------------------
-    // Rich mode and the Rich | Markdown switch
+    // Rich mode and the Rich | Markdown | Split switch
     // ------------------------------------------------------------------
 
     function loadEditorMode() {
         try {
-            return window.localStorage.getItem(MODE_KEY) === 'markdown' ? 'markdown' : 'rich';
+            const saved = window.localStorage.getItem(MODE_KEY);
+            return core.EDITOR_MODES.includes(saved) ? saved : 'rich';
         } catch (_) {
             return 'rich';
         }
     }
 
-    /**
-     * Switches the editor between Rich and Markdown. It's the same document with other
-     * decorations, so the text, cursor, selection and undo history stay as they are; the line
-     * at the top of the window stays there.
-     */
+    function splitOffered() {
+        return !phoneWidth.matches;
+    }
+
+    /** The view on screen: the chosen mode, but Markdown for Split at phone widths. */
+    function currentView() {
+        return core.editorView(editorMode, splitOffered());
+    }
+
+    /** The editor's own mode for a view: Split shows the plain source beside the rendering. */
+    function editorModeFor(view) {
+        return view === 'rich' ? 'rich' : 'markdown';
+    }
+
+    /** Switches the view to `mode` ('rich', 'markdown' or 'split'), remembering the choice. */
     function setEditorMode(mode) {
         editorMode = mode;
         try {
@@ -1644,13 +1699,25 @@
         } catch (_) {
             // Private browsing: remembered for this page only.
         }
+        applyEditorView();
+    }
+
+    /**
+     * Puts the editor in the view the chosen mode shows at this width. It's the same document
+     * with other decorations (and Split adds the rendering beside it), so the text, cursor,
+     * selection and undo history stay as they are; the line at the top of the window stays
+     * there.
+     */
+    function applyEditorView() {
         renderModeSwitch();
         if (!editing) return;
         const view = editing.view;
+        const shown = currentView();
         const top = editorTopInset();
         const line = view.lineBlockAtHeight(top - view.documentTop);
         const offset = view.documentTop + line.top - top;
-        editing.cm.setMode(view, mode);
+        editing.cm.setMode(view, editorModeFor(shown));
+        showSplit(shown === 'split');
         // After CodeMirror's measure, which may already have scrolled to keep the line at the
         // top of the window in place: only what's left is corrected.
         view.requestMeasure({
@@ -1659,36 +1726,45 @@
                 if (editing === null || editing.view !== view) return;
                 const moved = view.documentTop + view.lineBlockAt(line.from).top - top - offset;
                 if (Math.abs(moved) > 1) window.scrollBy(0, moved);
+                syncSplit('editor');
             }),
         });
     }
 
     function renderModeSwitch() {
         modeSwitch.hidden = !editing;
+        const shown = currentView();
         modeSwitch.querySelectorAll('[data-mode]').forEach(button => {
-            const on = button.dataset.mode === editorMode;
+            const on = button.dataset.mode === shown;
             button.setAttribute('aria-checked', String(on));
             button.tabIndex = on ? 0 : -1;
-            button.title = `${button.dataset.mode === 'rich' ? 'Rich: formatted as you type' : 'Markdown: the plain source'} (${IS_MAC ? '⌘/' : 'Ctrl+/'})`;
+            button.title = `${MODE_TITLES[button.dataset.mode]} (${IS_MAC ? '⌘/' : 'Ctrl+/'})`;
         });
+    }
+
+    /** The switch's options on screen (Split isn't, at phone widths; there only the current one is). */
+    function visibleModes() {
+        return [...modeSwitch.querySelectorAll('[data-mode]')].filter(button => button.getClientRects().length > 0);
     }
 
     function onModeSwitchClick(e) {
         const button = e.target.closest('[data-mode]');
         if (!button) return;
         let mode = button.dataset.mode;
-        // On a phone only the current mode shows: pressing it switches.
-        const other = modeSwitch.querySelector(`[data-mode]:not([data-mode="${mode}"])`);
-        if (mode === editorMode && other.getClientRects().length === 0) mode = other.dataset.mode;
-        if (mode !== editorMode) setEditorMode(mode);
+        // On a phone only the current view shows: pressing it switches to the next.
+        if (mode === currentView() && visibleModes().length === 1) mode = core.nextEditorMode(mode, splitOffered());
+        if (mode !== currentView()) setEditorMode(mode);
         if (editing) editing.view.focus();
     }
 
-    /** A radio group: the arrow keys pick the other mode. */
+    /** A radio group: the arrow keys pick the next or previous view. */
     function onModeSwitchKeydown(e) {
-        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+        if (!step) return;
         e.preventDefault();
-        setEditorMode(editorMode === 'rich' ? 'markdown' : 'rich');
+        const modes = core.EDITOR_MODES.filter(mode => splitOffered() || mode !== 'split');
+        const index = modes.indexOf(currentView());
+        setEditorMode(modes[(index + step + modes.length) % modes.length]);
         const checked = modeSwitch.querySelector('[aria-checked="true"]');
         if (checked && checked.getClientRects().length) checked.focus();
     }
@@ -1805,6 +1881,7 @@
         editing = null;
         closeMenus();
         renderWordCount();
+        showSplit(false);
         session.view.destroy();
         editorHost.replaceChildren();
         editorHost.hidden = true;
@@ -1973,6 +2050,7 @@
         }
         if (dirty !== titleMarked && currentSource) showTitle(currentSource.title);
         syncCloseGuard(dirty);
+        placeSplitPreview();
     }
 
     /** Desktop: while there are unsaved changes, closing the window asks first. */
@@ -2001,13 +2079,21 @@
     /** Applies a formatting command (format.js) to the editor's text and selection, as one undoable change. */
     function runFormat(command) {
         if (!editing || !window.MarkyFormat) return;
+        applyFormat((input) => window.MarkyFormat.apply(command, input));
+    }
+
+    /**
+     * Applies `edit` to the editor as one undoable change: a function from { text, selection }
+     * to { text, selection }, as format.js's commands are.
+     */
+    function applyFormat(edit) {
         const view = editing.view;
         const state = view.state;
         // Positions count a line break as one character, as in the editor; '\r\n' comes back
         // on the way in.
         const text = state.doc.toString();
         const main = state.selection.main;
-        const out = window.MarkyFormat.apply(command, { text, selection: { anchor: main.anchor, head: main.head } });
+        const out = edit({ text, selection: { anchor: main.anchor, head: main.head } });
         // Only the span that differs, so nothing outside what the command touched changes.
         const change = core.textChange(text, out.text);
         view.dispatch({
@@ -2041,6 +2127,19 @@
         });
         // One tab stop, on the first item (the block style menu, which never overflows).
         setRovingItem(formatToolbar.querySelector('[data-tool]'));
+        tableGrid.style.gridTemplateColumns = `repeat(${TABLE_PICKER_COLUMNS}, auto)`;
+        for (let rows = 1; rows <= TABLE_PICKER_ROWS; rows++) {
+            for (let cols = 1; cols <= TABLE_PICKER_COLUMNS; cols++) {
+                const cell = document.createElement('button');
+                cell.type = 'button';
+                cell.className = 'table-cell';
+                cell.tabIndex = -1;
+                cell.dataset.cols = String(cols);
+                cell.dataset.rows = String(rows);
+                cell.setAttribute('aria-label', `${cols} by ${rows} table`);
+                tableGrid.appendChild(cell);
+            }
+        }
     }
 
     /** Shows the formatting at the cursor: pressed buttons, checked menu items, the block style. */
@@ -2072,10 +2171,118 @@
             else closeMenus();
             return;
         }
+        const cell = e.target.closest('.table-cell');
+        if (cell) {
+            closeMenus();
+            if (editing && window.MarkyFormat) {
+                applyFormat((input) => window.MarkyFormat.insertTable(input, Number(cell.dataset.cols), Number(cell.dataset.rows)));
+            }
+            return;
+        }
+        const action = e.target.closest('[data-action]');
+        if (action) {
+            runAction(action.dataset.action, action);
+            return;
+        }
         const item = e.target.closest('[data-command]');
         if (!item) return;
         closeMenus();
         runFormat(item.dataset.command);
+    }
+
+    /** The toolbar's inserts: 'table' (opens the size picker), 'image' and 'horizontalRule'. */
+    function runAction(action, from) {
+        if (action === 'table') {
+            // From the overflow menu, the picker opens under its button.
+            const under = from === tableButton ? tableButton : moreButton;
+            const open = !tablePicker.hidden && tablePickerFrom === under;
+            closeMenus();
+            if (!open) openTablePicker(under);
+            return;
+        }
+        closeMenus();
+        if (!editing || !window.MarkyFormat) return;
+        if (action === 'horizontalRule') applyFormat((input) => window.MarkyFormat.insertRule(input));
+        else if (action === 'image') insertImage();
+    }
+
+    /** Opens the table picker under `button`, with the focus on its first cell. */
+    function openTablePicker(button) {
+        tablePickerFrom = button;
+        // (The overflow button's expanded state is its menu's.)
+        if (button === tableButton) tableButton.setAttribute('aria-expanded', 'true');
+        tablePicker.hidden = false;
+        // Under the button, kept inside the toolbar's width (and the window's).
+        const bar = formatToolbar.getBoundingClientRect();
+        const room = Math.min(bar.width, window.innerWidth - bar.left - 8) - tablePicker.offsetWidth;
+        const left = button.getBoundingClientRect().left - bar.left;
+        tablePicker.style.left = `${Math.max(0, Math.min(left, room))}px`;
+        const first = tableGrid.querySelector('.table-cell');
+        markTableSize(first);
+        first.focus();
+    }
+
+    /** Highlights the table `cell` picks (from the top left), and shows its size. */
+    function markTableSize(cell) {
+        const cols = Number(cell.dataset.cols);
+        const rows = Number(cell.dataset.rows);
+        tableGrid.querySelectorAll('.table-cell').forEach(el => {
+            el.classList.toggle('on', Number(el.dataset.cols) <= cols && Number(el.dataset.rows) <= rows);
+        });
+        tableSize.textContent = `${cols} × ${rows}`;
+    }
+
+    /** Arrow keys move around the picker; Enter picks; Escape goes back to the button, Tab closes. */
+    function onTablePickerKeydown(e) {
+        const cell = e.target.closest('.table-cell');
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            const from = tablePickerFrom;
+            closeMenus();
+            if (from) from.focus();
+            return;
+        }
+        if (e.key === 'Tab') {
+            closeMenus();
+            return;
+        }
+        const step = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+        if (!step || !cell) return;
+        e.preventDefault();
+        const cols = Math.min(Math.max(Number(cell.dataset.cols) + step[0], 1), TABLE_PICKER_COLUMNS);
+        const rows = Math.min(Math.max(Number(cell.dataset.rows) + step[1], 1), TABLE_PICKER_ROWS);
+        tableGrid.querySelector(`[data-cols="${cols}"][data-rows="${rows}"]`).focus();
+    }
+
+    /**
+     * Insert image. On the desktop: a file picked with the Open panel, linked by its path
+     * relative to the document (the app offers to copy one from elsewhere next to it). On the
+     * web, which can't link a file by its path: `![alt](path)` with `path` selected to fill in.
+     */
+    async function insertImage() {
+        const session = editing;
+        const source = currentSource;
+        if (!isDesktop || !source || source.kind !== 'desktop' || !source.path) {
+            applyFormat((input) => window.MarkyFormat.insertImage(input));
+            return;
+        }
+        let picked;
+        try {
+            picked = await invoke('choose_image');
+        } catch (err) {
+            console.error('Could not insert the image:', err);
+            alert(`Could not insert the image: ${err && err.message ? err.message : err}`);
+            return;
+        }
+        if (editing !== session || !currentSource || currentSource.path !== source.path) return;
+        if (!picked) {
+            // Cancelled: back to where the reader was (the overflow menu took the focus).
+            session.view.focus();
+            return;
+        }
+        const path = core.relativePath(source.dir, picked) || picked;
+        applyFormat((input) => window.MarkyFormat.insertImage(input, { path }));
     }
 
     /** The toolbar's items on screen (the overflow hides some), for arrow keys and tabindex. */
@@ -2098,6 +2305,10 @@
     }
 
     function onToolbarKeydown(e) {
+        if (e.target.closest('.table-picker')) {
+            onTablePickerKeydown(e);
+            return;
+        }
         const menu = e.target.closest('[role="menu"]');
         if (menu) {
             onMenuKeydown(e, menu);
@@ -2107,6 +2318,12 @@
         if (e.target.getAttribute('aria-haspopup') === 'menu' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
             e.preventDefault();
             openMenu(e.target, $(e.target.getAttribute('aria-controls')), e.key === 'ArrowDown' ? 'checked' : 'last');
+            return;
+        }
+        if (e.target === tableButton && e.key === 'ArrowDown') {
+            e.preventDefault();
+            closeMenus();
+            openTablePicker(tableButton);
             return;
         }
         if (e.key === 'Escape') {
@@ -2176,6 +2393,11 @@
             menu.hidden = true;
             formatToolbar.querySelector(`[aria-controls="${menu.id}"]`).setAttribute('aria-expanded', 'false');
         }
+        if (!tablePicker.hidden) {
+            tablePicker.hidden = true;
+            tableButton.setAttribute('aria-expanded', 'false');
+            tablePickerFrom = null;
+        }
     }
 
     /** Scrolls so block `index` sits just below the top bar. */
@@ -2184,6 +2406,156 @@
         if (!el) return;
         const top = el.getBoundingClientRect().top + window.scrollY;
         window.scrollTo(0, Math.max(0, top - topInset() - 16));
+    }
+
+    // ------------------------------------------------------------------
+    // Split view: the markdown beside the rendered document
+    // ------------------------------------------------------------------
+
+    /** Shows or hides the rendered side of the split view (the editor is on the other). */
+    function showSplit(on) {
+        if (on === Boolean(split)) return;
+        if (!on) {
+            clearTimeout(split.timer);
+            cancelAnimationFrame(split.frame);
+            split = null;
+            document.body.classList.remove('split-view');
+            splitPreview.hidden = true;
+            splitPreview.replaceChildren();
+            return;
+        }
+        split = { blocks: null, linksKey: '', seq: 0, timer: null, frame: 0, expectWindow: null, expectPreview: null };
+        document.body.classList.add('split-view');
+        splitPreview.hidden = false;
+        splitPreview.scrollTop = 0;
+        placeSplitPreview();
+        renderSplitPreview();
+    }
+
+    /** Where the rendered side sticks: under the toolbar (and the desktop's conflict banner). */
+    function placeSplitPreview() {
+        if (!split) return;
+        const bottom = (el) => parseFloat(getComputedStyle(el).top) + el.offsetHeight;
+        let top = bottom(formatToolbar);
+        if (!editBanner.hidden && getComputedStyle(editBanner).position === 'sticky') top = Math.max(top, bottom(editBanner));
+        document.body.style.setProperty('--split-top', `${Math.round((Number.isFinite(top) ? top : 0) + 12)}px`);
+    }
+
+    /** Re-renders the rendered side a moment after typing stops. */
+    function renderSplitSoon() {
+        if (!split) return;
+        clearTimeout(split.timer);
+        split.timer = setTimeout(renderSplitPreview, 150);
+    }
+
+    /** Renders the editor's text beside it, replacing only the blocks that changed. */
+    async function renderSplitPreview() {
+        const state = split;
+        if (!state || !editing) return;
+        const seq = ++state.seq;
+        const text = editing.view.state.doc.toString();
+        let built;
+        try {
+            built = buildBlocks(text);
+            // As Rich mode resolves them: one URL per image, however often it re-renders.
+            await Promise.all([...built.doc.querySelectorAll('img[src]')].map(img =>
+                Promise.resolve(editorImageSrc(img.getAttribute('src'))).then(url => {
+                    if (url) img.setAttribute('src', url);
+                }, () => {})));
+        } catch (error) {
+            console.error('Error parsing markdown:', error);
+            built = { blocks: [{ raw: text, nodes: [renderError(text)] }], linksKey: '' };
+        }
+        if (split !== state || seq !== state.seq) return;
+        const diff = state.blocks && built.linksKey === state.linksKey
+            ? core.changedBlocks(state.blocks.map(block => block.raw), built.blocks.map(block => block.raw))
+            : null;
+        state.blocks = placeBlocks(splitPreview, state.blocks, built, diff);
+        state.linksKey = built.linksKey;
+        syncSplit('editor');
+    }
+
+    /** A pane scrolled: the other follows on the next frame (once, however many events came). */
+    function syncSplitSoon(source) {
+        if (!split || !editing) return;
+        const expected = source === 'editor' ? split.expectWindow : split.expectPreview;
+        const now = source === 'editor' ? window.scrollY : splitPreview.scrollTop;
+        if (expected !== null) {
+            if (source === 'editor') split.expectWindow = null;
+            else split.expectPreview = null;
+            // The scroll this page made to keep them in step.
+            if (Math.abs(now - expected) <= 1) return;
+        }
+        cancelAnimationFrame(split.frame);
+        split.frame = requestAnimationFrame(() => syncSplit(source));
+    }
+
+    /**
+     * Brings the other pane in step with `source` ('editor' or 'preview'): the block at the top
+     * of one goes to the top of the other, as far into it (core.mapScrollPosition). Blocks are
+     * matched through their markdown, as the rendered view finds them in the text.
+     */
+    function syncSplit(source) {
+        if (!split || !editing || !split.blocks) return;
+        const view = editing.view;
+        const raws = split.blocks.map(block => block.raw);
+        const starts = core.blockStarts(raws, view.state.doc.toString());
+        const editorTops = starts.map(pos => view.lineBlockAt(Math.min(pos, view.state.doc.length)).top);
+        editorTops.push(view.contentHeight);
+        const paneTop = splitPreview.getBoundingClientRect().top - splitPreview.scrollTop;
+        let last = 0;
+        const previewTops = split.blocks.map(block => {
+            const el = block.nodes.find(node => node.nodeType === Node.ELEMENT_NODE);
+            if (el) last = el.getBoundingClientRect().top - paneTop;
+            return last;
+        });
+        previewTops.push(splitPreview.scrollHeight);
+        // The editor scrolls with the page: its top is the first line under the toolbar.
+        const editorY = editorTopInset() - view.documentTop;
+        if (source === 'editor') {
+            const y = Math.max(0, Math.round(core.mapScrollPosition(editorTops, previewTops, editorY)));
+            if (Math.abs(splitPreview.scrollTop - y) <= 1) return;
+            splitPreview.scrollTop = y;
+            split.expectPreview = splitPreview.scrollTop;
+        } else {
+            const y = core.mapScrollPosition(previewTops, editorTops, splitPreview.scrollTop);
+            const target = Math.max(0, Math.round(window.scrollY + y - editorY));
+            if (Math.abs(window.scrollY - target) <= 1) return;
+            window.scrollTo(0, target);
+            split.expectWindow = window.scrollY;
+        }
+    }
+
+    /** Clicks in the rendered side: images open in the lightbox, links as Rich mode's ⌘-click does. */
+    function onSplitPreviewClick(e) {
+        const img = e.target.closest('img');
+        if (img) {
+            e.preventDefault();
+            openLightbox(img.src, img.alt || 'Image');
+            return;
+        }
+        const link = e.target.closest('a[href]');
+        if (!link) return;
+        e.preventDefault();
+        const href = link.getAttribute('href');
+        if (core.classifyLink(href) !== 'anchor') {
+            openEditorLink(href);
+            return;
+        }
+        let id = href.slice(1);
+        try {
+            id = decodeURIComponent(id);
+        } catch (_) {
+            // use raw id
+        }
+        // The headings' ids as the rendered view gives them (refreshHeadingIds).
+        const used = new Set();
+        const headings = [...splitPreview.querySelectorAll('h1, h2, h3, h4, h5, h6')];
+        const target = headings.find(h => (h.id || core.uniqueSlug(h.textContent, used)) === id)
+            || (id && splitPreview.querySelector(`[id="${CSS.escape(id)}"]`));
+        if (!target) return;
+        const top = target.getBoundingClientRect().top - splitPreview.getBoundingClientRect().top + splitPreview.scrollTop;
+        splitPreview.scrollTo({ top: Math.max(0, top - 16), behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
     }
 
     // ------------------------------------------------------------------

@@ -940,6 +940,107 @@
     }
 
     // ------------------------------------------------------------------
+    // Inserting tables, rules and images
+    // ------------------------------------------------------------------
+
+    /**
+     * Where a block inserted at the selection goes: it replaces [from, to), between `before`
+     * and `after`, the line breaks that put it on lines of its own with a blank line on either
+     * side. A blank line is taken over; otherwise the block goes after the selection's last
+     * line, or after the code block that line is in.
+     */
+    function blockInsertion(text, selection) {
+        const { lines, last } = selectedLineIndexes(text, selection);
+        const starts = lineStarts(lines);
+        const { fences, indented } = blockStructure(lines);
+        let i = last;
+        const code = [...fences, ...indented].find(b => b.start <= i && i <= b.end);
+        if (code) i = code.end;
+        const blank = (n) => n < 0 || n >= lines.length || lines[n].trim() === '';
+        const end = starts[i] + lines[i].length;
+        if (blank(i) && !code) {
+            return { from: starts[i], to: end, before: blank(i - 1) ? '' : '\n', after: blank(i + 1) ? '' : '\n' };
+        }
+        return { from: end, to: end, before: '\n\n', after: blank(i + 1) ? '' : '\n' };
+    }
+
+    /** An empty GFM table, `cols` wide and `rows` tall (the header row counts). */
+    function tableMarkdown(cols, rows) {
+        const row = '|' + '     |'.repeat(cols);
+        const delimiter = '|' + ' --- |'.repeat(cols);
+        return [row, delimiter, ...new Array(rows - 1).fill(row)].join('\n');
+    }
+
+    function atLeastOne(n) {
+        return Math.max(1, Math.floor(Number(n)) || 1);
+    }
+
+    /** Inserts an empty table of `cols` × `rows` (header included), the cursor in its first cell. */
+    function insertTable(input, cols, rows) {
+        const text = String(input.text);
+        const table = tableMarkdown(atLeastOne(cols), atLeastOne(rows));
+        const { from, to, before, after } = blockInsertion(text, input.selection);
+        const cell = from + before.length + 2;
+        return {
+            text: text.slice(0, from) + before + table + after + text.slice(to),
+            selection: { anchor: cell, head: cell },
+        };
+    }
+
+    /** Inserts a horizontal rule, the cursor on the line after it. */
+    function insertRule(input) {
+        const text = String(input.text);
+        const { from, to, before, after } = blockInsertion(text, input.selection);
+        const rest = text.slice(to);
+        // At the end of the document there's no line after it yet.
+        const tail = after || (rest === '' ? '\n' : '');
+        const pos = from + before.length + 3 + 1;
+        return {
+            text: text.slice(0, from) + before + '---' + tail + rest,
+            selection: { anchor: pos, head: pos },
+        };
+    }
+
+    /**
+     * A path as a link destination: characters that would end it or be read as markup
+     * (spaces, parentheses, angle brackets, backslashes) and '%' are percent-encoded, which is
+     * how the page and other viewers read them back.
+     */
+    function linkDestination(path) {
+        // encodeURIComponent leaves parentheses as they are.
+        return String(path).replace(/[%\s()<>\\]/gu, ch => (ch === '(' ? '%28' : ch === ')' ? '%29' : encodeURIComponent(ch)));
+    }
+
+    /**
+     * Inserts an image at the selection. With options.path (a picked file), `![name](path)`
+     * with the alt text selected; without, `![alt](path)` with `path` selected to fill in. A
+     * selection on one line becomes the alt text (and the cursor goes after the image).
+     */
+    function insertImage(input, options = {}) {
+        const text = String(input.text);
+        let { from, to } = range(input.selection);
+        let alt = text.slice(from, to);
+        if (/[\r\n]/.test(alt)) {
+            from = to;
+            alt = '';
+        }
+        const picked = typeof options.path === 'string' && options.path !== '';
+        const fromSelection = alt.trim() !== '';
+        if (!fromSelection) {
+            alt = picked ? String(options.path).split('/').pop().replace(/\.[^.]+$/, '') : 'alt';
+        }
+        const destination = picked ? linkDestination(options.path) : 'path';
+        const image = `![${alt}](${destination})`;
+        const out = text.slice(0, from) + image + text.slice(to);
+        if (picked) {
+            if (fromSelection) return { text: out, selection: { anchor: from + image.length, head: from + image.length } };
+            return { text: out, selection: { anchor: from + 2, head: from + 2 + alt.length } };
+        }
+        const pathFrom = from + 2 + alt.length + 2;
+        return { text: out, selection: { anchor: pathFrom, head: pathFrom + destination.length } };
+    }
+
+    // ------------------------------------------------------------------
     // Commands and shortcuts
     // ------------------------------------------------------------------
 
@@ -1028,6 +1129,10 @@
         toggleLink,
         setBlock,
         toggleList,
+        insertTable,
+        insertRule,
+        insertImage,
+        linkDestination,
         blockStyleAt,
         documentStyle,
         shortcutCommand,

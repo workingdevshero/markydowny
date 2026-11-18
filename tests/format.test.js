@@ -476,3 +476,94 @@ test('every shortcut label reads back as its command', () => {
         assert.equal(format.shortcutCommand(event, false), command, label);
     }
 });
+
+// ------------------------------------------------------------------
+// Inserting tables, rules and images
+// ------------------------------------------------------------------
+
+const marked = require('../js/vendor/marked.umd.js');
+
+/** Runs `insert` ({ text, selection } -> { text, selection }) on a marked document, as `run` does. */
+function runInsert(insert, marked) {
+    const out = insert(parse(marked));
+    return show(out.text, out.selection);
+}
+
+const table = (cols, rows) => (input) => format.insertTable(input, cols, rows);
+
+test('insertTable writes an empty table of the size picked, the cursor in its first cell', () => {
+    assert.equal(runInsert(table(3, 2), '|'), [
+        '| |    |     |     |',
+        '| --- | --- | --- |',
+        '|     |     |     |',
+    ].join('\n'));
+    // The header row counts: one row is a header alone.
+    assert.equal(runInsert(table(2, 1), '|'), '| |    |     |\n| --- | --- |');
+    assert.equal(runInsert(table(1, 3), '|'), '| |    |\n| --- |\n|     |\n|     |');
+    // Nonsense sizes are at least 1 × 1.
+    assert.equal(runInsert(table(0, -2), '|'), '| |    |\n| --- |');
+});
+
+test('a table goes on lines of its own, with a blank line either side', () => {
+    // After the cursor's line.
+    assert.equal(runInsert(table(1, 1), 'Some te|xt.\nMore.'), 'Some text.\n\n| |    |\n| --- |\n\nMore.');
+    assert.equal(runInsert(table(1, 1), 'Some text.|'), 'Some text.\n\n| |    |\n| --- |');
+    // After the last line of a selection.
+    assert.equal(runInsert(table(1, 1), '{One\nTw}o\n\nThree'), 'One\nTwo\n\n| |    |\n| --- |\n\nThree');
+    // A blank line is taken over, adding the blank lines missing around it.
+    assert.equal(runInsert(table(1, 1), 'One\n|\nTwo'), 'One\n\n| |    |\n| --- |\n\nTwo');
+    assert.equal(runInsert(table(1, 1), 'One\n\n|\n\nTwo'), 'One\n\n| |    |\n| --- |\n\nTwo');
+    // Never inside a code block: after it.
+    assert.equal(runInsert(table(1, 1), '```\nco|de\n```\nAfter'), '```\ncode\n```\n\n| |    |\n| --- |\n\nAfter');
+});
+
+test('an inserted table is a table to marked and to the editor', () => {
+    for (const [cols, rows] of [[1, 1], [3, 2], [8, 6]]) {
+        const out = format.insertTable({ text: 'Intro\n\nOutro', selection: { anchor: 2, head: 2 } }, cols, rows);
+        const tables = marked.lexer(out.text).filter(token => token.type === 'table');
+        assert.equal(tables.length, 1, `${cols} × ${rows}`);
+        assert.equal(tables[0].header.length, cols);
+        assert.equal(tables[0].rows.length, rows - 1);
+        assert.deepEqual(marked.lexer(out.text).filter(token => token.type === 'paragraph').map(token => token.text), ['Intro', 'Outro']);
+    }
+});
+
+test('insertRule puts a rule on a line of its own, the cursor on the line after it', () => {
+    assert.equal(runInsert(format.insertRule, 'Some te|xt.\nMore.'), 'Some text.\n\n---\n|\nMore.');
+    assert.equal(runInsert(format.insertRule, 'One\n\nTw|o\n\nThree'), 'One\n\nTwo\n\n---\n|\nThree');
+    // At the end, a line after it to type on.
+    assert.equal(runInsert(format.insertRule, 'The end.|'), 'The end.\n\n---\n|');
+    assert.equal(runInsert(format.insertRule, '|'), '---\n|');
+    assert.equal(runInsert(format.insertRule, 'One\n|\nTwo'), 'One\n\n---\n|\nTwo');
+});
+
+test('an inserted rule is a rule, not a setext heading underline', () => {
+    const out = format.insertRule({ text: 'Heading?\nMore.', selection: { anchor: 3, head: 3 } });
+    assert.deepEqual(marked.lexer(out.text).filter(token => token.type !== 'space').map(token => token.type), ['paragraph', 'hr', 'paragraph']);
+});
+
+test('insertImage on the web: ![alt](path) with path selected to fill in', () => {
+    assert.equal(runInsert(format.insertImage, 'See | here'), 'See ![alt]({path}) here');
+    // A selection on one line is the alt text.
+    assert.equal(runInsert(format.insertImage, 'See {the logo} here'), 'See ![the logo]({path}) here');
+    // Across lines it isn't: the image goes at its end.
+    assert.equal(runInsert(format.insertImage, '{One\nTwo} three'), 'One\nTwo![alt]({path}) three');
+});
+
+test('insertImage with a picked file links it, the alt text selected', () => {
+    const picked = (path) => (input) => format.insertImage(input, { path });
+    assert.equal(runInsert(picked('img/shot.png'), 'See |'), 'See ![{shot}](img/shot.png)');
+    assert.equal(runInsert(picked('../logo.final.svg'), '|'), '![{logo.final}](../logo.final.svg)');
+    // A selected name is kept, and the cursor goes after the image.
+    assert.equal(runInsert(picked('a.png'), '{The A} done'), '![The A](a.png)| done');
+});
+
+test('a picked path with spaces or parentheses still reads as one link', () => {
+    const out = format.insertImage({ text: '', selection: { anchor: 0, head: 0 } }, { path: '../My Shots/a (1)%.png' });
+    assert.equal(out.text, '![a (1)%](../My%20Shots/a%20%281%29%25.png)');
+    const image = marked.lexer(out.text)[0].tokens[0];
+    assert.equal(image.type, 'image');
+    assert.equal(decodeURIComponent(image.href), '../My Shots/a (1)%.png');
+    assert.equal(format.linkDestination('dir/plain-name_1.png'), 'dir/plain-name_1.png');
+    assert.equal(format.linkDestination('a<b>\\c.png'), 'a%3Cb%3E%5Cc.png');
+});

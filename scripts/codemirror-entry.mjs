@@ -571,6 +571,90 @@ export function richTables(state) {
     return tables;
 }
 
+/** The Table node around `pos` (looking at the characters on either side), or null. */
+function tableNodeAt(state, pos) {
+    for (const side of [-1, 1]) {
+        for (let node = syntaxTree(state).resolveInner(pos, side); node; node = node.parent) {
+            if (node.name === 'Table') return node;
+        }
+    }
+    return null;
+}
+
+/**
+ * A table's rows (header first, then the body; not the delimiter row) as their cells, read
+ * from the syntax tree: [[{ from, to }]]. A cell runs from just after one pipe to the next;
+ * the text before a row's first pipe and after its last is a cell only when there's some, as
+ * the table parser counts them.
+ */
+function tableRows(state, table) {
+    const rows = [];
+    for (let row = table.firstChild; row; row = row.nextSibling) {
+        if (row.name !== 'TableHeader' && row.name !== 'TableRow') continue;
+        const cells = [];
+        let start = row.from;
+        const pipes = row.getChildren('TableDelimiter');
+        const filled = (from, to) => state.sliceDoc(from, to).trim() !== '';
+        pipes.forEach((pipe, i) => {
+            if (i > 0 || filled(start, pipe.from)) cells.push({ from: start, to: pipe.from });
+            start = pipe.to;
+        });
+        if (pipes.length === 0 || filled(start, row.to)) cells.push({ from: start, to: row.to });
+        rows.push(cells);
+    }
+    return rows;
+}
+
+/** A cell's text selected (to type over), or with none, the cursor a space in from its pipe. */
+function cellSelection(state, cell) {
+    const text = state.sliceDoc(cell.from, cell.to);
+    const from = cell.from + (text.length - text.trimStart().length);
+    const to = cell.to - (text.length - text.trimEnd().length);
+    if (from < to) return { anchor: from, head: to };
+    const pos = Math.min(cell.from + 1, cell.to);
+    return { anchor: pos, head: pos };
+}
+
+/**
+ * Tab (direction 1) or Shift-Tab (-1) in a table: the transaction that moves to the next or
+ * previous cell, or null outside a table. Tab in the last cell adds an empty row and moves
+ * into it; Shift-Tab in the first cell stays there.
+ */
+export function tableCellMove(state, direction) {
+    const { from, to } = state.selection.main;
+    const table = tableNodeAt(state, direction > 0 ? to : from);
+    if (!table) return null;
+    const rows = tableRows(state, table);
+    const cells = rows.flat();
+    if (direction < 0) {
+        const previous = cells.filter(cell => cell.to < from).pop();
+        return { selection: previous ? cellSelection(state, previous) : state.selection.main, scrollIntoView: true, userEvent: 'select' };
+    }
+    const next = cells.find(cell => cell.from > to);
+    if (next) return { selection: cellSelection(state, next), scrollIntoView: true, userEvent: 'select' };
+    // A new row as wide as the header, under the last line (in the same quote, if any).
+    const last = state.doc.lineAt(table.to);
+    const prefix = state.sliceDoc(last.from, table.lastChild ? table.lastChild.from : last.from);
+    const columns = Math.max(1, rows.length ? rows[0].length : 1);
+    const row = prefix + '|' + '     |'.repeat(columns);
+    const pos = last.to + 1 + prefix.length + 2;
+    return {
+        changes: { from: last.to, insert: state.lineBreak + row },
+        selection: { anchor: pos, head: pos },
+        scrollIntoView: true,
+        userEvent: 'input',
+    };
+}
+
+function moveCell(direction) {
+    return (view) => {
+        const spec = tableCellMove(view.state, direction);
+        if (!spec) return false;
+        view.dispatch(spec);
+        return true;
+    };
+}
+
 /** Toggles the task box `[ ]` / `[x]` at `pos` in `text`: the change, or null when there's none there. */
 export function toggleTask(text, pos) {
     const marker = text.slice(pos, pos + 3);
@@ -844,11 +928,18 @@ function richMode(options) {
         },
     });
 
+    // Tab and Shift-Tab move between a table's cells (elsewhere they're left to the browser).
+    const cells = keymap.of([
+        { key: 'Tab', run: moveCell(1) },
+        { key: 'Shift-Tab', run: moveCell(-1) },
+    ]);
+
     return [
         syntaxHighlighting(richHighlight),
         plugin,
         tableField,
         links,
+        cells,
         EditorView.editorAttributes.of({ class: 'cm-rich' }),
     ];
 }

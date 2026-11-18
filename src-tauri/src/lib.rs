@@ -9,10 +9,12 @@
 //! * reading files and folders by path, so relative images resolve;
 //! * scoped access to local images through Tauri's asset protocol;
 //! * live reload: each window watches the document it shows (`watch.rs`);
-//! * saving an edited document, checked and atomic (`save.rs`).
+//! * saving an edited document, checked and atomic (`save.rs`);
+//! * inserting an image picked from disk, copied next to the document if asked (`images.rs`).
 
 mod crash_reporting;
 mod docs;
+mod images;
 mod save;
 mod tabs;
 mod watch;
@@ -369,6 +371,69 @@ fn confirm_discard(app: AppHandle, name: Option<String>) -> bool {
             "Cancel".to_string(),
         ))
         .blocking_show()
+}
+
+/// Insert image: picks an image with the Open panel, starting in the folder of the calling
+/// window's document. One from outside that folder can be copied next to the document (the
+/// reader is asked). Returns the image's canonical path, or `None` when nothing was picked.
+#[tauri::command(async)]
+fn choose_image(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let document = state
+        .router
+        .lock()
+        .unwrap()
+        .showing(window.label())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "No document is open".to_string())?;
+    let document = document.canonicalize().unwrap_or(document);
+    let dir = document
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("{} isn't in a folder", document.display()))?;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter("Images", docs::IMAGE_EXTENSIONS)
+        .set_directory(&dir)
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let image = picked.into_path().map_err(|e| e.to_string())?;
+    // Canonical, as the document's path is, so the page can work out the relative link.
+    let image = image
+        .canonicalize()
+        .map_err(|e| format!("Can't open {}: {e}", image.display()))?;
+    if images::is_inside(&dir, &image) {
+        return Ok(Some(image.to_string_lossy().into_owned()));
+    }
+    let name = image
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let copy = app
+        .dialog()
+        .message(format!(
+            "{name} isn't in the document's folder. Copy it next to the document, so the link \
+             keeps working if the folder moves?"
+        ))
+        .title("Insert image")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Copy".to_string(),
+            "Link Where It Is".to_string(),
+        ))
+        .blocking_show();
+    if !copy {
+        return Ok(Some(image.to_string_lossy().into_owned()));
+    }
+    let copied = images::copy_into(&image, &dir).map_err(|e| format!("Can't copy {name}: {e}"))?;
+    let copied = copied.canonicalize().unwrap_or(copied);
+    Ok(Some(copied.to_string_lossy().into_owned()))
 }
 
 /// Follows a folder in the calling window: watches every markdown file under it (the same
@@ -795,6 +860,7 @@ pub fn run() {
             watch_folder,
             write_document,
             confirm_discard,
+            choose_image,
             select_tab,
         ])
         .setup(|app| {
