@@ -59,15 +59,17 @@
 <li><strong>Each session owns its section.</strong> Sessions only ever rewrite their own section, and many sessions writing at once is safe. Anything you write between sections stays.</li>
 <li><strong>Clickable.</strong> Issue and pull request numbers like <code>#18</code> become links to the session&#39;s GitHub repository.</li>
 <li><strong>Agents can read it too.</strong> A session can read the board to see what the others are doing before it starts something.</li>
-<li><strong>Local and free.</strong> It&#39;s a small Python script and a markdown file on your machine. Nothing is sent anywhere.</li>
+<li><strong>Local and free.</strong> It&#39;s a hook that runs on Markydowny (or Python) and a markdown file on your machine. Nothing is sent anywhere.</li>
 </ul>
 <h2 id="set-it-up"><a class="heading-anchor" href="#set-it-up" aria-label="Link to this section">#</a>Set it up</h2>
 <p>markychecky works in Claude Code in the terminal, in the <strong>Code</strong> tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.</p>
 <h3 id="1-check-what-you-need"><a class="heading-anchor" href="#1-check-what-you-need" aria-label="Link to this section">#</a>1. Check what you need</h3>
+<p>You need Claude Code, and Markydowny (or Python 3) for the plugin&#39;s hook to run on:</p>
 <pre><code class="language-bash">claude --version   # Claude Code
-python3 --version  # Python 3, which the plugin&#39;s hook runs on
+ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac or on Linux
+python3 --version  # or Python 3
 </code></pre>
-<p>On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>). Most Linux systems have it already. Without it, the plugin does nothing.</p>
+<p>The hook runs on Markydowny when it&#39;s installed (<a href="https://markydowny.com/docs/install/">install it</a>), and falls back to <code>python3</code> when it isn&#39;t. On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>); most Linux systems have it already. With neither, the plugin tells you once and does nothing.</p>
 <h3 id="2-install-the-plugin"><a class="heading-anchor" href="#2-install-the-plugin" aria-label="Link to this section">#</a>2. Install the plugin</h3>
 <p>In a terminal:</p>
 <pre><code class="language-bash">claude plugin install markychecky --marketplace workingdevshero/markydowny
@@ -160,7 +162,7 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 <ul>
 <li><strong>No task list.</strong> The session doesn&#39;t have <code>TaskCreate</code> and <code>TaskUpdate</code>. Check step 3, then restart the session.</li>
 <li><strong>Started before the install.</strong> Restart it with <code>claude --resume</code>.</li>
-<li><strong>No <code>python3</code>.</strong> <code>command -v python3</code> prints nothing. Install it (step 1).</li>
+<li><strong>Neither Markydowny nor Python.</strong> The plugin says so once, the first time a session updates its tasks. Install Markydowny, or Python 3 (step 1). An older Markydowny without the hook built in is skipped.</li>
 <li><strong>A cloud session.</strong> Sessions in the cloud, including claude.ai/code in the browser, don&#39;t load plugins installed on your computer, so they can&#39;t write to its board.</li>
 <li><strong>Not Claude Code.</strong> markychecky is a Claude Code plugin. Claude chat on claude.ai and Cowork have their own, separate plugins.</li>
 <li><strong>Still nothing?</strong> The plugin logs problems to <code>~/.claude/plugins/data/markychecky-markydowny/markychecky.log</code>. A problem never interrupts your session; the board just doesn&#39;t update.</li>
