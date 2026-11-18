@@ -71,7 +71,26 @@ test("supermog's Linux desktop round runs this script in an image that has the s
 test('a pull request that changes the desktop app is one a round verifies', () => {
     const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
     const lists = [...config.matchAll(/^\s+paths: (\[.*\])$/gm)].map((m) => JSON.parse(m[1]));
-    // verify.paths, then verify.desktop.linux.paths: without src-tauri in the first, no round runs at all.
-    assert.equal(lists.length, 2);
-    for (const list of lists) assert.ok(list.includes('src-tauri/**'));
+    // verify.paths, then verify.desktop.macos.paths and verify.desktop.linux.paths. Without
+    // src-tauri in the first, no round runs at all; without it in the last, no desktop is driven.
+    assert.equal(lists.length, 3);
+    const [verify, , linux] = lists;
+    for (const list of [verify, linux]) assert.ok(list.includes('src-tauri/**'));
+});
+
+test("supermog's macOS desktop round builds with this script and launches the app Tauri names", () => {
+    const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
+    const macos = config.slice(config.indexOf('    macos:'), config.indexOf('    linux:'));
+    assert.match(macos, /^\s+build: scripts\/build-desktop\.sh$/m);
+    // The round refuses a built .app whose bundle id is not the one declared.
+    const conf = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+    assert.equal(macos.match(/^\s+bundleId: (\S+)$/m)[1], conf.identifier);
+    // macOS is for what only a Mac shows. Each file named has to exist, and has to be one a round
+    // runs for at all (verify.paths covers src-tauri/**).
+    const paths = JSON.parse(macos.match(/^\s+paths: (\[.*\])$/m)[1]);
+    assert.ok(paths.length > 0);
+    for (const file of paths) {
+        assert.ok(file.startsWith('src-tauri/'), `${file} is outside src-tauri/, which verify.paths does not cover`);
+        assert.ok(fs.existsSync(path.join(root, file)), `${file} does not exist`);
+    }
 });
