@@ -81,6 +81,14 @@ To have every markdown file Claude edits open by itself, add a `PostToolUse` hoo
 
 The hook reads the edited file's path (`tool_input.file_path`) from the JSON Claude Code passes on stdin, keeps markdown files only, and opens them with `open -g`, which leaves your terminal in front. The first edit to a file opens its window; later edits re-open a file that's already showing, so Markydowny keeps its one window, live-reloads it, and doesn't take focus. It needs [`jq`](https://jqlang.org) (`brew install jq`; recent macOS versions include it).
 
+### Watch all your sessions: markychecky
+
+[markychecky](plugins/markychecky) is a Claude Code plugin that keeps a live board of what every session is doing. Each session gets its own section of one markdown file, with what it's working on now and its checklist, ticked off as it goes. The board opens in Markydowny, so you can watch your agents work.
+
+```
+/plugin install markychecky --marketplace workingdevshero/markydowny
+```
+
 ### Install
 
 ```bash

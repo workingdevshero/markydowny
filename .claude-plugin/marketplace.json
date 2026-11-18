@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "markydowny",
+  "description": "Claude Code plugins from Markydowny, the markdown viewer that live-reloads as your agents work.",
+  "owner": {
+    "name": "Working Devs Hero"
+  },
+  "plugins": [
+    {
+      "name": "markychecky",
+      "description": "A live board of what every Claude Code session is doing, one section per session, opened in Markydowny.",
+      "category": "productivity",
+      "source": "./plugins/markychecky",
+      "homepage": "https://markydowny.com"
+    }
+  ]
+}
