@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a version tag (v1.2.0, or v1.2.0-beta.1 for a prerelease) builds the desktop app for
-# macOS and Linux, attaches it to a release and publishes the release once every file is there.
+# macOS, Linux and Windows, attaches it to a release and publishes the release once every file is there.
 # workflow_dispatch on a tag releases it too: tag-release.yml starts it that way when a version
 # bump merges, since a tag it creates doesn't trigger the push. Pull requests that change the
 # release build, and workflow_dispatch on any branch, run the same builds as a dry run:
@@ -16,7 +16,9 @@ on:
       - scripts/build-frontend.mjs
       - scripts/check-release-version.mjs
       - src-tauri/build.rs
+      - src-tauri/src/bundled_helpers.rs
       - src-tauri/tauri.conf.json
+      - src-tauri/tauri.windows.conf.json
   workflow_dispatch:
 
 # Read-only everywhere; only the release job can write.
@@ -316,10 +318,115 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
+  # x64 only: an arm64 build needs bugsplat-native's Crashpad prebuilt for Windows on Arm.
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_BUILD_JOBS: 2
+      BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+      BUGSPLAT_DATABASE: ${{ secrets.BUGSPLAT_DATABASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            .crashpad-cache
+          key: release-${{ runner.os }}-x64-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      # As in ci.yml's windows job: bugsplat-sys needs MSVC on PATH and Ninja, and the build
+      # steps run in PowerShell because Git Bash puts its own link.exe ahead of MSVC's.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install Ninja
+        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+      - run: npm ci --include=dev --no-audit --no-fund
+      # WiX only takes a numeric prerelease (1.2.0-1), so a prerelease like 1.2.0-beta.1 ships
+      # the NSIS installer alone.
+      - name: Build the installers
+        env:
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          $bundles = if ($env:PRERELEASE -eq 'true') { 'nsis' } else { 'nsis,msi' }
+          npx tauri build --bundles $bundles
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # bugsplat-native looks for its helpers next to the executable, where tauri.windows.conf.json's
+      # bundle.resources put them, and the reporter reads theme\ beside itself. Without them crash
+      # reporting is off. This installs each package into a folder of its own and looks there.
+      - name: Check the crash reporting helpers are installed
+        run: |
+          $bundle = 'src-tauri\target\release\bundle'
+          $expected = 'markydowny.exe', 'BugSplatMonitor.exe', 'BugSplatReporter.exe', 'theme\theme.json'
+          function Test-Installed($dir, $package) {
+            foreach ($file in $expected) {
+              if (-not (Test-Path (Join-Path $dir $file))) { throw "$file is missing from the $package install in $dir" }
+            }
+            Write-Output "The $package install has $($expected -join ', ')"
+          }
+          $setup = Get-Item "$bundle\nsis\*-setup.exe"
+          $nsis = Join-Path $env:RUNNER_TEMP 'installed-nsis'
+          # /S installs silently; /D= has to come last, unquoted.
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$nsis" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "The NSIS installer exited with $($p.ExitCode)" }
+          Test-Installed $nsis 'NSIS'
+          $msi = Get-Item "$bundle\msi\*.msi" -ErrorAction SilentlyContinue
+          if ($msi) {
+            # An administrative install unpacks the files without installing anything.
+            $unpacked = Join-Path $env:RUNNER_TEMP 'installed-msi'
+            $p = Start-Process msiexec.exe -ArgumentList '/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$unpacked`"" -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "msiexec /a exited with $($p.ExitCode)" }
+            $exe = Get-ChildItem $unpacked -Recurse -Filter markydowny.exe | Select-Object -First 1
+            if (-not $exe) { throw "markydowny.exe is missing from the MSI" }
+            Test-Installed $exe.DirectoryName 'MSI'
+          }
+      # TODO(windows-signing): sign markydowny.exe and the installers once there's a Windows
+      # code-signing certificate (bundle.windows.signCommand in tauri.windows.conf.json), and
+      # take the SmartScreen line out of the release notes.
+      - name: Code signing
+        shell: bash
+        run: echo "Windows: **not code-signed**: there's no Windows certificate yet, so SmartScreen warns the first time the installer runs." >> "$GITHUB_STEP_SUMMARY"
+      - name: Crash reporting
+        shell: bash
+        run: |
+          if [[ -n "$BUGSPLAT_DATABASE" ]]; then
+            echo "Windows x64: crash reporting is on." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Windows x64: crash reporting is **off**: the BUGSPLAT_DATABASE secret isn't set." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # BugSplat reads the .pdb itself, so there's no dump_syms (-m) step as on the other platforms.
+      - name: Upload symbols
+        if: github.ref_type == 'tag'
+        continue-on-error: true
+        shell: bash
+        env:
+          SYMBOL_UPLOAD_CLIENT_ID: ${{ secrets.SYMBOL_UPLOAD_CLIENT_ID }}
+          SYMBOL_UPLOAD_CLIENT_SECRET: ${{ secrets.SYMBOL_UPLOAD_CLIENT_SECRET }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -z "$BUGSPLAT_DATABASE" || -z "$SYMBOL_UPLOAD_CLIENT_ID" || -z "$SYMBOL_UPLOAD_CLIENT_SECRET" ]]; then
+            echo "Windows x64: symbols not uploaded: the BugSplat secrets aren't all set." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          npx symbol-upload -a Markydowny -v "$VERSION" -d src-tauri/target/release -f "markydowny.{exe,pdb}"
+          echo "Windows x64: symbols uploaded for $VERSION." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
   release:
     # Only for a tag, pushed or dispatched on: dry runs stop after the builds.
     if: github.ref_type == 'tag'
-    needs: [version, mac, linux]
+    needs: [version, mac, linux, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -335,8 +442,8 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      # The Linux jobs upload from two folders, bundle/deb and bundle/appimage, and the download
-      # keeps them as subfolders. Everything goes on the release side by side, so move every file
+      # The Linux and Windows jobs upload from two folders each (bundle/deb and bundle/appimage,
+      # bundle/nsis and bundle/msi), and the download keeps them as subfolders. Everything goes on the release side by side, so move every file
       # to the top; a name clash leaves a file behind in its folder and fails here.
       - name: Gather the files
         working-directory: artifacts
@@ -357,6 +464,7 @@ jobs:
           cp Markydowny_*_arm64.deb markydowny-linux-arm64.deb
           cp Markydowny_*_amd64.AppImage Markydowny-linux-x86_64.AppImage
           cp Markydowny_*_aarch64.AppImage Markydowny-linux-arm64.AppImage
+          cp Markydowny_*_x64-setup.exe Markydowny-windows-x64-setup.exe
           ls -l
       - name: Checksums
         working-directory: artifacts
@@ -388,6 +496,8 @@ jobs:
           cat >> notes.md <<'NOTES'
 
           **Linux** (x86_64 and arm64): the `.deb` and `.AppImage` need glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39 and later.
+
+          **Windows** (x64, Windows 10 and 11): run the `x64-setup.exe` installer, or install the `.msi` (prereleases have the installer only). They aren't code-signed yet, so SmartScreen warns the first time. Windows: click **More info**, then **Run anyway**.
 
           `SHA256SUMS.txt` has a checksum for every file (`sha256sum -c SHA256SUMS.txt --ignore-missing`).
           NOTES

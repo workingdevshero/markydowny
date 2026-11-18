@@ -572,7 +572,7 @@ mod tests {
         let file = dir.path().join("a.md");
         std::fs::write(&file, "# a").unwrap();
         let link = dir.path().join("link.md");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
+        crate::test_support::symlink(&file, &link);
         let mut router = DocumentRouter::default();
         router.set_occupied("main", true);
         let steps = plan_batch(

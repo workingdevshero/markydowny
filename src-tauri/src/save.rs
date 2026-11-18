@@ -42,10 +42,8 @@ pub fn save_document<R>(
 where
     R: Fn(&Path) -> Result<String, String>,
 {
-    let requested = requested
-        .canonicalize()
-        .unwrap_or_else(|_| requested.to_path_buf());
-    let showing = showing.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
+    let requested = dunce::canonicalize(requested).unwrap_or_else(|_| requested.to_path_buf());
+    let showing = showing.map(|p| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()));
     if showing.as_deref() != Some(requested.as_path()) {
         return Err(SaveError::Refused {
             message: format!(
@@ -118,6 +116,7 @@ fn create_temp_beside(path: &Path) -> io::Result<(PathBuf, File)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     fn read(path: &Path) -> Result<String, String> {
@@ -138,6 +137,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("notes.md");
         fs::write(&file, "# Old\r\n\r\nText\r\n").unwrap();
+        #[cfg(unix)]
         let before = fs::metadata(&file).unwrap().ino();
 
         save_document(
@@ -151,11 +151,13 @@ mod tests {
 
         assert_eq!(fs::read(&file).unwrap(), b"# New\r\n\r\nText\r\n");
         // A new file was renamed into place, rather than the old one rewritten in place.
+        #[cfg(unix)]
         assert_ne!(fs::metadata(&file).unwrap().ino(), before);
         assert_eq!(entries(tmp.path()), vec!["notes.md"]);
     }
 
     #[test]
+    #[cfg(unix)]
     fn keeps_the_documents_permissions() {
         let tmp = tempfile::tempdir().unwrap();
         let file = tmp.path().join("notes.md");
@@ -199,7 +201,7 @@ mod tests {
         let file = tmp.path().join("notes.md");
         fs::write(&file, "a").unwrap();
         let link = tmp.path().join("link.md");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
+        crate::test_support::symlink(&file, &link);
 
         save_document(Some(&link), &tmp.path().join("./notes.md"), "a", "b", read).unwrap();
 

@@ -88,7 +88,7 @@ impl RecentList {
 
 /// `path` with symlinks and `.`/`..` resolved, so one file is listed once however it was named.
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]
@@ -132,7 +132,7 @@ mod tests {
         let file = dir.join("notes.md");
         std::fs::write(&file, "").unwrap();
         let link = tmp.path().join("link.md");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
+        crate::test_support::symlink(&file, &link);
 
         let mut list = RecentList::default();
         list.add(&file);
@@ -141,7 +141,10 @@ mod tests {
         list.add(&dir.join("../docs/./notes.md"));
         assert_eq!(
             list.paths(),
-            [file.canonicalize().unwrap(), dir.canonicalize().unwrap()]
+            [
+                dunce::canonicalize(&file).unwrap(),
+                dunce::canonicalize(&dir).unwrap()
+            ]
         );
     }
 

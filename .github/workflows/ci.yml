@@ -49,3 +49,37 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # As in the desktop job: no debug info and no incremental artifacts keep the build light.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            src-tauri/target
+            .crashpad-cache
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      # bugsplat-sys builds BugSplat's native code with CMake and Ninja, and MSVC's compiler,
+      # linker and lib.exe have to be on PATH for that. The steps run in PowerShell, the
+      # default: Git Bash puts its own link.exe ahead of MSVC's.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install Ninja
+        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+      - run: node scripts/build-frontend.mjs
+      # Built without BUGSPLAT_DATABASE, so this build has crash reporting turned off.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+        env:
+          BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache

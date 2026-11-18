@@ -2077,6 +2077,7 @@ name = "markydowny"
 version = "1.0.0"
 dependencies = [
  "bugsplat",
+ "dunce",
  "notify",
  "objc2",
  "objc2-app-kit",

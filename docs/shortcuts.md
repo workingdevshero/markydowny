@@ -23,6 +23,6 @@ description: Every Markydowny keyboard shortcut, on the Mac and on Windows and L
 
 Scrolling with the arrow keys, <kbd>Page Up</kbd>, <kbd>Page Down</kbd>, <kbd>Home</kbd>, <kbd>End</kbd> or <kbd>Space</kbd> pauses [Follow](live-reload.md#follow-and-resume), like scrolling with the mouse.
 
-The Windows and Linux column covers the website in any browser and the Linux build of the app, which has no tabs.
+The Windows and Linux column covers the website in any browser and the Linux and Windows builds of the app, which have no tabs.
 
 In the editor, the usual text editing keys work: undo and redo, select all, and moving by word or line.

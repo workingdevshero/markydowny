@@ -53,7 +53,7 @@ pub fn is_watchable(root: &Path, path: &Path) -> bool {
 /// `path` with symlinks and `.`/`..` resolved, so one file has one key however it was named.
 /// Paths that don't exist are kept as given.
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Where a document should be displayed.
@@ -386,7 +386,7 @@ mod tests {
         router.set_showing("main", Some(&file));
         assert_eq!(
             router.showing("main"),
-            Some(file.canonicalize().unwrap().as_path())
+            Some(dunce::canonicalize(&file).unwrap().as_path())
         );
         assert_eq!(
             router.route(file.clone(), &windows, None),
@@ -428,7 +428,7 @@ mod tests {
         let file = dir.join("notes.md");
         std::fs::write(&file, "").unwrap();
         let link = tmp.path().join("link.md");
-        std::os::unix::fs::symlink(&file, &link).unwrap();
+        crate::test_support::symlink(&file, &link);
         let windows = labels(&["main"]);
         let mut router = DocumentRouter::default();
         router.route(file.clone(), &windows, None);
@@ -496,7 +496,7 @@ mod tests {
         );
         assert_eq!(
             router.take_pending("main"),
-            Some(inside.canonicalize().unwrap())
+            Some(dunce::canonicalize(&inside).unwrap())
         );
         assert_eq!(
             router.route(root.clone(), &windows, None),

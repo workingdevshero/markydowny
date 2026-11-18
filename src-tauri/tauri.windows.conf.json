@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "resources": {
+      "bugsplat-helpers/BugSplatMonitor.exe": "BugSplatMonitor.exe",
+      "bugsplat-helpers/BugSplatReporter.exe": "BugSplatReporter.exe",
+      "bugsplat-helpers/theme": "theme"
+    }
+  }
+}

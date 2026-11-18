@@ -46,19 +46,17 @@ impl Scope {
     /// paths, e.g. `/private/var/...` for `/var/...`). The file itself need not exist.
     pub fn file(path: &Path) -> Scope {
         let canonical =
-            path.canonicalize()
-                .unwrap_or_else(|_| match (path.parent(), path.file_name()) {
-                    (Some(dir), Some(name)) => dir
-                        .canonicalize()
-                        .map(|d| d.join(name))
-                        .unwrap_or_else(|_| path.to_path_buf()),
-                    _ => path.to_path_buf(),
-                });
+            dunce::canonicalize(path).unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+                (Some(dir), Some(name)) => dunce::canonicalize(dir)
+                    .map(|d| d.join(name))
+                    .unwrap_or_else(|_| path.to_path_buf()),
+                _ => path.to_path_buf(),
+            });
         Scope::File(canonical)
     }
 
     pub fn folder(path: &Path) -> Scope {
-        Scope::Folder(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        Scope::Folder(dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
     }
 
     /// Whether a file system event about `path` concerns this scope.

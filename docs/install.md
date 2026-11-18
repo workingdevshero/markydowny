@@ -2,7 +2,7 @@
 title: Download
 nav: Download
 order: 6
-description: Download Markydowny for macOS (signed and notarized) or Linux, make it the default app for markdown files, or use it on the web with nothing to install.
+description: Download Markydowny for macOS (signed and notarized), Linux or Windows, make it the default app for markdown files, or use it on the web with nothing to install.
 ---
 
 # Download
@@ -40,7 +40,22 @@ Documents open in separate windows rather than tabs.
 
 ## Windows
 
-> **Coming soon.** A Windows installer is on its way in the next release.
+**[⬇ Download Markydowny for Windows](https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-windows-x64-setup.exe)**
+
+For 64-bit Windows 10 and 11. Run `Markydowny-windows-x64-setup.exe`, which installs it for your account without asking for an administrator. An `.msi`, for installing with `msiexec`, is on the [releases page](https://github.com/workingdevshero/markydowny/releases).
+
+The installer isn't code-signed yet, so Microsoft Defender SmartScreen stops it the first time with **Windows protected your PC**. Click **More info**, then **Run anyway**.
+
+Double-click a markdown file to open it. Each document opens in a window of its own rather than a tab, so **File > New Tab** opens a new window. **File > Open…** and **Open Recent** work as on the Mac.
+
+### Make it the default for markdown
+
+The installer registers Markydowny for `.md`, `.markdown`, `.mdown`, `.mkd` and `.mkdn`, but Windows asks you before it changes the app a file type opens with:
+
+1. In File Explorer, right-click any `.md` file and choose **Open with > Choose another app**.
+2. Choose **Markydowny**, then **Always**. (On Windows 10, check **Always use this app to open .md files**, then click **OK**.)
+
+Repeat for `.markdown` (and `.mdown`, `.mkd` or `.mkdn`) if you use them.
 
 ## On the web
 

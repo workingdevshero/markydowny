@@ -26,14 +26,52 @@
         return isMarkdownName(file.name) || type === '' || type.startsWith('text/');
     }
 
-    /** Directory portion of a path, including the trailing slash ('' if none). */
+    /**
+     * The root of a Windows path, as the desktop app gives them on Windows: 'C:\\' for a drive,
+     * '\\\\server\\share\\' for a network share. null for any other path (POSIX, or relative).
+     */
+    function windowsRoot(path) {
+        const m = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))/.exec(String(path));
+        if (!m) return null;
+        const root = m[0].replace(/\//g, '\\');
+        return root.endsWith('\\') ? root : root + '\\';
+    }
+
+    /** Index of the last separator in `path`: `/`, or `\` too in a Windows path. */
+    function lastSeparator(path) {
+        const slash = path.lastIndexOf('/');
+        return windowsRoot(path) ? Math.max(slash, path.lastIndexOf('\\')) : slash;
+    }
+
+    /** Directory portion of a path, including the trailing separator ('' if none). */
     function dirname(path) {
-        return path.substring(0, path.lastIndexOf('/') + 1);
+        return path.substring(0, lastSeparator(path) + 1);
     }
 
     /** Last segment of a path. */
     function basename(path) {
-        return path.substring(path.lastIndexOf('/') + 1);
+        return path.substring(lastSeparator(path) + 1);
+    }
+
+    /** Whether `path` is inside the folder `root`, both absolute paths from the desktop app. */
+    function isInsideFolder(root, path) {
+        const separator = windowsRoot(root) ? '\\' : '/';
+        return String(path).startsWith(root.endsWith(separator) ? root : root + separator);
+    }
+
+    /** `parts` with `.` and empty segments dropped and `..` applied; null if `..` climbs out. */
+    function normalizeSegments(parts) {
+        const stack = [];
+        for (const part of parts) {
+            if (part === '' || part === '.') continue;
+            if (part === '..') {
+                if (stack.length === 0) return null;
+                stack.pop();
+                continue;
+            }
+            stack.push(part);
+        }
+        return stack;
     }
 
     /** True for URLs with a scheme (https:, data:, blob:, mailto:, ...) or protocol-relative URLs. */
@@ -59,6 +97,9 @@
      * Query strings / fragments are dropped and percent-escapes decoded, since
      * the result is used as a file path rather than a URL.
      *
+     * A Windows `baseDir` (C:\\docs\\) gives a Windows path back: `/` and `\` both separate
+     * segments, and a target starting with either is from the root of the drive or share.
+     *
      * Returns null if the path climbs above the root of `baseDir`.
      */
     function resolveRelativePath(baseDir, relPath) {
@@ -69,33 +110,40 @@
             // Leave malformed escapes as-is.
         }
 
+        const root = windowsRoot(baseDir);
+        if (root) {
+            const isAbsolute = /^[\\/]/.test(target);
+            const dir = isAbsolute ? [] : String(baseDir).substring(root.length).split(/[\\/]/);
+            const stack = normalizeSegments(dir.concat(target.split(/[\\/]/)));
+            return stack && root + stack.join('\\');
+        }
+
         const isAbsolute = target.startsWith('/');
         const leadingSlash = isAbsolute || baseDir.startsWith('/');
-        const parts = (isAbsolute ? [] : baseDir.split('/')).concat(target.split('/'));
-
-        const stack = [];
-        for (const part of parts) {
-            if (part === '' || part === '.') continue;
-            if (part === '..') {
-                if (stack.length === 0) return null;
-                stack.pop();
-                continue;
-            }
-            stack.push(part);
-        }
-        return (leadingSlash ? '/' : '') + stack.join('/');
+        const stack = normalizeSegments((isAbsolute ? [] : baseDir.split('/')).concat(target.split('/')));
+        return stack && (leadingSlash ? '/' : '') + stack.join('/');
     }
 
     /**
      * The path of `toPath` relative to the directory `fromDir` ('../' to climb out of it), as a
      * document links to a file: relativePath('/a/docs/', '/a/img/x.png') is '../img/x.png'.
-     * Both are absolute, or both relative to the same place; null when one is and one isn't.
+     * Both are absolute, or both relative to the same place; null when one is and one isn't, or
+     * when they're on different Windows drives or shares. The link always uses `/`.
      */
     function relativePath(fromDir, toPath) {
-        const from = String(fromDir);
-        const to = String(toPath);
-        if (from.startsWith('/') !== to.startsWith('/')) return null;
-        const segments = (path) => path.split('/').filter(part => part !== '' && part !== '.');
+        let from = String(fromDir);
+        let to = String(toPath);
+        const fromRoot = windowsRoot(from);
+        const toRoot = windowsRoot(to);
+        if (fromRoot || toRoot) {
+            if (!fromRoot || !toRoot || fromRoot.toLowerCase() !== toRoot.toLowerCase()) return null;
+            from = from.substring(fromRoot.length);
+            to = to.substring(toRoot.length);
+        } else if (from.startsWith('/') !== to.startsWith('/')) {
+            return null;
+        }
+        const separators = fromRoot ? /[\\/]/ : '/';
+        const segments = (path) => path.split(separators).filter(part => part !== '' && part !== '.');
         const dir = segments(from);
         const target = segments(to);
         let common = 0;
@@ -808,8 +856,10 @@
         MARKDOWN_EXTENSIONS,
         isMarkdownName,
         isTextFile,
+        windowsRoot,
         dirname,
         basename,
+        isInsideFolder,
         isExternalUrl,
         classifyLink,
         resolveRelativePath,
