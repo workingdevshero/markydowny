@@ -264,6 +264,14 @@
             e.returnValue = '';
         });
     }
+    // The homepage's markychecky clip is set up here, not in the HTML: the desktop bundle doesn't
+    // ship it, and it plays by itself only for people who haven't asked for less motion.
+    const spotlightVideo = document.querySelector('.spotlight-video');
+    if (!isDesktop && spotlightVideo) {
+        spotlightVideo.autoplay = !prefersReducedMotion();
+        spotlightVideo.poster = spotlightVideo.dataset.poster;
+        spotlightVideo.src = spotlightVideo.dataset.src;
+    }
     markdownContent.addEventListener('click', handleContentClick);
 
     lightboxClose.addEventListener('click', closeLightbox);

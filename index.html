@@ -660,8 +660,8 @@
             font-size: 0.8rem;
             line-height: 1.5;
             color: #e8edf7;
-            white-space: nowrap;
-            overflow-x: auto;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             background: rgba(255, 255, 255, 0.07);
             border: 1px solid rgba(255, 255, 255, 0.12);
             border-radius: 10px;
@@ -2374,7 +2374,7 @@
                     <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
                     <h2 id="feature-claude">Watch Claude Code edit</h2>
                     <p>Open the document, ask Claude Code to change it, and watch each edit land, highlighted as it goes.</p>
-                    <p class="feature-note">On a Mac, a Claude Code hook opens every markdown file Claude edits, without pulling focus from your terminal.</p>
+                    <p class="feature-note">On a Mac, a Claude Code hook opens each markdown file Claude edits. Later edits to that file reload in the background, without pulling focus from your terminal.</p>
                     <a class="feature-link" href="/docs/claude-code/">Watching Claude Code</a>
                 </section>
                 <section class="feature feature-card" aria-labelledby="feature-privacy">
@@ -2393,7 +2393,7 @@
                     <code class="spotlight-command">claude plugin install markychecky --marketplace workingdevshero/markydowny</code>
                     <a class="spotlight-link" href="/docs/markychecky/">Set up markychecky</a>
                 </div>
-                <video class="spotlight-video" src="/docs/media/markychecky-board.mp4" poster="/docs/media/markychecky-board-poster.jpg" autoplay muted loop playsinline preload="metadata" aria-label="A markychecky board in Markydowny: three agent sessions and a person tick off tasks and add a question, each change highlighted as it lands."></video>
+                <video class="spotlight-video" data-src="/docs/media/markychecky-board.mp4" data-poster="/docs/media/markychecky-board-poster.jpg" muted loop playsinline controls preload="metadata" aria-label="A markychecky board in Markydowny: three agent sessions and a person tick off tasks and add a question, each change highlighted as it lands."></video>
             </section>
 
             <section class="download-strip marketing" aria-labelledby="download-title">

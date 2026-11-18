@@ -120,7 +120,7 @@ function stubElement(name, { closest = () => null } = {}) {
     return target;
 }
 
-function loadApp() {
+function loadApp({ reducedMotion = false } = {}) {
     const alerts = [];
     const elements = new Map();
     const element = (id) => {
@@ -143,7 +143,7 @@ function loadApp() {
         navigator: { platform: 'Linux', userAgent: 'node' },
         localStorage: { getItem: () => null, setItem() {} },
         addEventListener() {},
-        matchMedia: () => ({ matches: false, addEventListener() {} }),
+        matchMedia: (query) => ({ matches: reducedMotion && query.includes('reduced-motion'), addEventListener() {} }),
         confirm: () => true,
         alert: (message) => alerts.push(message),
         setTimeout,
@@ -151,6 +151,7 @@ function loadApp() {
         console,
     };
     window.window = window;
+    element('.spotlight-video').dataset = { src: '/docs/media/markychecky-board.mp4', poster: '/docs/media/markychecky-board-poster.jpg' };
     const context = vm.createContext(window);
     vm.runInContext(coreSource, context);
     vm.runInContext(appSource, context);
@@ -282,11 +283,27 @@ test('the homepage shows the product: screenshot rows, the markychecky spotlight
     const spotlight = main.match(/<section class="spotlight marketing"[\s\S]*?<\/section>/);
     assert.ok(spotlight, 'a markychecky spotlight, marked as marketing');
     assert.match(spotlight[0], /href="\/docs\/markychecky\/"/);
-    assert.match(spotlight[0], /<video class="spotlight-video" src="\/docs\/media\/markychecky-board\.mp4"[^>]* autoplay muted loop playsinline/);
+    const video = spotlight[0].match(/<video [^>]*>/)[0];
+    assert.match(video, /class="spotlight-video" data-src="\/docs\/media\/markychecky-board\.mp4" data-poster="[^"]+" muted loop playsinline controls/);
+    // The desktop bundle doesn't ship the clip, so the HTML mustn't fetch it, and app.js decides whether it plays.
+    assert.doesNotMatch(video, /\s(src|poster|autoplay)[\s=>]/);
+    const homeMedia = fs.readdirSync(path.join(root, 'media', 'home'));
+    for (const file of homeMedia) assert.ok(main.includes(`/media/home/${file}"`), `media/home/${file} is used`);
     assert.ok(main.indexOf('class="spotlight marketing"') < main.indexOf('class="download-strip marketing"'));
 
     const hero = main.match(/<div class="hero marketing">[\s\S]*?<\/div>/)[0];
     assert.match(hero, /<a class="hero-badge" href="\/docs\/install\/">/);
     // The download band also offers Linux, through the Download page.
     assert.match(main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/)[0], /href="\/docs\/install\/"/);
+});
+
+test('the website loads the spotlight clip, and plays it only without reduced motion', () => {
+    const plays = loadApp().element('.spotlight-video');
+    assert.equal(plays.src, '/docs/media/markychecky-board.mp4');
+    assert.equal(plays.poster, '/docs/media/markychecky-board-poster.jpg');
+    assert.equal(plays.autoplay, true);
+    const still = loadApp({ reducedMotion: true }).element('.spotlight-video');
+    assert.equal(still.src, '/docs/media/markychecky-board.mp4');
+    assert.equal(still.autoplay, false);
+    assert.match(appSource, /if \(!isDesktop && spotlightVideo\)/, 'the desktop app never loads it');
 });
