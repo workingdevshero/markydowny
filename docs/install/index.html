@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/install.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
-    <title>Install · Markydowny docs</title>
-    <meta name="description" content="Install Markydowny for macOS, make it the default app for markdown files, or use it on the web with nothing to install. Linux and app store builds are coming.">
+    <title>Download · Markydowny docs</title>
+    <meta name="description" content="Download Markydowny for macOS (signed and notarized) or Linux, make it the default app for markdown files, or use it on the web with nothing to install.">
     <link rel="canonical" href="https://markydowny.com/docs/install/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/install/">
-    <meta property="og:title" content="Install · Markydowny docs">
-    <meta property="og:description" content="Install Markydowny for macOS, make it the default app for markdown files, or use it on the web with nothing to install. Linux and app store builds are coming.">
+    <meta property="og:title" content="Download · Markydowny docs">
+    <meta property="og:description" content="Download Markydowny for macOS (signed and notarized) or Linux, make it the default app for markdown files, or use it on the web with nothing to install.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -39,28 +39,21 @@
                 <li><a href="/docs/markychecky/">markychecky</a></li>
                 <li><a href="/docs/editor/">Editor</a></li>
                 <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
-                <li><a href="/docs/install/" aria-current="page">Install</a></li>
+                <li><a href="/docs/install/" aria-current="page">Download</a></li>
                 <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
                 <li><a href="/docs/privacy/">Privacy</a></li>
                 <li><a href="/docs/faq/">FAQ</a></li>
             </ul>
         </nav>
         <main class="docs-content" id="content">
-<h1 id="install">Install</h1>
-<h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
-<p>Nothing to install: open <a href="https://markydowny.com">markydowny.com</a> in any modern browser. Once it has loaded it works offline. For live reload and saving in place, use Chrome, Edge or another Chromium browser (see <a href="/docs/live-reload/#browser-support">Browser support</a>).</p>
+<h1 id="download">Download</h1>
 <h2 id="mac-app"><a class="heading-anchor" href="#mac-app" aria-label="Link to this section">#</a>Mac app</h2>
-<blockquote>
-<p><strong>Downloads are coming.</strong> Signed, notarized builds of the Mac app will be downloadable from this page. Until then, build it from source; it takes a few minutes.</p>
-</blockquote>
-<h3 id="build-from-source"><a class="heading-anchor" href="#build-from-source" aria-label="Link to this section">#</a>Build from source</h3>
-<p>You need macOS 12 or later, <a href="https://nodejs.org">Node</a> 18 or later, the Xcode command line tools (<code>xcode-select --install</code>), and CMake and Ninja (<code>brew install cmake ninja</code>). Rust installs itself through <a href="https://rustup.rs">rustup</a> at the version the project pins.</p>
-<pre><code class="language-bash">git clone https://github.com/workingdevshero/markydowny.git
-cd markydowny
-npm install
-npm run build
-</code></pre>
-<p>Then drag <code>src-tauri/target/release/bundle/macos/Markydowny.app</code> into your Applications folder. A <code>.dmg</code> is built next to it too.</p>
+<p><strong><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-mac.dmg">⬇ Download Markydowny for Mac</a></strong></p>
+<p>For Apple silicon and Intel Macs, macOS 12 or later. It&#39;s signed and notarized by Apple, so it opens like any other app.</p>
+<ol>
+<li>Open <code>Markydowny-mac.dmg</code> and drag <strong>Markydowny</strong> to <strong>Applications</strong>.</li>
+<li>Open Markydowny from Applications, or double-click any <code>.md</code> file once it&#39;s the default (below).</li>
+</ol>
 <h3 id="make-it-the-default-for-markdown"><a class="heading-anchor" href="#make-it-the-default-for-markdown" aria-label="Link to this section">#</a>Make it the default for markdown</h3>
 <ol>
 <li>In Finder, select any <code>.md</code> file.</li>
@@ -69,10 +62,48 @@ npm run build
 </ol>
 <p>Repeat for <code>.markdown</code> (and <code>.mdown</code>, <code>.mkd</code> or <code>.mkdn</code>) if you use them.</p>
 <h2 id="linux"><a class="heading-anchor" href="#linux" aria-label="Link to this section">#</a>Linux</h2>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th>x86_64</th>
+<th>arm64</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>.deb</code> for Debian and Ubuntu</td>
+<td><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/markydowny-linux-x86_64.deb">Download</a></td>
+<td><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/markydowny-linux-arm64.deb">Download</a></td>
+</tr>
+<tr>
+<td><code>.AppImage</code> for other distributions</td>
+<td><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-linux-x86_64.AppImage">Download</a></td>
+<td><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-linux-arm64.AppImage">Download</a></td>
+</tr>
+</tbody></table>
+<p>They need glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39 and later.</p>
+<ul>
+<li><strong><code>.deb</code>:</strong> <code>sudo apt install ./markydowny-linux-x86_64.deb</code>, or the arm64 file. Markydowny then appears with your other apps.</li>
+<li><strong><code>.AppImage</code>:</strong> <code>chmod +x Markydowny-linux-x86_64.AppImage</code>, then run it.</li>
+</ul>
+<p>Documents open in separate windows rather than tabs.</p>
+<h2 id="windows"><a class="heading-anchor" href="#windows" aria-label="Link to this section">#</a>Windows</h2>
 <blockquote>
-<p><strong>Coming soon.</strong> Packaged Linux builds will be listed here.</p>
+<p><strong>Coming soon.</strong> A Windows installer is on its way in the next release.</p>
 </blockquote>
-<p>The app already builds on Linux from source, for testing: run <code>scripts/build-desktop.sh</code> in a clone of the repository. It needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04) and installs what it needs on Debian and Ubuntu. Documents open in separate windows rather than tabs.</p>
+<h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
+<p>Nothing to install: open <a href="https://markydowny.com">markydowny.com</a> in any modern browser. Once it has loaded it works offline. For live reload and saving in place, use Chrome, Edge or another Chromium browser (see <a href="/docs/live-reload/#browser-support">Browser support</a>).</p>
+<h2 id="checksums-and-older-versions"><a class="heading-anchor" href="#checksums-and-older-versions" aria-label="Link to this section">#</a>Checksums and older versions</h2>
+<p>Every release lists a SHA-256 checksum for each file in <code>SHA256SUMS.txt</code>, and the <a href="https://github.com/workingdevshero/markydowny/releases">releases page</a> has every version and its notes. The links above always download the latest release.</p>
+<h2 id="build-from-source"><a class="heading-anchor" href="#build-from-source" aria-label="Link to this section">#</a>Build from source</h2>
+<p>You need macOS 12 or later, <a href="https://nodejs.org">Node</a> 18 or later, the Xcode command line tools (<code>xcode-select --install</code>), and CMake and Ninja (<code>brew install cmake ninja</code>). Rust installs itself through <a href="https://rustup.rs">rustup</a> at the version the project pins.</p>
+<pre><code class="language-bash">git clone https://github.com/workingdevshero/markydowny.git
+cd markydowny
+npm install
+npm run build
+</code></pre>
+<p>Then drag <code>src-tauri/target/release/bundle/macos/Markydowny.app</code> into your Applications folder. A <code>.dmg</code> is built next to it too.</p>
+<p>On Linux, run <code>scripts/build-desktop.sh</code> in a clone of the repository instead. It installs what it needs on Debian and Ubuntu.</p>
 <h2 id="app-stores"><a class="heading-anchor" href="#app-stores" aria-label="Link to this section">#</a>App stores</h2>
 <blockquote>
 <p><strong>Coming soon.</strong> Markydowny isn&#39;t in the Mac App Store or Microsoft Store yet. The store editions need sandboxing, which limits folder watching and the <a href="/docs/claude-code/#open-every-file-the-agent-edits">Claude Code hook</a>, so they&#39;re a separate effort.</p>

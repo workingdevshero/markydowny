@@ -48,11 +48,11 @@ HTML in a markdown file is rendered in both.
 
 ## Is there a Windows or Linux app?
 
-Not packaged yet. The app builds on Linux from source, and the website works in any browser on any system. See [Install](install.md).
+Linux, yes: `.deb` and `.AppImage` packages for x86_64 and arm64 are on the [Download](install.md#linux) page. Windows is coming in the next release. Until then, the website works in any browser on any system.
 
 ## Why can't I find it in the Mac App Store?
 
-The App Store requires sandboxing, which gets in the way of watching folders, opening any path you give it and the [Claude Code hook](claude-code.md). Downloads come first; store editions are planned separately.
+The App Store requires sandboxing, which gets in the way of watching folders, opening any path you give it and the [Claude Code hook](claude-code.md). Download the app from the [Download](install.md) page instead; store editions are planned separately.
 
 ## Where do I report a bug or ask for a feature?
 
