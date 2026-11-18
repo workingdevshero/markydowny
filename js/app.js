@@ -76,6 +76,8 @@
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
     let blobUrls = [];
+    // Rich mode's folder images: File -> its URL in blobUrls.
+    let imageBlobUrls = new Map();
     // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title, path?, markdown }
     let currentSource = null;
     // Bumped by every render, so a slow render can't overwrite a newer one.
@@ -783,6 +785,7 @@
     function revokeBlobUrls() {
         blobUrls.forEach(url => URL.revokeObjectURL(url));
         blobUrls = [];
+        imageBlobUrls = new Map();
     }
 
     // ------------------------------------------------------------------
@@ -1333,7 +1336,9 @@
 
     /** ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves while editing. */
     function onEditShortcut(e) {
-        if (editing && window.MarkyFormat && lightbox.style.display !== 'block') {
+        const action = core.editorShortcut(e, IS_MAC);
+        // ⌘/ before the formatting shortcuts: where / is Shift+7 it's also ⌘⇧7 (numbered list).
+        if (action !== 'mode' && editing && window.MarkyFormat && lightbox.style.display !== 'block') {
             const command = window.MarkyFormat.shortcutCommand(e, IS_MAC);
             if (command) {
                 // Before the editor's own keymap (⌘I there selects the enclosing syntax).
@@ -1344,7 +1349,6 @@
                 return;
             }
         }
-        const action = core.editorShortcut(e, IS_MAC);
         if (!action || !currentSource || lightbox.style.display === 'block') return;
         if (action === 'toggle') {
             e.preventDefault();
@@ -1554,11 +1558,15 @@
         const line = view.lineBlockAtHeight(top - view.documentTop);
         const offset = view.documentTop + line.top - top;
         editing.cm.setMode(view, mode);
+        // After CodeMirror's measure, which may already have scrolled to keep the line at the
+        // top of the window in place: only what's left is corrected.
         view.requestMeasure({
-            read: () => view.documentTop + view.lineBlockAt(line.from).top - top,
-            write: (now) => {
-                if (Math.abs(now - offset) > 1) window.scrollBy(0, now - offset);
-            },
+            read: () => null,
+            write: () => queueMicrotask(() => {
+                if (editing === null || editing.view !== view) return;
+                const moved = view.documentTop + view.lineBlockAt(line.from).top - top - offset;
+                if (Math.abs(moved) > 1) window.scrollBy(0, moved);
+            }),
         });
     }
 
@@ -1602,7 +1610,10 @@
         if (!path) return src;
         if (currentSource.kind === 'folder') {
             const file = folderFiles.get(path);
-            return file ? blobUrlFor(file) : src;
+            if (!file) return src;
+            // Widgets are redrawn as they scroll into view: one URL per file.
+            if (!imageBlobUrls.has(file)) imageBlobUrls.set(file, blobUrlFor(file));
+            return imageBlobUrls.get(file);
         }
         if (currentSource.kind === 'desktop') {
             // Widgets are redrawn as they scroll into view: each file is allowed once.
@@ -1641,6 +1652,13 @@
         }
     }
 
+    /** An HTML entity (&amp;) as the text it stands for. */
+    function decodeEntity(entity) {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = entity;
+        return textarea.value;
+    }
+
     /** #anchor in the editor: the cursor goes to the heading with that id (as refreshHeadingIds names them). */
     function scrollEditorToAnchor(href) {
         if (!editing) return;
@@ -1651,7 +1669,7 @@
             // use raw id
         }
         const used = new Set();
-        const heading = editing.cm.headings(editing.view.state).find(h => core.uniqueSlug(h.text, used) === id);
+        const heading = editing.cm.headings(editing.view.state, decodeEntity).find(h => core.uniqueSlug(h.text, used) === id);
         if (!heading) return;
         editing.view.dispatch({
             selection: { anchor: heading.from },

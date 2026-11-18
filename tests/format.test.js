@@ -400,6 +400,17 @@ function key(init) {
     return { key: '', code: '', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...init };
 }
 
+test('⌘/ where / is Shift+7 is also ⌘⇧7: app.js asks editorShortcut first', () => {
+    const core = require('../js/core.js');
+    const slash = key({ key: '/', code: 'Digit7', shiftKey: true, metaKey: true });
+    assert.equal(core.editorShortcut(slash, true), 'mode');
+    assert.equal(format.shortcutCommand(slash, true), 'orderedList');
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../js/app.js'), 'utf8');
+    const handler = source.slice(source.indexOf('function onEditShortcut'));
+    assert.ok(handler.indexOf('core.editorShortcut(') < handler.indexOf('shortcutCommand('), 'the mode switch is resolved first');
+    assert.match(handler, /action !== 'mode' && editing && window\.MarkyFormat/);
+});
+
 test('shortcutCommand reads ⌘ on a Mac and Ctrl elsewhere', () => {
     assert.equal(format.shortcutCommand(key({ key: 'b', code: 'KeyB', metaKey: true }), true), 'bold');
     assert.equal(format.shortcutCommand(key({ key: 'b', code: 'KeyB', ctrlKey: true }), false), 'bold');

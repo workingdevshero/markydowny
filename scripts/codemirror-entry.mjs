@@ -214,26 +214,41 @@ function normalizeLabel(label) {
     return label.slice(1, -1).trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+// Blocks that can hold other blocks (tables, headings, link reference definitions).
+const BLOCK_CONTAINERS = new Set(['Document', 'Blockquote', 'BulletList', 'OrderedList', 'ListItem']);
+
 /** The URL of a [text][label] or [label] link, from its definition (if parsed). */
 function referenceUrl(state, label) {
     const wanted = normalizeLabel(label);
-    for (let node = syntaxTree(state).topNode.firstChild; node; node = node.nextSibling) {
-        if (node.name !== 'LinkReference') continue;
-        const name = node.getChild('LinkLabel');
-        const url = node.getChild('URL');
-        if (name && url && normalizeLabel(state.sliceDoc(name.from, name.to)) === wanted) return state.sliceDoc(url.from, url.to);
-    }
-    return null;
+    let found = null;
+    syntaxTree(state).iterate({
+        enter(ref) {
+            if (found !== null) return false;
+            if (ref.name !== 'LinkReference') return BLOCK_CONTAINERS.has(ref.name);
+            const name = ref.node.getChild('LinkLabel');
+            const url = ref.node.getChild('URL');
+            if (name && url && normalizeLabel(state.sliceDoc(name.from, name.to)) === wanted) found = state.sliceDoc(url.from, url.to);
+            return false;
+        },
+    });
+    return found;
 }
 
 function linkHref(state, node, marks) {
     const url = node.getChild('URL');
     if (url) return state.sliceDoc(url.from, url.to).replace(/^<|>$/g, '');
     const label = node.getChild('LinkLabel');
-    if (label) return referenceUrl(state, state.sliceDoc(label.from, label.to));
-    // [label] on its own.
+    // [text][label]; [label][] and [label] on their own use the text.
+    if (label && normalizeLabel(state.sliceDoc(label.from, label.to))) return referenceUrl(state, state.sliceDoc(label.from, label.to));
     if (marks.length >= 2) return referenceUrl(state, state.sliceDoc(marks[0].from, marks[1].to));
     return null;
+}
+
+/** An autolink's target as the rendered view has it: www. gets http://, an email mailto:. */
+function autolinkHref(text) {
+    if (/^www\./i.test(text)) return `http://${text}`;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(text) && text.includes('@')) return `mailto:${text}`;
+    return text;
 }
 
 const BULLETS = ['•', '◦', '▪'];
@@ -254,6 +269,8 @@ export function richDecorations(state, ranges = [{ from: 0, to: state.doc.length
     const out = [];
     const seen = new Set();
     const add = (spec) => {
+        // An empty mark (a link with no text) would throw when the decorations are built.
+        if (spec.kind === 'mark' && !(spec.to > spec.from)) return;
         const key = `${spec.kind}:${spec.from}:${spec.to}:${spec.className || ''}`;
         if (seen.has(key)) return;
         seen.add(key);
@@ -357,7 +374,7 @@ export function richDecorations(state, ranges = [{ from: 0, to: state.doc.length
                     case 'Autolink': {
                         const url = node.getChild('URL');
                         if (!url) return false;
-                        add({ kind: 'mark', from: url.from, to: url.to, className: 'cm-rich-link', href: doc.sliceString(url.from, url.to) });
+                        add({ kind: 'mark', from: url.from, to: url.to, className: 'cm-rich-link', href: autolinkHref(doc.sliceString(url.from, url.to)) });
                         if (!active(ref.from)) {
                             for (const mark of children(node, 'LinkMark')) hide(mark.from, mark.to);
                         }
@@ -365,8 +382,7 @@ export function richDecorations(state, ranges = [{ from: 0, to: state.doc.length
                     }
                     case 'URL': {
                         if (node.parent && LINK_PARENTS.has(node.parent.name)) return;
-                        const text = doc.sliceString(ref.from, ref.to);
-                        add({ kind: 'mark', from: ref.from, to: ref.to, className: 'cm-rich-link', href: /^www\./i.test(text) ? `http://${text}` : text });
+                        add({ kind: 'mark', from: ref.from, to: ref.to, className: 'cm-rich-link', href: autolinkHref(doc.sliceString(ref.from, ref.to)) });
                         return;
                     }
                     case 'ListMark': {
@@ -445,9 +461,6 @@ function tableCells(text) {
     return row.split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|'));
 }
 
-// Tables can only sit in these.
-const TABLE_CONTAINERS = new Set(['Document', 'Blockquote', 'BulletList', 'OrderedList', 'ListItem']);
-
 /**
  * The document's tables: { from, to (their whole lines), active (a cursor or selection touches
  * it), align: [null | 'left' | 'center' | 'right'], header: [cell], rows: [[cell]] }, cells as
@@ -458,7 +471,7 @@ export function richTables(state) {
     const tables = [];
     syntaxTree(state).iterate({
         enter(ref) {
-            if (ref.name !== 'Table') return TABLE_CONTAINERS.has(ref.name);
+            if (ref.name !== 'Table') return BLOCK_CONTAINERS.has(ref.name);
             const node = ref.node;
             const headerNode = node.getChild('TableHeader');
             const delimiter = node.getChildren('TableDelimiter').find(d => d.from > (headerNode ? headerNode.to : ref.from));
@@ -488,21 +501,43 @@ export function toggleTask(text, pos) {
     return { from: pos + 1, to: pos + 2, insert: marker[1] === ' ' ? 'x' : ' ' };
 }
 
-/** The document's headings, { from, level, text } (text without its markup), for #anchors. */
-export function headings(state) {
+// What a rendered heading's textContent leaves out: markup, raw HTML tags, images.
+const HEADING_DROPPED = new Set(['HeaderMark', 'QuoteMark', 'EmphasisMark', 'StrikethroughMark', 'CodeMark', 'LinkMark', 'LinkTitle', 'LinkLabel', 'HTMLTag', 'Comment', 'ProcessingInstruction', 'Image']);
+
+/**
+ * The document's headings, { from, level, text }, for #anchors: text as the rendered heading's
+ * textContent reads, with entities (&amp;) passed through `decodeEntity`.
+ */
+export function headings(state, decodeEntity = (entity) => entity) {
     const out = [];
-    const MARKUP = new Set(['HeaderMark', 'EmphasisMark', 'StrikethroughMark', 'CodeMark', 'LinkMark', 'URL', 'LinkTitle', 'LinkLabel']);
     syntaxTree(state).iterate({
         enter(ref) {
             const match = /^(?:ATX|Setext)Heading(\d)$/.exec(ref.name);
-            if (!match) return TABLE_CONTAINERS.has(ref.name);
+            if (!match) return BLOCK_CONTAINERS.has(ref.name);
             let text = '';
             let pos = ref.from;
             ref.node.toTree().iterate({
                 enter(child) {
-                    if (!MARKUP.has(child.name)) return;
-                    text += state.sliceDoc(pos, ref.from + child.from);
-                    pos = ref.from + child.to;
+                    const from = ref.from + child.from;
+                    let to = ref.from + child.to;
+                    // Inside what was already dropped.
+                    if (from < pos) return false;
+                    let replacement;
+                    if (child.name === 'Entity') {
+                        replacement = decodeEntity(state.sliceDoc(from, to));
+                    } else if (child.name === 'Escape') {
+                        replacement = state.sliceDoc(from + 1, to);
+                    } else if (child.name === 'URL' && child.node.parent && child.node.parent.name === 'Link') {
+                        // A link's (url "title") goes as a whole.
+                        replacement = '';
+                        to = ref.from + child.node.parent.to;
+                    } else if (HEADING_DROPPED.has(child.name)) {
+                        replacement = '';
+                    } else {
+                        return;
+                    }
+                    text += state.sliceDoc(pos, from) + replacement;
+                    pos = to;
                     return false;
                 },
             });

@@ -113,6 +113,32 @@ test('reference links, autolinks and bare URLs', () => {
     assert.deepEqual(auto.hidden, ['<', '>']);
 });
 
+test('links with no text get no (empty) mark, which CodeMirror would throw on', () => {
+    for (const marked of ['|x\n\n[](https://e.x) and [][ref]\n\n[ref]: https://r.x', 'x\n\n[](https://e.x) and [|][ref]\n\n[ref]: https://r.x']) {
+        const { state } = stateFor(marked);
+        const specs = cm.richDecorations(state).filter(spec => spec.to !== undefined);
+        assert.deepEqual(plain(specs.filter(spec => !(spec.to > spec.from))), [], marked);
+    }
+    assert.deepEqual(rich('|x\n\n[](https://e.x)').marks, []);
+});
+
+test('collapsed references, and definitions inside quotes and lists', () => {
+    const refs = rich('|x\n\n[Foo][] and [bar]\n\n> [foo]: https://f.example\n\n- [bar]: https://b.example');
+    assert.deepEqual(refs.marks, [
+        ['cm-rich-link', 'Foo', 'https://f.example'],
+        ['cm-rich-link', 'bar', 'https://b.example'],
+    ]);
+    assert.deepEqual(refs.hidden.slice(0, 4), ['[', '][]', '[', ']']);
+});
+
+test('email autolinks open as mailto:, as in the rendered view', () => {
+    assert.deepEqual(rich('|x\n\n<user@example.com> and me@example.org').marks, [
+        ['cm-rich-link', 'user@example.com', 'mailto:user@example.com'],
+        ['cm-rich-link', 'me@example.org', 'mailto:me@example.org'],
+    ]);
+    assert.deepEqual(rich('|x\n\n<mailto:a@b.c>').marks, [['cm-rich-link', 'mailto:a@b.c', 'mailto:a@b.c']]);
+});
+
 test('images: rendered under their markdown, cursor or not', () => {
     const off = rich('|x\n\n![Marky](img/marky.png)');
     assert.deepEqual(off.widgets, [{ type: 'image', src: 'img/marky.png', alt: 'Marky' }]);
@@ -230,6 +256,18 @@ test('headings lists each heading\'s text without its markup', () => {
         { from: 0, level: 1, text: 'Hello World' },
         { from: 19, level: 2, text: 'Sub code' },
         { from: 37, level: 2, text: 'Quoted' },
+    ]);
+});
+
+test('heading text reads as the rendered heading\'s textContent', () => {
+    const decode = (entity) => ({ '&amp;': '&', '&#65;': 'A' })[entity] || entity;
+    const { state } = stateFor('|# Hello &amp; friends &#65;\n\n## <em>html</em> ok\n\n## Picture ![x](p.png) end\n\n## \\*not em\\* <https://a.b>\n\n## [link](u "t") www.c.d');
+    assert.deepEqual(plain(cm.headings(state, decode)).map(h => h.text), [
+        'Hello & friends A',
+        'html ok',
+        'Picture  end',
+        '*not em* https://a.b',
+        'link www.c.d',
     ]);
 });
 
