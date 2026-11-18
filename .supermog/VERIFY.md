@@ -49,8 +49,20 @@ inputs:
 This is a map of the page, not a checklist. The repository's own tests (`npm test`) cover the
 parsing and markup helpers; this pass is about what a person sees.
 
-- **Drop zone.** The landing view: drop a file or folder on it, or use *Choose File*. The whole
-  zone is also a keyboard-reachable button.
+- **The homepage.** The landing view is the app: a headline, the drop zone, and in the header
+  *Docs*, *Download* and **Open a file**. Below the fold, feature cards (live reload, Claude Code,
+  the editor, tabs, privacy) linking into `/docs/`, then a *Download for Mac* strip. All of that
+  (`.marketing`) disappears once a document or the file list is showing, and comes back with
+  *Open another*; the header stays, with only *Open a file* (quieter, and gone while editing).
+  `/docs/` is its own pull request; until it lands those links 404 on a checkout without it.
+- **Drop anywhere.** A file or folder dropped anywhere on the page opens in place, with no
+  navigation: try a feature card below the fold, not the drop zone. Dragging over the page draws
+  a dashed outline around it. `browser_drop` onto `.feature` is the real test; failing that,
+  `browser_evaluate` can dispatch a `drop` whose `DataTransfer` holds a `File`. A drop into the
+  editor is the editor's; with unsaved changes a drop asks first.
+- **Open a file.** One click opens the picker: `showOpenFilePicker()` in Chromium, so the file
+  live-reloads straight away; the plain file input elsewhere. The drop zone and its *Choose File*
+  do the same, and the zone is a keyboard-reachable button.
 - **File list.** A dropped folder with several markdown files shows *Multiple markdown files
   found*, with a list to choose from and *Cancel*.
 - **Rendered view.** The markdown output, with relative images resolved from the dropped folder.
@@ -60,7 +72,8 @@ parsing and markup helpers; this pass is about what a person sees.
   styling (`browser_evaluate` can't switch it; use the browser's color-scheme emulation if it's
   available, otherwise say which scheme you saw).
 - **Narrow screens.** The layout is responsive; a change to layout deserves one look at a phone
-  width.
+  width. The homepage's header (logo, *Docs*, *Download*, *Open a file*) must fit in one row at
+  390 px, and the feature cards stack.
 
 ## Live reload (Chromium)
 
@@ -271,7 +284,8 @@ and committed, so the same server serves them. When a change touches `docs/`:
 ## Known quirks
 
 - The same `index.html` and `js/` are bundled into the macOS app (`scripts/build-frontend.mjs`
-  copies them into `dist/`). Code that checks for `window.__TAURI__` only runs in the app, so a
+  copies them into `dist/`), where `body.desktop` hides the homepage's sections and header links:
+  the app opens straight to the drop zone. Code that checks for `window.__TAURI__` only runs in the app, so a
   desktop-only path doing nothing in the browser is expected, not a finding.
 - `dist/` is build output for the app and is git-ignored. Never serve from it; serve the
   repository root.

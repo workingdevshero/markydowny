@@ -66,7 +66,7 @@ test('only desktop drops offer "Open all as tabs", which opens every file throug
     assert.equal(calls.length, 3, 'expected the definition plus the desktop and web callers');
     const desktopDrop = app.match(/async function handleDesktopDrop[\s\S]*?\n {4}}\n/)[0];
     assert.match(desktopDrop, /openAllAsTabs\(entries\.map\(entry => entry\.path\)\)/);
-    const webFolder = app.match(/async function handleFolder[\s\S]*?\n {4}}\n/)[0];
+    const webFolder = app.match(/async function readFolder[\s\S]*?\n {4}}\n/)[0];
     assert.doesNotMatch(webFolder, /openAllAsTabs/);
     const openAll = app.match(/function openAllAsTabs[\s\S]*?\n {4}}\n/)[0];
     assert.match(openAll, /invoke\('open_documents', \{ paths \}\)/);

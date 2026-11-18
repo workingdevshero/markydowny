@@ -8,7 +8,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 
 ## Features
 
-- 📤 **Drag & Drop**: Simply drag your markdown files or folders into the drop zone
+- 📤 **Drag & Drop**: drop markdown files or folders anywhere on the page, or click **Open a file** in the header
 - 📁 **Folder Support**: Drop entire folders containing markdown files
 - 📄 **Multiple File Selection**: When multiple markdown files are found, choose which one to view
 - 🖱️ **Click to Browse**: Alternative file selection via clicking
@@ -25,9 +25,9 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 
 1. Open `index.html` in your web browser
 2. Either:
-   - Drag and drop a `.md` or `.markdown` file into the drop zone
+   - Drag and drop a `.md` or `.markdown` file anywhere on the page
    - Drag and drop a folder containing markdown files
-   - Click the "Choose File" button to browse for a file
+   - Click **Open a file** in the header (or "Choose File") to browse for a file
 3. If you dropped a folder with multiple markdown files, select which one you want to view from the list
 4. Watch your markdown render beautifully!
 5. Use the fullscreen button (⛶) for distraction-free reading
