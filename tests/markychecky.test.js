@@ -242,9 +242,80 @@ test('issue and PR references in task text become links into the session\'s GitH
     assert.match(s, /\[other-org\/tools#5\]\(https:\/\/github\.com\/other-org\/tools\/issues\/5\)/);
 });
 
+test('a reference in parentheses links, but existing links and anchors are left alone', { skip: !hasPython }, () => {
+    const box = sandbox();
+    spawnSync('git', ['init', '-q', box.dir]);
+    spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+    hook(box, 'task', create('s1', 1, 'Merge Open Recent (#36), see [#9](https://x) and [top](#12)'));
+    const s = section(read(box), 's1');
+    assert.match(s, /Merge Open Recent \(\[#36\]\(https:\/\/github\.com\/acme\/widgets\/issues\/36\)\)/);
+    assert.match(s, /see \[#9\]\(https:\/\/x\) and \[top\]\(#12\)/);
+});
+
+test('a reference inside a link\'s text or a code span is left alone', { skip: !hasPython }, () => {
+    const box = sandbox();
+    spawnSync('git', ['init', '-q', box.dir]);
+    spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+    hook(box, 'task', create('s1', 1, 'Ship [Open Recent (#36)](https://github.com/acme/widgets/pull/36), [fix (widgets#19)](https://example.com) and `fixes (#40)`'));
+    const s = section(read(box), 's1');
+    assert.match(s, /Ship \[Open Recent \(#36\)\]\(https:\/\/github\.com\/acme\/widgets\/pull\/36\), \[fix \(widgets#19\)\]\(https:\/\/example\.com\) and `fixes \(#40\)`/);
+});
+
 test('references that can\'t be linked for sure stay plain text', { skip: !hasPython }, () => {
     const box = sandbox(); // not a git repo: no GitHub remote
     hook(box, 'task', create('s1', 1, 'See #7 and somerepo#8, issue#3, C# and [#9](https://x)'));
     const s = section(read(box), 's1');
     assert.match(s, /See #7 and somerepo#8, issue#3, C# and \[#9\]\(https:\/\/x\)/);
+});
+
+test('every place markychecky is documented says how to turn on the task list', () => {
+    const docs = {
+        'plugin README': path.join(plugin, 'README.md'),
+        'README': path.join(root, 'README.md'),
+        'Watching Claude Code page': path.join(root, 'docs', 'claude-code.md'),
+        'markychecky page': path.join(root, 'docs', 'markychecky.md'),
+    };
+    for (const [name, file] of Object.entries(docs)) {
+        const text = fs.readFileSync(file, 'utf8');
+        assert.match(text, /CLAUDE_CODE_ENABLE_TODO_TOOLS/, `${name} doesn't mention CLAUDE_CODE_ENABLE_TODO_TOOLS`);
+        assert.match(text, /claude plugin install markychecky --marketplace workingdevshero\/markydowny/, `${name} doesn't give the install command`);
+    }
+    // The markychecky page is published, and the README, the plugin README and the homepage link to it.
+    assert.ok(fs.existsSync(path.join(root, 'docs', 'markychecky', 'index.html')));
+    for (const file of [path.join(root, 'README.md'), path.join(plugin, 'README.md'), path.join(root, 'index.html')]) {
+        assert.match(fs.readFileSync(file, 'utf8'), /markydowny\.com\/docs\/markychecky\/|href="\/docs\/markychecky\/"/, `${file} doesn't link to the markychecky page`);
+    }
+});
+
+test('the markychecky page has every setup step an agent needs, each with a check', { skip: !hasPython }, () => {
+    const page = fs.readFileSync(path.join(root, 'docs', 'markychecky.md'), 'utf8');
+    for (const step of ['### 1. Check what you need', '### 2. Install the plugin', '### 3. Turn on the task list', '### 4. Start your sessions', '### 5. Watch the board']) {
+        assert.ok(page.includes(step), `missing "${step}"`);
+    }
+    // Steps 2 to 4 each end with a way to check them.
+    assert.equal((page.match(/^\*\*Check:\*\*/gm) || []).length, 3);
+    // The settings snippet in the page actually merges the setting into an existing file.
+    const snippet = page.match(/```bash\npython3 - <<'EOF'\n([\s\S]*?)\nEOF\n```/);
+    assert.ok(snippet, 'the settings snippet is missing');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-home-'));
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'opus', env: { FOO: 'bar' } }));
+    const run = spawnSync('python3', ['-'], { input: snippet[1], env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.deepEqual(settings, { model: 'opus', env: { FOO: 'bar', CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
+});
+
+test('a session in a git worktree is named after the repository, not the worktree folder', { skip: !hasPython }, () => {
+    const box = sandbox();
+    const repo = path.join(box.dir, 'widgets');
+    const tree = path.join(box.dir, 'wt-fix-login');
+    const g = (...args) => assert.equal(spawnSync('git', args, { encoding: 'utf8' }).status, 0, args.join(' '));
+    g('init', '-q', '-b', 'main', repo);
+    g('-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init');
+    g('-C', repo, 'worktree', 'add', '-q', '-b', 'fix/login', tree);
+    hook(box, 'task', { ...create('s1', 1, 'Fix the login'), cwd: tree });
+    hook(box, 'task', { ...create('s2', 1, 'Plan the release'), cwd: repo });
+    assert.match(section(read(box), 's1'), /^## widgets · fix\/login$/m);
+    assert.match(section(read(box), 's2'), /^## widgets · main$/m);
 });

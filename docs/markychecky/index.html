@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/markychecky.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>markychecky · Markydowny docs</title>
+    <meta name="description" content="markychecky is a free Claude Code plugin that keeps one live markdown board of what every Claude Code session is doing. Install it with one command, in the terminal or the Claude desktop app.">
+    <link rel="canonical" href="https://markydowny.com/docs/markychecky/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/markychecky/">
+    <meta property="og:title" content="markychecky · Markydowny docs">
+    <meta property="og:description" content="markychecky is a free Claude Code plugin that keeps one live markdown board of what every Claude Code session is doing. Install it with one command, in the terminal or the Claude desktop app.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a class="current-section" href="/docs/">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/markychecky/" aria-current="page">markychecky</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="markychecky">markychecky</h1>
+<p><strong>One live board of what every Claude Code session is doing.</strong></p>
+<p>Running three Claude Code sessions in three repos, you lose track: which one is waiting on you, which one finished, which one is about to start the same work as another. markychecky keeps one markdown file, <code>~/markychecky.md</code>, with a section for each session: what it&#39;s working on now and its checklist, ticked off as it goes. Open the file in Markydowny and it updates in front of you, highlighting each change.</p>
+<pre><code class="language-markdown">## markydowny · main
+
+**Now:** Signing the app
+
+- [x] Build a universal release
+- [ ] **Sign the app and its helpers**
+- [ ] Package and notarize the .dmg
+
+## web · feat/pricing
+
+**Now:** Writing the pricing page tests
+
+- [x] Add the pricing page
+- [ ] **Write the pricing page tests**
+</code></pre>
+<ul>
+<li><strong>Nothing to remember.</strong> Claude Code already keeps a task list as it works. A hook copies it to the board after every change, so sessions never have to remember to update it.</li>
+<li><strong>Each session owns its section.</strong> Sessions only ever rewrite their own section, and many sessions writing at once is safe. Anything you write between sections stays.</li>
+<li><strong>Clickable.</strong> Issue and pull request numbers like <code>#18</code> become links to the session&#39;s GitHub repository.</li>
+<li><strong>Agents can read it too.</strong> A session can read the board to see what the others are doing before it starts something.</li>
+<li><strong>Local and free.</strong> It&#39;s a small Python script and a markdown file on your machine. Nothing is sent anywhere.</li>
+</ul>
+<h2 id="set-it-up"><a class="heading-anchor" href="#set-it-up" aria-label="Link to this section">#</a>Set it up</h2>
+<blockquote>
+<p><strong>Setting this up with your AI agent?</strong> Give it this page, <a href="https://markydowny.com/docs/markychecky/">markydowny.com/docs/markychecky</a>, and ask it to set markychecky up for you. Everything it needs is in this section, and each step says how to check it worked. The page&#39;s source is plain markdown too, <a href="https://raw.githubusercontent.com/workingdevshero/markydowny/main/docs/markychecky.md">here</a>.</p>
+</blockquote>
+<p>markychecky works in Claude Code in the terminal, in the <strong>Code</strong> tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.</p>
+<h3 id="1-check-what-you-need"><a class="heading-anchor" href="#1-check-what-you-need" aria-label="Link to this section">#</a>1. Check what you need</h3>
+<pre><code class="language-bash">claude --version   # Claude Code
+python3 --version  # Python 3, which the plugin&#39;s hook runs on
+</code></pre>
+<p>On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>). Most Linux systems have it already. Without it, the plugin does nothing.</p>
+<h3 id="2-install-the-plugin"><a class="heading-anchor" href="#2-install-the-plugin" aria-label="Link to this section">#</a>2. Install the plugin</h3>
+<p>In a terminal:</p>
+<pre><code class="language-bash">claude plugin install markychecky --marketplace workingdevshero/markydowny
+</code></pre>
+<p>That adds the markydowny plugin marketplace and installs markychecky for your user, in every project. It needs Claude Code 2.1.292 or later; on an older version, run it in two steps:</p>
+<pre><code class="language-bash">claude plugin marketplace add workingdevshero/markydowny
+claude plugin install markychecky@markydowny
+</code></pre>
+<p>Inside a Claude Code session, the same thing is <code>/plugin marketplace add workingdevshero/markydowny</code>, then <code>/plugin install markychecky@markydowny</code>. In the desktop app&#39;s <strong>Code</strong> tab, after the marketplace is added, it&#39;s also in <strong>+</strong> &gt; <strong>Add plugins</strong>.</p>
+<p><strong>Check:</strong> <code>claude plugin list</code> shows <code>markychecky@markydowny</code>, enabled.</p>
+<h3 id="3-turn-on-the-task-list"><a class="heading-anchor" href="#3-turn-on-the-task-list" aria-label="Link to this section">#</a>3. Turn on the task list</h3>
+<p>markychecky reads each session&#39;s task list (Claude Code&#39;s <code>TaskCreate</code> and <code>TaskUpdate</code> tools), and some setups don&#39;t have those tools turned on. Add <code>CLAUDE_CODE_ENABLE_TODO_TOOLS</code> to the <code>env</code> block of <code>~/.claude/settings.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;env&quot;: {
+    &quot;CLAUDE_CODE_ENABLE_TODO_TOOLS&quot;: &quot;1&quot;
+  }
+}
+</code></pre>
+<p>If the file already has settings, add the <code>env</code> block alongside them, or add the one line to an <code>env</code> block that&#39;s already there. This command does that and keeps everything else in the file:</p>
+<pre><code class="language-bash">python3 - &lt;&lt;&#39;EOF&#39;
+import json, os
+path = os.path.expanduser(&quot;~/.claude/settings.json&quot;)
+settings = json.load(open(path)) if os.path.exists(path) else {}
+settings.setdefault(&quot;env&quot;, {})[&quot;CLAUDE_CODE_ENABLE_TODO_TOOLS&quot;] = &quot;1&quot;
+with open(path, &quot;w&quot;) as f:
+    json.dump(settings, f, indent=2)
+    f.write(&quot;\n&quot;)
+print(&quot;CLAUDE_CODE_ENABLE_TODO_TOOLS is on&quot;)
+EOF
+</code></pre>
+<p><strong>Check:</strong> <code>python3 -c &#39;import json,os; print(json.load(open(os.path.expanduser(&quot;~/.claude/settings.json&quot;)))[&quot;env&quot;])&#39;</code> prints <code>{&#39;CLAUDE_CODE_ENABLE_TODO_TOOLS&#39;: &#39;1&#39;}</code> along with any other variables you had.</p>
+<h3 id="4-start-your-sessions"><a class="heading-anchor" href="#4-start-your-sessions" aria-label="Link to this section">#</a>4. Start your sessions</h3>
+<p>Sessions you start from now on write to the board. A session that&#39;s already running picks it up when you restart it: quit, then <code>claude --resume</code> to carry on where you were.</p>
+<p><strong>Check:</strong> run one short session that makes a task list:</p>
+<pre><code class="language-bash">claude -p &quot;Make a task list with one task, &#39;Say hello to markychecky&#39;, mark it in progress, then mark it done.&quot;
+grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
+</code></pre>
+<p>The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day.</p>
+<h3 id="5-watch-the-board"><a class="heading-anchor" href="#5-watch-the-board" aria-label="Link to this section">#</a>5. Watch the board</h3>
+<p>Open <code>~/markychecky.md</code> in Markydowny and leave it open:</p>
+<ul>
+<li><strong>Mac app:</strong> if Markydowny is installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal. See <a href="/docs/install/">Install</a> for the app.</li>
+<li><strong>On the web:</strong> open <a href="https://markydowny.com">markydowny.com</a> in Chrome, Edge or another Chromium browser, click <strong>Choose File</strong> and pick <code>markychecky.md</code> in your home folder. Leave the tab open and it live-reloads.</li>
+</ul>
+<p>Any markdown viewer can show the board; Markydowny is the one that updates it live and highlights what changed.</p>
+<h2 id="questions-for-you-and-parked-work"><a class="heading-anchor" href="#questions-for-you-and-parked-work" aria-label="Link to this section">#</a>Questions for you, and parked work</h2>
+<p>A session&#39;s task list holds the steps of what it&#39;s doing now. Questions for you, work that&#39;s parked and things waiting on someone else don&#39;t fit there, and they matter more than any one session&#39;s checklist. Keep them in one section of your own at the top of the board:</p>
+<pre><code class="language-markdown"># Markychecky
+
+## Waiting on you
+
+- markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
+- web: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+</code></pre>
+<p>markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. Its own updates take a lock that a session&#39;s edits don&#39;t, though, so an edit made in the same instant as an update can be lost; the line below has sessions check theirs landed. To have your sessions use it, add this line to <code>~/.claude/CLAUDE.md</code>:</p>
+<pre><code>Put questions for me, and work that&#39;s parked or waiting on someone else, in the &quot;Waiting on you&quot; section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, read the file again just before each edit, check your line is there afterwards, and remove your lines once they&#39;re resolved.
+</code></pre>
+<h2 id="settings"><a class="heading-anchor" href="#settings" aria-label="Link to this section">#</a>Settings</h2>
+<p>Change these with <code>claude plugin configure markychecky</code>, or in <code>/plugin</code> &gt; <strong>Installed</strong> &gt; markychecky &gt; <strong>Configure options</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>file</code></td>
+<td><code>~/markychecky.md</code></td>
+<td>The board every session writes to</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td><code>true</code></td>
+<td>Open the board in Markydowny on a session&#39;s first write (macOS)</td>
+</tr>
+<tr>
+<td><code>idle_hours</code></td>
+<td><code>24</code></td>
+<td>How long an ended session&#39;s section stays on the board</td>
+</tr>
+</tbody></table>
+<h2 id="keep-it-up-to-date"><a class="heading-anchor" href="#keep-it-up-to-date" aria-label="Link to this section">#</a>Keep it up to date</h2>
+<p>Plugins from the markydowny marketplace don&#39;t update automatically unless you turn that on. Update by hand with:</p>
+<pre><code class="language-bash">claude plugin update markychecky@markydowny
+</code></pre>
+<p>Or turn on auto-update: <code>/plugin</code> &gt; <strong>Marketplaces</strong> &gt; markydowny &gt; <strong>Enable auto-update</strong>.</p>
+<h2 id="if-a-session-doesnt-show-up"><a class="heading-anchor" href="#if-a-session-doesnt-show-up" aria-label="Link to this section">#</a>If a session doesn&#39;t show up</h2>
+<ul>
+<li><strong>No task list.</strong> The session doesn&#39;t have <code>TaskCreate</code> and <code>TaskUpdate</code>. Check step 3, then restart the session.</li>
+<li><strong>Started before the install.</strong> Restart it with <code>claude --resume</code>.</li>
+<li><strong>No <code>python3</code>.</strong> <code>command -v python3</code> prints nothing. Install it (step 1).</li>
+<li><strong>A cloud session.</strong> Sessions in the cloud, including claude.ai/code in the browser, don&#39;t load plugins installed on your computer, so they can&#39;t write to its board.</li>
+<li><strong>Not Claude Code.</strong> markychecky is a Claude Code plugin. Claude chat on claude.ai and Cowork have their own, separate plugins.</li>
+<li><strong>Still nothing?</strong> The plugin logs problems to <code>~/.claude/plugins/data/markychecky-markydowny/markychecky.log</code>. A problem never interrupts your session; the board just doesn&#39;t update.</li>
+</ul>
+<h2 id="remove-it"><a class="heading-anchor" href="#remove-it" aria-label="Link to this section">#</a>Remove it</h2>
+<pre><code class="language-bash">claude plugin uninstall markychecky@markydowny
+</code></pre>
+<p>The board stays where it is; delete <code>~/markychecky.md</code> if you don&#39;t want it.</p>
+<h2 id="source"><a class="heading-anchor" href="#source" aria-label="Link to this section">#</a>Source</h2>
+<p>markychecky is open source, in the <a href="https://github.com/workingdevshero/markydowny/tree/main/plugins/markychecky">markydowny repository</a>. Its README covers how it works in more detail.</p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

@@ -2,7 +2,7 @@
 title: Watching Claude Code
 nav: Watching Claude Code
 order: 3
-description: Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.
+description: Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, open every file it edits automatically with a PostToolUse hook, and keep a live board of every session with markychecky.
 ---
 
 # Watching Claude Code
@@ -69,6 +69,16 @@ It needs `jq`. macOS 15 Sequoia and later include it; on macOS 12 to 14, install
 - Later edits to the same file re-open a file that's already showing. Markydowny keeps its one tab, live-reloads it, and with `-g` doesn't take focus.
 
 Without `-g`, every later edit would bring Markydowny to the front too.
+
+## Watch every session: markychecky
+
+When you have several Claude Code sessions going at once, the [markychecky](markychecky.md) plugin keeps one live board of what each of them is doing: a markdown file with a section per session, holding what it's working on now and its checklist, ticked off as it goes. Open the board in Markydowny and watch it update.
+
+```bash
+claude plugin install markychecky --marketplace workingdevshero/markydowny
+```
+
+Then turn on the task list it reads, which some setups leave off, by adding `"env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }` to `~/.claude/settings.json`, and restart your sessions. The [markychecky](markychecky.md) page has the full setup, step by step, with a check for each step.
 
 ## On the web
 
