@@ -257,6 +257,23 @@ jobs:
           # linuxdeploy is itself an AppImage, and the runners have no FUSE to mount it.
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: npx tauri build --bundles deb,appimage
+      # Tauri writes the semver into the .deb as is, and dpkg reads 1.2.0-beta.1 as 1.2.0 with
+      # revision beta.1, newer than 1.2.0, so the final release wouldn't upgrade a prerelease.
+      # 1.2.0~beta.1 sorts before 1.2.0, as the prerelease should.
+      - name: Give a prerelease .deb a version that sorts before the release
+        if: needs.version.outputs.prerelease == 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          deb_version=$(sed -e 's/-/~/' -e 's/-/./g' <<< "$VERSION")
+          for deb in src-tauri/target/release/bundle/deb/*.deb; do
+            tree=$(mktemp -d)
+            dpkg-deb -R "$deb" "$tree"
+            sed -i "s/^Version: .*/Version: $deb_version/" "$tree/DEBIAN/control"
+            dpkg-deb --root-owner-group -b "$tree" "$deb"
+            dpkg-deb -f "$deb" Version
+            rm -rf "$tree"
+          done
       # bugsplat-native looks for its helpers next to the executable (/usr/bin), where
       # tauri.conf.json's bundle.linux files put them. Without them crash reporting is off.
       # Tauri's .deb names its files usr/bin/…, with no leading ./ as dpkg-deb's own have.
@@ -349,15 +366,20 @@ jobs:
 
           `SHA256SUMS.txt` has a checksum for every file (`sha256sum -c SHA256SUMS.txt --ignore-missing`).
           NOTES
-      # Re-running a tag replaces the draft's files rather than making a second release. A
-      # release that's already published is left alone.
+      # Re-running a tag replaces the draft's files and notes rather than making a second
+      # release, so the notes say whether the .dmg now attached is notarized. A release that's
+      # already published is left alone.
       - name: Create or update the draft release
         run: |
           draft=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
             --jq ".[] | select(.tag_name == \"$TAG\") | .draft")
           if [[ "$draft" == "true" ]]; then
             gh release upload "$TAG" artifacts/* --clobber
-            echo "Replaced the files on the draft release for $TAG." >> "$GITHUB_STEP_SUMMARY"
+            # As gh release create --generate-notes does: these notes, then the generated ones.
+            { cat notes.md; echo; gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+                -f tag_name="$TAG" --jq .body; } > full-notes.md
+            gh release edit "$TAG" --notes-file full-notes.md
+            echo "Replaced the files and notes on the draft release for $TAG." >> "$GITHUB_STEP_SUMMARY"
           elif [[ -n "$draft" ]]; then
             echo "::error::$TAG is already published; delete the release to rebuild it."
             exit 1

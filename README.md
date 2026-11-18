@@ -145,13 +145,13 @@ Releases are built by [`.github/workflows/release.yml`](.github/workflows/releas
 
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and merge that.
 2. Tag the commit and push the tag: `git tag v1.2.0 && git push origin v1.2.0`. A tag with a hyphen
-   (`v1.2.0-beta.1`) makes a prerelease.
+   (`v1.2.0-beta.1`) makes a prerelease, whose `.deb` is versioned `1.2.0~beta.1` so the release upgrades it.
 3. The workflow checks the tag against the three files (`node scripts/check-release-version.mjs v1.2.0` does
    the same by hand), builds a universal `.dmg` for macOS and a `.deb` and `.AppImage` for Linux on x86_64
    and arm64, and attaches them, with `SHA256SUMS.txt`, to a **draft** release.
 4. Check the draft on the [releases page](https://github.com/workingdevshero/markydowny/releases), then publish it.
 
-Re-running the workflow for a tag replaces the draft's files. Builds have crash reporting on, and upload
+Re-running the workflow for a tag replaces the draft's files and notes. Builds have crash reporting on, and upload
 their symbols, when the `BUGSPLAT_DATABASE`, `SYMBOL_UPLOAD_CLIENT_ID` and `SYMBOL_UPLOAD_CLIENT_SECRET`
 repository secrets are set; the run summary says when they aren't. The Mac build is signed with the
 Developer ID and notarized when the `APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`,

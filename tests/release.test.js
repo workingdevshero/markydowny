@@ -140,6 +140,8 @@ test('the release job creates a draft, with checksums, and re-runs replace its f
     assert.match(release, /gh release create "\$TAG" artifacts\/\* --draft /);
     assert.match(release, /sha256sum -- \* > SHA256SUMS\.txt/);
     assert.match(release, /gh release upload "\$TAG" artifacts\/\* --clobber/);
+    // A re-run's notes follow its build (notarized or not), not the first run's.
+    assert.match(release, /gh release edit "\$TAG" --notes-file full-notes\.md/);
     assert.match(release, /glibc 2\.38/);
     assert.ok(!/gh release (edit|create)[^\n]*--draft=false/.test(workflow), 'nothing publishes the release');
 });
@@ -226,6 +228,17 @@ test('the release notes keep the quarantine workaround only for a build that isn
     assert.match(notarized, /signed and notarized by Apple/);
     assert.doesNotMatch(notarized, /xattr|quarantine/);
     assert.match(unnotarized, /xattr -dr com\.apple\.quarantine \/Applications\/Markydowny\.app/);
+});
+
+test('a prerelease .deb is versioned to sort before the release, as dpkg reads it', () => {
+    const repack = step(jobs().linux, 'Give a prerelease .deb a version that sorts before the release');
+    assert.match(repack, /if: needs\.version\.outputs\.prerelease == 'true'/);
+    assert.match(repack, /sed -i "s\/\^Version: \.\*\/Version: \$deb_version\/" "\$tree\/DEBIAN\/control"/);
+    const convert = /deb_version=\$\((.*)\)$/m.exec(repack)[1];
+    for (const [version, expected] of [['1.2.0-beta.1', '1.2.0~beta.1'], ['1.2.0-rc-1', '1.2.0~rc.1'], ['1.2.0-beta.1+abc', '1.2.0~beta.1+abc']]) {
+        const run = spawnSync('bash', ['-c', convert], { env: { ...process.env, VERSION: version }, encoding: 'utf8' });
+        assert.equal(run.stdout.trim(), expected, version);
+    }
 });
 
 test('the Linux packages carry the crash reporting helpers next to the executable', () => {
