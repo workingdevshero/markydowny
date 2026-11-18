@@ -13,6 +13,8 @@
 #                                   "Developer ID Application" identity
 #   --notary-profile <name>         NOTARY_PROFILE, default markydowny-notary: a keychain profile
 #                                   made once with `xcrun notarytool store-credentials`
+#   --notary-keychain <path>        NOTARY_KEYCHAIN, the keychain that profile is in, default the
+#                                   login keychain (CI keeps it in a temporary one)
 #   --no-notarize                   stop after packaging. With --identity - (ad-hoc), this tests
 #                                   the build, signing and packaging without a Developer ID
 #
@@ -27,6 +29,7 @@ dry_run=false
 arch=${ARCH:-universal}
 identity=${SIGNING_IDENTITY:-}
 notary_profile=${NOTARY_PROFILE:-markydowny-notary}
+notary_keychain=${NOTARY_KEYCHAIN:-}
 notarize=true
 
 log() { printf '%s\n' "$*" >&2; }
@@ -41,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --arch) arch=${2:?--arch needs a value}; shift ;;
         --identity) identity=${2:?--identity needs a value}; shift ;;
         --notary-profile) notary_profile=${2:?--notary-profile needs a value}; shift ;;
+        --notary-keychain) notary_keychain=${2:?--notary-keychain needs a value}; shift ;;
         --no-notarize) notarize=false ;;
         *) fail "unknown argument: $1" ;;
     esac
@@ -189,7 +193,10 @@ sign "$dmg"
 # --- Notarize -------------------------------------------------------------------------------
 
 if $notarize; then
-    step xcrun notarytool submit "$dmg" --keychain-profile "$notary_profile" --wait
+    # The ${a[@]+...} form: macOS's bash 3.2 calls an empty array unbound under set -u.
+    keychain=()
+    [[ -z "$notary_keychain" ]] || keychain=(--keychain "$notary_keychain")
+    step xcrun notarytool submit "$dmg" ${keychain[@]+"${keychain[@]}"} --keychain-profile "$notary_profile" --wait
     # Stapling attaches the ticket, so Gatekeeper accepts the app offline too.
     step xcrun stapler staple "$dmg"
     step xcrun stapler validate "$dmg"

@@ -153,8 +153,11 @@ Releases are built by [`.github/workflows/release.yml`](.github/workflows/releas
 
 Re-running the workflow for a tag replaces the draft's files. Builds have crash reporting on, and upload
 their symbols, when the `BUGSPLAT_DATABASE`, `SYMBOL_UPLOAD_CLIENT_ID` and `SYMBOL_UPLOAD_CLIENT_SECRET`
-repository secrets are set; the run summary says when they aren't. Pull requests that change the release
-build run the same builds without releasing, as does running the workflow by hand from the Actions tab.
+repository secrets are set; the run summary says when they aren't. The Mac build is signed with the
+Developer ID and notarized when the `APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`,
+`APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` secrets are set, and signed ad hoc and not
+notarized when they aren't (a fork's pull request); the run summary says which. Pull requests that change the
+release build run the same builds without releasing, as does running the workflow by hand from the Actions tab.
 
 To install a release on a Mac:
 
@@ -163,10 +166,9 @@ gh release download --repo workingdevshero/markydowny --pattern '*.dmg'
 open Markydowny-*-universal.dmg   # then drag Markydowny to Applications
 ```
 
-The Mac build isn't notarized yet, so macOS refuses to open a copy downloaded with a browser. `gh release
-download` doesn't set the quarantine flag that causes this; for a browser download, clear it once with
-`xattr -dr com.apple.quarantine /Applications/Markydowny.app`. The Linux packages need glibc 2.38 or newer
-(Ubuntu 24.04, Debian 13, Fedora 39 and later).
+The Mac build is notarized, so it opens like any other app, however it was downloaded. (A release built
+without the Apple secrets isn't, and its notes say how to open it.) The Linux packages need glibc 2.38 or
+newer (Ubuntu 24.04, Debian 13, Fedora 39 and later).
 
 ## Project Layout
 

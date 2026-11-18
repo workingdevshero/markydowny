@@ -140,7 +140,6 @@ test('the release job creates a draft, with checksums, and re-runs replace its f
     assert.match(release, /gh release create "\$TAG" artifacts\/\* --draft /);
     assert.match(release, /sha256sum -- \* > SHA256SUMS\.txt/);
     assert.match(release, /gh release upload "\$TAG" artifacts\/\* --clobber/);
-    assert.match(release, /xattr -dr com\.apple\.quarantine \/Applications\/Markydowny\.app/);
     assert.match(release, /glibc 2\.38/);
     assert.ok(!/gh release (edit|create)[^\n]*--draft=false/.test(workflow), 'nothing publishes the release');
 });
@@ -149,6 +148,7 @@ test('the builds are the ones the release promises', () => {
     const { mac, linux, version } = jobs();
     assert.match(version, /node scripts\/check-release-version\.mjs "\$GITHUB_REF_NAME"/);
     assert.match(mac, /runs-on: macos-latest/);
+    assert.match(mac, /scripts\/release-mac\.sh --arch universal --identity "\$SIGNING_IDENTITY" --notary-profile markydowny-notary\n/);
     assert.match(mac, /scripts\/release-mac\.sh --arch universal --identity - --no-notarize/);
     assert.match(linux, /runner: ubuntu-24\.04\n/);
     assert.match(linux, /runner: ubuntu-24\.04-arm\n/);
@@ -168,6 +168,64 @@ test('the database name is never echoed or written anywhere but the build enviro
         if (!/BUGSPLAT_DATABASE/.test(line)) continue;
         assert.doesNotMatch(line, /\b(echo|printf|cat)\b[^|]*\$\{?BUGSPLAT_DATABASE/, line);
     }
+});
+
+/** The run script of the step named `name` in `job`'s text. */
+function step(job, name) {
+    const text = job.split(`- name: ${name}\n`)[1];
+    assert.ok(text, `no step named ${name}`);
+    return text.split(/^ {6}- /m)[0];
+}
+
+test('the Mac build is signed with the Developer ID and notarized when the Apple secrets are set', () => {
+    const { mac } = jobs();
+    const setUp = step(mac, 'Set up signing');
+    for (const name of ['APPLE_CERTIFICATE_P12', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_KEY_P8', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER_ID']) {
+        assert.match(setUp, new RegExp(`${name}: \\$\\{\\{ secrets\\.${name} \\}\\}`), name);
+    }
+    // Without any of them (a fork's PR) the build is ad hoc, and the summary says so.
+    assert.match(setUp, /echo "notarized=false"/);
+    assert.match(setUp, /\*\*not notarized\*\*/);
+    // A temporary keychain with a random, masked password, which codesign can use unprompted.
+    assert.match(setUp, /password=\$\(openssl rand -base64 32\)\n\s*echo "::add-mask::\$password"/);
+    assert.match(setUp, /security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "\$password" "\$keychain"/);
+    assert.match(setUp, /security list-keychains -d user -s "\$keychain"/);
+    // The identity is the certificate's SHA-1, masked before anything can print it.
+    assert.match(setUp, /security find-identity -v -p codesigning "\$keychain"/);
+    assert.ok(setUp.indexOf('echo "::add-mask::$ids"') < setUp.indexOf('echo "identity=$ids"'));
+    assert.match(setUp, /xcrun notarytool store-credentials markydowny-notary --key "\$p8" .*\n.* --keychain "\$keychain"/);
+    assert.match(step(mac, 'Build, sign and package'), /NOTARY_KEYCHAIN: \$\{\{ steps\.signing\.outputs\.keychain \}\}/);
+    const check = step(mac, 'Check the signature and notarization');
+    assert.match(check, /^ {8}if: steps\.signing\.outputs\.notarized == 'true'$/m);
+    assert.match(check, /spctl --assess --type open --context context:primary-signature -v "\$dmg"/);
+    assert.match(check, /xcrun stapler validate "\$dmg"/);
+    assert.match(check, /spctl --assess -v "\$mount"\/\*\.app/);
+    assert.match(check, /signed and notarized/);
+    // The keychain and the key files are deleted even when a step before fails.
+    const cleanUp = step(mac, 'Clean up signing');
+    assert.match(cleanUp, /^ {8}if: always\(\)$/m);
+    assert.match(cleanUp, /security delete-keychain "\$RUNNER_TEMP\/markydowny-signing\.keychain-db"/);
+    assert.match(cleanUp, /rm -f "\$RUNNER_TEMP\/developer-id\.p12" "\$RUNNER_TEMP\/notary-key\.p8"/);
+    assert.match(mac, /^ {6}notarized: \$\{\{ steps\.signing\.outputs\.notarized \}\}$/m);
+});
+
+test('the Apple secrets are never printed, only written to the files the clean-up deletes', () => {
+    for (const line of workflow.split('\n')) {
+        if (!/\$\{?APPLE_/.test(line)) continue;
+        assert.doesNotMatch(line, /\becho\b[^|]*\$\{?APPLE_/, line);
+        if (/\b(printf|cat)\b/.test(line)) assert.match(line, /> "\$p8"$/, line);
+    }
+});
+
+test('the release notes keep the quarantine workaround only for a build that isn\'t notarized', () => {
+    const notes = step(jobs().release, 'Release notes');
+    assert.match(notes, /NOTARIZED: \$\{\{ needs\.mac\.outputs\.notarized \}\}/);
+    const [notarized, rest] = notes.split(/^ {10}else$/m);
+    const [unnotarized] = rest.split(/^ {10}fi$/m);
+    assert.match(notarized, /if \[\[ "\$NOTARIZED" == "true" \]\]/);
+    assert.match(notarized, /signed and notarized by Apple/);
+    assert.doesNotMatch(notarized, /xattr|quarantine/);
+    assert.match(unnotarized, /xattr -dr com\.apple\.quarantine \/Applications\/Markydowny\.app/);
 });
 
 test('the Linux packages carry the crash reporting helpers next to the executable', () => {
