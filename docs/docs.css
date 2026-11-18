@@ -360,6 +360,17 @@ body {
     border-radius: 12px;
 }
 
+.docs-content .docs-video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    margin: 1.5em 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+}
+
 .docs-content hr {
     border: 0;
     border-top: 1px solid var(--border);

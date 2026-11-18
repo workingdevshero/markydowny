@@ -345,6 +345,17 @@ jobs:
             echo "::error::Two release files have the same name:"; find . -mindepth 2 -type f; exit 1
           fi
           ls -l
+      # markydowny.com's download links use releases/latest/download/<name>, which needs a name
+      # without the version. Each glob must match exactly one file, or cp fails the run.
+      - name: Add fixed-name copies for the download page
+        working-directory: artifacts
+        run: |
+          cp Markydowny-*-universal.dmg Markydowny-mac.dmg
+          cp Markydowny_*_amd64.deb markydowny-linux-x86_64.deb
+          cp Markydowny_*_arm64.deb markydowny-linux-arm64.deb
+          cp Markydowny_*_amd64.AppImage Markydowny-linux-x86_64.AppImage
+          cp Markydowny_*_aarch64.AppImage Markydowny-linux-arm64.AppImage
+          ls -l
       - name: Checksums
         working-directory: artifacts
         run: |

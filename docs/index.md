@@ -26,9 +26,9 @@ In Chrome, Edge and other Chromium browsers, a file you choose or drop keeps upd
 
 ## In the Mac app
 
-[Install the app](install.md), then open markdown files the way you open anything else on a Mac:
+[Download the app](install.md), then open markdown files the way you open anything else on a Mac:
 
-- double-click a `.md`, `.markdown`, `.mdown`, `.mkd` or `.mkdn` file in Finder (after making Markydowny the default, see [Install](install.md#make-it-the-default-for-markdown)),
+- double-click a `.md`, `.markdown`, `.mdown`, `.mkd` or `.mkdn` file in Finder (after making Markydowny the default, see [Download](install.md#make-it-the-default-for-markdown)),
 - drag files or folders onto a Markydowny window or its Dock icon,
 - use **File > Open…** (<kbd>⌘O</kbd>), or
 - from a terminal: `open -a Markydowny README.md`.

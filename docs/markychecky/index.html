@@ -39,7 +39,7 @@
                 <li><a href="/docs/markychecky/" aria-current="page">markychecky</a></li>
                 <li><a href="/docs/editor/">Editor</a></li>
                 <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
-                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/install/">Download</a></li>
                 <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
                 <li><a href="/docs/privacy/">Privacy</a></li>
                 <li><a href="/docs/faq/">FAQ</a></li>
@@ -47,24 +47,14 @@
         </nav>
         <main class="docs-content" id="content">
 <h1 id="markychecky">markychecky</h1>
+<blockquote>
+<p><strong>Setting this up with your AI agent?</strong> Give it this page, <a href="https://markydowny.com/docs/markychecky/">markydowny.com/docs/markychecky</a>, and ask it to set markychecky up for you. Everything it needs is in <strong>Set it up</strong> below, and each step says how to check it worked. The page&#39;s source is plain markdown too, <a href="https://raw.githubusercontent.com/workingdevshero/markydowny/main/docs/markychecky.md">here</a>.</p>
+</blockquote>
 <p><strong>One live board of what every Claude Code session is doing.</strong></p>
 <p>Running three Claude Code sessions in three repos, you lose track: which one is waiting on you, which one finished, which one is about to start the same work as another. markychecky keeps one markdown file, <code>~/markychecky.md</code>, with a section for each session: what it&#39;s working on now and its checklist, ticked off as it goes. Open the file in Markydowny and it updates in front of you, highlighting each change.</p>
-<pre><code class="language-markdown">## markydowny · main
-
-**Now:** Signing the app
-
-- [x] Build a universal release
-- [ ] **Sign the app and its helpers**
-- [ ] Package and notarize the .dmg
-
-## web · feat/pricing
-
-**Now:** Writing the pricing page tests
-
-- [x] Add the pricing page
-- [ ] **Write the pricing page tests**
-</code></pre>
-<ul>
+<video class="docs-video" src="/docs/media/markychecky-board.mp4" poster="/docs/media/markychecky-board-poster.jpg" autoplay muted loop playsinline aria-label="A markychecky board in Markydowny: three agent sessions and a person tick off tasks, change what they're working on, and add a question to Waiting on you, each change highlighted as it lands.">
+  <a href="/docs/media/markychecky-board.mp4">Watch a markychecky board update live (21 seconds)</a>
+</video><ul>
 <li><strong>Nothing to remember.</strong> Claude Code already keeps a task list as it works. A hook copies it to the board after every change, so sessions never have to remember to update it.</li>
 <li><strong>Each session owns its section.</strong> Sessions only ever rewrite their own section, and many sessions writing at once is safe. Anything you write between sections stays.</li>
 <li><strong>Clickable.</strong> Issue and pull request numbers like <code>#18</code> become links to the session&#39;s GitHub repository.</li>
@@ -72,9 +62,6 @@
 <li><strong>Local and free.</strong> It&#39;s a small Python script and a markdown file on your machine. Nothing is sent anywhere.</li>
 </ul>
 <h2 id="set-it-up"><a class="heading-anchor" href="#set-it-up" aria-label="Link to this section">#</a>Set it up</h2>
-<blockquote>
-<p><strong>Setting this up with your AI agent?</strong> Give it this page, <a href="https://markydowny.com/docs/markychecky/">markydowny.com/docs/markychecky</a>, and ask it to set markychecky up for you. Everything it needs is in this section, and each step says how to check it worked. The page&#39;s source is plain markdown too, <a href="https://raw.githubusercontent.com/workingdevshero/markydowny/main/docs/markychecky.md">here</a>.</p>
-</blockquote>
 <p>markychecky works in Claude Code in the terminal, in the <strong>Code</strong> tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.</p>
 <h3 id="1-check-what-you-need"><a class="heading-anchor" href="#1-check-what-you-need" aria-label="Link to this section">#</a>1. Check what you need</h3>
 <pre><code class="language-bash">claude --version   # Claude Code
@@ -122,7 +109,7 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 <h3 id="5-watch-the-board"><a class="heading-anchor" href="#5-watch-the-board" aria-label="Link to this section">#</a>5. Watch the board</h3>
 <p>Open <code>~/markychecky.md</code> in Markydowny and leave it open:</p>
 <ul>
-<li><strong>Mac app:</strong> if Markydowny is installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal. See <a href="/docs/install/">Install</a> for the app.</li>
+<li><strong>Mac app:</strong> <a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-mac.dmg">download Markydowny for Mac</a> (signed and notarized; the <a href="/docs/install/">Download</a> page has Linux too). Once it&#39;s installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal.</li>
 <li><strong>On the web:</strong> open <a href="https://markydowny.com">markydowny.com</a> in Chrome, Edge or another Chromium browser, click <strong>Choose File</strong> and pick <code>markychecky.md</code> in your home folder. Leave the tab open and it live-reloads.</li>
 </ul>
 <p>Any markdown viewer can show the board; Markydowny is the one that updates it live and highlights what changed.</p>

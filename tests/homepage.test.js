@@ -31,7 +31,7 @@ test('the homepage sections around the drop zone are marked as marketing', () =>
 
     const strip = main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/);
     assert.ok(strip, 'a download strip, marked as marketing');
-    assert.match(strip[0], /href="\/docs\/install\/"[^>]*>Download for Mac</);
+    assert.match(strip[0], /href="https:\/\/github\.com\/workingdevshero\/markydowny\/releases\/latest\/download\/Markydowny-mac\.dmg"[^>]*>Download for Mac</);
     assert.match(strip[0], /href="\/docs\/"/);
 
     // Every section in <main> other than the file list is marketing.

@@ -7,26 +7,15 @@ description: markychecky is a free Claude Code plugin that keeps one live markdo
 
 # markychecky
 
+> **Setting this up with your AI agent?** Give it this page, [markydowny.com/docs/markychecky](https://markydowny.com/docs/markychecky/), and ask it to set markychecky up for you. Everything it needs is in **Set it up** below, and each step says how to check it worked. The page's source is plain markdown too, [here](https://raw.githubusercontent.com/workingdevshero/markydowny/main/docs/markychecky.md).
+
 **One live board of what every Claude Code session is doing.**
 
 Running three Claude Code sessions in three repos, you lose track: which one is waiting on you, which one finished, which one is about to start the same work as another. markychecky keeps one markdown file, `~/markychecky.md`, with a section for each session: what it's working on now and its checklist, ticked off as it goes. Open the file in Markydowny and it updates in front of you, highlighting each change.
 
-```markdown
-## markydowny · main
-
-**Now:** Signing the app
-
-- [x] Build a universal release
-- [ ] **Sign the app and its helpers**
-- [ ] Package and notarize the .dmg
-
-## web · feat/pricing
-
-**Now:** Writing the pricing page tests
-
-- [x] Add the pricing page
-- [ ] **Write the pricing page tests**
-```
+<video class="docs-video" src="/docs/media/markychecky-board.mp4" poster="/docs/media/markychecky-board-poster.jpg" autoplay muted loop playsinline aria-label="A markychecky board in Markydowny: three agent sessions and a person tick off tasks, change what they're working on, and add a question to Waiting on you, each change highlighted as it lands.">
+  <a href="/docs/media/markychecky-board.mp4">Watch a markychecky board update live (21 seconds)</a>
+</video>
 
 - **Nothing to remember.** Claude Code already keeps a task list as it works. A hook copies it to the board after every change, so sessions never have to remember to update it.
 - **Each session owns its section.** Sessions only ever rewrite their own section, and many sessions writing at once is safe. Anything you write between sections stays.
@@ -35,8 +24,6 @@ Running three Claude Code sessions in three repos, you lose track: which one is 
 - **Local and free.** It's a small Python script and a markdown file on your machine. Nothing is sent anywhere.
 
 ## Set it up
-
-> **Setting this up with your AI agent?** Give it this page, [markydowny.com/docs/markychecky](https://markydowny.com/docs/markychecky/), and ask it to set markychecky up for you. Everything it needs is in this section, and each step says how to check it worked. The page's source is plain markdown too, [here](https://raw.githubusercontent.com/workingdevshero/markydowny/main/docs/markychecky.md).
 
 markychecky works in Claude Code in the terminal, in the **Code** tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.
 
@@ -114,7 +101,7 @@ The board has a section for that session, with the task ticked. A session marked
 
 Open `~/markychecky.md` in Markydowny and leave it open:
 
-- **Mac app:** if Markydowny is installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal. See [Install](install.md) for the app.
+- **Mac app:** [download Markydowny for Mac](https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-mac.dmg) (signed and notarized; the [Download](install.md) page has Linux too). Once it's installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal.
 - **On the web:** open [markydowny.com](https://markydowny.com) in Chrome, Edge or another Chromium browser, click **Choose File** and pick `markychecky.md` in your home folder. Leave the tab open and it live-reloads.
 
 Any markdown viewer can show the board; Markydowny is the one that updates it live and highlights what changed.

@@ -46,6 +46,8 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 
 The same viewer ships as a small native app built with [Tauri](https://tauri.app).
 
+**[Download it from markydowny.com](https://markydowny.com/docs/install/)**: a signed, notarized `.dmg` for Mac, and `.deb` and `.AppImage` packages for Linux.
+
 - 🖱️ **Double-click to open**: registers as a viewer for `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`
 - 🗂️ **Documents open as tabs**: open several files at once, or follow a link to another `.md` file, and
   each gets a native macOS tab. Opening a file that is already open reuses its tab. Drag tabs between
