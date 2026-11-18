@@ -159,8 +159,8 @@ export function renderPage(page, pages) {
             <span>Markydowny</span>
         </a>
         <nav class="topbar-nav" aria-label="Site">
-            <a href="/docs/" aria-current="true">Docs</a>
-            <a href="/docs/install/">Download</a>
+            <a class="current-section" href="/docs/"${page.slug === 'index' ? ' aria-current="page"' : ''}>Docs</a>
+            <a href="/docs/install/"${page.slug === 'install' ? ' aria-current="page"' : ''}>Download</a>
             <a class="btn btn-primary" href="/">Open a file</a>
         </nav>
     </header>

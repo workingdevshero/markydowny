@@ -34,6 +34,9 @@ test('a sample page renders its title, description, canonical URL, nav and headi
     // The header: logo home, Docs, Download and Open a file.
     assert.match(html, /<a class="brand" href="\/">/);
     assert.match(html, /<a href="\/docs\/install\/">Download<\/a>/);
+    // Only the page a header link points at is marked current.
+    assert.match(html, /<a class="current-section" href="\/docs\/">Docs<\/a>/);
+    assert.match(outputs.get('docs/index.html'), /<a class="current-section" href="\/docs\/" aria-current="page">Docs<\/a>/);
     assert.match(html, /<a class="btn btn-primary" href="\/">Open a file<\/a>/);
 
     assert.match(html, /<h1 id="live-reload">Live reload<\/h1>/);

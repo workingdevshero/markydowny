@@ -25,7 +25,7 @@
             <span>Markydowny</span>
         </a>
         <nav class="topbar-nav" aria-label="Site">
-            <a href="/docs/" aria-current="true">Docs</a>
+            <a class="current-section" href="/docs/">Docs</a>
             <a href="/docs/install/">Download</a>
             <a class="btn btn-primary" href="/">Open a file</a>
         </nav>
@@ -63,7 +63,11 @@
 <h2 id="which-files-can-it-open"><a class="heading-anchor" href="#which-files-can-it-open" aria-label="Link to this section">#</a>Which files can it open?</h2>
 <p><code>.md</code> and <code>.markdown</code> files, plain <code>.txt</code> files and other text files. The Mac app registers as a viewer for <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code> and <code>.mkdn</code>.</p>
 <h2 id="does-it-run-scripts-or-html-in-my-markdown"><a class="heading-anchor" href="#does-it-run-scripts-or-html-in-my-markdown" aria-label="Link to this section">#</a>Does it run scripts or HTML in my markdown?</h2>
-<p>In the Mac app, scripts in a markdown file never run: the app&#39;s Content Security Policy blocks them.</p>
+<p>HTML in a markdown file is rendered in both.</p>
+<ul>
+<li><strong>In the Mac app</strong>, scripts never run: the app&#39;s Content Security Policy blocks both <code>&lt;script&gt;</code> elements and inline event handlers (<code>onclick=…</code>).</li>
+<li><strong>On the web</strong>, <code>&lt;script&gt;</code> elements don&#39;t run, but inline event handlers in the file&#39;s HTML do, and its HTML can load remote resources. Only open files you trust there. See <a href="/docs/privacy/#on-the-web">Privacy</a>.</li>
+</ul>
 <h2 id="is-there-a-windows-or-linux-app"><a class="heading-anchor" href="#is-there-a-windows-or-linux-app" aria-label="Link to this section">#</a>Is there a Windows or Linux app?</h2>
 <p>Not packaged yet. The app builds on Linux from source, and the website works in any browser on any system. See <a href="/docs/install/">Install</a>.</p>
 <h2 id="why-cant-i-find-it-in-the-mac-app-store"><a class="heading-anchor" href="#why-cant-i-find-it-in-the-mac-app-store" aria-label="Link to this section">#</a>Why can&#39;t I find it in the Mac App Store?</h2>

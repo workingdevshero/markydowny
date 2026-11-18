@@ -25,7 +25,7 @@
             <span>Markydowny</span>
         </a>
         <nav class="topbar-nav" aria-label="Site">
-            <a href="/docs/" aria-current="true">Docs</a>
+            <a class="current-section" href="/docs/" aria-current="page">Docs</a>
             <a href="/docs/install/">Download</a>
             <a class="btn btn-primary" href="/">Open a file</a>
         </nav>
@@ -72,9 +72,9 @@
 <ul>
 <li>With one markdown file in the folder, it opens straight away.</li>
 <li>With several, Markydowny lists them (<em>Multiple markdown files found</em>) so you can pick one. <strong>Cancel</strong> goes back to the drop zone.</li>
-<li>In the Mac app, the list also offers <strong>Open all as tabs</strong> and <strong>Watch this folder</strong>, which follows whichever file changes next. See <a href="/docs/claude-code/#watch-this-folder">Watching Claude Code</a>.</li>
+<li>In the Mac app, the list also offers <strong>Open all <em>N</em> as tabs</strong> (for up to 50 files) and <strong>Watch this folder</strong>, which follows whichever file changes next. See <a href="/docs/claude-code/#watch-this-folder">Watching Claude Code</a>.</li>
 </ul>
-<p>Hidden folders, <code>node_modules</code> and <code>target</code> are skipped.</p>
+<p>The Mac app skips hidden folders, <code>node_modules</code> and <code>target</code>. The website reads every folder inside the one you drop, those included.</p>
 <h2 id="relative-images-and-links"><a class="heading-anchor" href="#relative-images-and-links" aria-label="Link to this section">#</a>Relative images and links</h2>
 <p>Images with relative paths, like <code>![diagram](img/diagram.png)</code> or <code>../assets/logo.svg</code>, are found next to the document:</p>
 <ul>

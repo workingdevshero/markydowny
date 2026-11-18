@@ -43,9 +43,9 @@ Drop a whole folder to read the markdown inside it.
 
 - With one markdown file in the folder, it opens straight away.
 - With several, Markydowny lists them (*Multiple markdown files found*) so you can pick one. **Cancel** goes back to the drop zone.
-- In the Mac app, the list also offers **Open all as tabs** and **Watch this folder**, which follows whichever file changes next. See [Watching Claude Code](claude-code.md#watch-this-folder).
+- In the Mac app, the list also offers **Open all *N* as tabs** (for up to 50 files) and **Watch this folder**, which follows whichever file changes next. See [Watching Claude Code](claude-code.md#watch-this-folder).
 
-Hidden folders, `node_modules` and `target` are skipped.
+The Mac app skips hidden folders, `node_modules` and `target`. The website reads every folder inside the one you drop, those included.
 
 ## Relative images and links
 

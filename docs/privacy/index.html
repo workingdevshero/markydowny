@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/privacy.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
     <title>Privacy · Markydowny docs</title>
-    <meta name="description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or network requests.">
+    <meta name="description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or tracking.">
     <link rel="canonical" href="https://markydowny.com/docs/privacy/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/privacy/">
     <meta property="og:title" content="Privacy · Markydowny docs">
-    <meta property="og:description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or network requests.">
+    <meta property="og:description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or tracking.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -25,7 +25,7 @@
             <span>Markydowny</span>
         </a>
         <nav class="topbar-nav" aria-label="Site">
-            <a href="/docs/" aria-current="true">Docs</a>
+            <a class="current-section" href="/docs/">Docs</a>
             <a href="/docs/install/">Download</a>
             <a class="btn btn-primary" href="/">Open a file</a>
         </nav>
@@ -51,14 +51,14 @@
 <ul>
 <li>The page reads the files you choose or drop <strong>in your browser</strong>. Nothing is uploaded: there&#39;s no backend at all, just static files served by GitHub Pages.</li>
 <li>There are <strong>no analytics</strong>, no cookies, no tracking pixels, no web fonts and no third-party scripts. Once the page has loaded it makes no network requests of its own, so it works offline.</li>
-<li>The one exception is a document&#39;s own content: an image in your markdown with a web address (<code>![](https://…)</code>) is loaded from that address, as in any markdown viewer.</li>
+<li>The exception is a document&#39;s own content. The common case is an image in your markdown with a web address (<code>![](https://…)</code>), which is loaded from that address, as in any markdown viewer. Raw HTML in the file is rendered too, so it can also load remote resources (HTML images, frames, video) and its inline event handlers (<code>onerror=…</code>) run. <code>&lt;script&gt;</code> elements in the file don&#39;t run. Only open files you trust, or use the Mac app.</li>
 <li>Live reload and saving use your browser&#39;s File System Access API. The browser asks you before the page can write a file, and the permission only covers the file you opened.</li>
 <li>The page remembers one setting on your device: whether <a href="/docs/live-reload/#follow-and-resume">Follow</a> is on.</li>
 </ul>
 <p>GitHub Pages, which hosts the site, keeps standard web server logs (such as your IP address) when you load the page. That&#39;s the only party involved.</p>
 <h2 id="in-the-mac-app"><a class="heading-anchor" href="#in-the-mac-app" aria-label="Link to this section">#</a>In the Mac app</h2>
 <ul>
-<li>The app reads and writes files <strong>on your Mac</strong> and nowhere else. Apart from crash reports (below), it makes no network requests of its own: no analytics, no update checks, no accounts. As on the web, images a document links to by web address are loaded from there.</li>
+<li>The app reads and writes files <strong>on your Mac</strong> and nowhere else. Apart from crash reports (below), it makes no network requests of its own: no analytics, no update checks, no accounts. As on the web, images a document links to by web address are loaded from there. The app&#39;s Content Security Policy blocks everything else a document could load or run: scripts, inline event handlers, frames and media.</li>
 <li>A window may only write the document it shows, and only when you save.</li>
 <li>Scripts embedded in a markdown file never run: the app has a strict Content Security Policy.</li>
 <li>Links to websites open in your browser, not in the app. A link to any other kind of local file is shown in Finder rather than opened, so a document can&#39;t trick a click into running a program.</li>

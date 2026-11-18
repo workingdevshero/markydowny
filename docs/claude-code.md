@@ -59,16 +59,16 @@ After every `Edit`, `Write` or `MultiEdit`, Claude Code runs the command with th
 
 The trailing `true` means the hook never reports a failure back to Claude, even for files it skips.
 
-It needs `jq`: recent versions of macOS include it, or install it with `brew install jq`.
+It needs `jq`. macOS 15 Sequoia and later include it; on macOS 12 to 14, install it first with `brew install jq`. Without `jq` the hook still reports success, so nothing opens and nothing says why.
 
 ### Why `open -g`
 
-`-g` opens the file *in the background*: Markydowny shows it, but your terminal stays in front, so you can keep typing to Claude.
+`-g` asks macOS not to bring Markydowny to the front, so your terminal stays in front while Claude keeps editing.
 
-- The first edit to a file opens it, in a new tab if Markydowny already has a window open.
-- Later edits to the same file re-open a file that's already showing. Markydowny keeps its one tab, live-reloads it, and doesn't take focus.
+- The first edit to a file opens it, in a new tab if Markydowny already has a window open. Opening a new file still brings Markydowny forward, `-g` or not.
+- Later edits to the same file re-open a file that's already showing. Markydowny keeps its one tab, live-reloads it, and with `-g` doesn't take focus.
 
-Without `-g`, every edit would bring Markydowny to the front.
+Without `-g`, every later edit would bring Markydowny to the front too.
 
 ## On the web
 

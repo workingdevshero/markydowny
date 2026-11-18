@@ -41,7 +41,10 @@ No. Only the text you changed is different; line endings, spacing and everything
 
 ## Does it run scripts or HTML in my markdown?
 
-In the Mac app, scripts in a markdown file never run: the app's Content Security Policy blocks them.
+HTML in a markdown file is rendered in both.
+
+- **In the Mac app**, scripts never run: the app's Content Security Policy blocks both `<script>` elements and inline event handlers (`onclick=…`).
+- **On the web**, `<script>` elements don't run, but inline event handlers in the file's HTML do, and its HTML can load remote resources. Only open files you trust there. See [Privacy](privacy.md#on-the-web).
 
 ## Is there a Windows or Linux app?
 

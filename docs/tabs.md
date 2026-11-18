@@ -24,7 +24,7 @@ The tab's title is the document's name. Files that share a name are told apart b
 
 ## Open all as tabs
 
-Drop a folder with several markdown files, and the list of files offers **Open all as tabs**: each file opens in a tab of its own.
+Drop a folder with several markdown files, and the list of files offers **Open all *N* as tabs**, where *N* is the number of files: each file opens in a tab of its own. The button isn't shown for folders with more than 50 markdown files.
 
 ## Switching tabs
 
