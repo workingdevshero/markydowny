@@ -157,8 +157,10 @@ test('the release job publishes the release once every file is attached', () => 
     // A prerelease isn't marked latest; a release is.
     assert.match(step, /latest=\(--latest\)/);
     assert.match(step, /\[\[ "\$PRERELEASE" == "true" \]\] && latest=\(--latest=false\)/);
-    // Only the tag push publishes: a pull request's dry run never reaches the release job.
-    assert.match(release, /^ {4}if: github\.event_name == 'push' && github\.ref_type == 'tag'$/m);
+    // Only a tag publishes, pushed or dispatched on: a dry run (a pull request, or a dispatch on a
+    // branch) never reaches the release job. The event isn't part of the condition because
+    // tag-release.yml starts the release with workflow_dispatch on the tag, not a push.
+    assert.match(release, /^ {4}if: github\.ref_type == 'tag'$/m);
 });
 
 test('the builds are the ones the release promises', () => {
