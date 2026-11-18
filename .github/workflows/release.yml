@@ -259,12 +259,13 @@ jobs:
         run: npx tauri build --bundles deb,appimage
       # bugsplat-native looks for its helpers next to the executable (/usr/bin), where
       # tauri.conf.json's bundle.linux files put them. Without them crash reporting is off.
+      # Tauri's .deb names its files usr/bin/…, with no leading ./ as dpkg-deb's own have.
       - name: Check the crash reporting helpers are packaged
         run: |
           contents=$(dpkg-deb -c src-tauri/target/release/bundle/deb/*.deb)
           appdir=$(echo src-tauri/target/release/bundle/appimage/*.AppDir)
           for helper in BugSplatMonitor BugSplatReporter; do
-            grep -q "/usr/bin/$helper\$" <<< "$contents" || { echo "$helper is missing from the .deb"; exit 1; }
+            grep -qE "( |\./)usr/bin/$helper\$" <<< "$contents" || { echo "$helper is missing from the .deb"; exit 1; }
             [[ -x "$appdir/usr/bin/$helper" ]] || { echo "$helper is missing from the AppImage"; exit 1; }
           done
       - name: Crash reporting
