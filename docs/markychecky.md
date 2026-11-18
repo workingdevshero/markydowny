@@ -27,7 +27,21 @@ Running three Claude Code sessions in three repos, you lose track: which one is 
 
 markychecky works in Claude Code in the terminal, in the **Code** tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.
 
-### 1. Check what you need
+In a terminal:
+
+```bash
+curl -fsSL https://markydowny.com/markychecky.sh | bash
+```
+
+That checks for `claude` and `python3`, installs the plugin (or updates it), turns on the task list in `~/.claude/settings.json` and, on a Mac, offers to download Markydowny. It changes nothing else without asking, and running it again changes nothing that's already set up. To skip the Markydowny offer, end the command with `bash -s -- --no-app` instead of `bash`. Then restart any Claude Code session that was already open (`claude --resume`). The [script](https://markydowny.com/markychecky.sh) is short and readable, if you'd like to see it first.
+
+If something's still missing, a new session says what, when it starts.
+
+### Or step by step
+
+These are the steps the command takes, for anyone who wants to see what changes.
+
+#### 1. Check what you need
 
 You need Claude Code, and Markydowny (or Python 3) for the plugin's hook to run on:
 
@@ -37,9 +51,9 @@ ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac
 python3 --version  # or Python 3
 ```
 
-The hook runs on Markydowny when it's installed ([install it](https://markydowny.com/docs/install/)), and falls back to `python3` when it isn't. On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`); most Linux systems have it already. With neither, the plugin tells you once and does nothing.
+The hook runs on Markydowny when it's installed ([install it](https://markydowny.com/docs/install/)), and falls back to `python3` when it isn't. On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`); most Linux systems have it already. With neither, the board doesn't update, and each new session says so as it starts.
 
-### 2. Install the plugin
+#### 2. Install the plugin
 
 In a terminal:
 
@@ -58,7 +72,7 @@ Inside a Claude Code session, the same thing is `/plugin marketplace add working
 
 **Check:** `claude plugin list` shows `markychecky@markydowny`, enabled.
 
-### 3. Turn on the task list
+#### 3. Turn on the task list
 
 markychecky reads each session's task list (Claude Code's `TaskCreate` and `TaskUpdate` tools), and some setups don't have those tools turned on. Add `CLAUDE_CODE_ENABLE_TODO_TOOLS` to the `env` block of `~/.claude/settings.json`:
 
@@ -87,7 +101,7 @@ EOF
 
 **Check:** `python3 -c 'import json,os; print(json.load(open(os.path.expanduser("~/.claude/settings.json")))["env"])'` prints `{'CLAUDE_CODE_ENABLE_TODO_TOOLS': '1'}` along with any other variables you had.
 
-### 4. Start your sessions
+#### 4. Start your sessions
 
 Sessions you start from now on write to the board. A session that's already running picks it up when you restart it: quit, then `claude --resume` to carry on where you were.
 
@@ -100,7 +114,7 @@ grep -A6 'markychecky:start' ~/markychecky.md
 
 The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day.
 
-### 5. Watch the board
+#### 5. Watch the board
 
 Open `~/markychecky.md` in Markydowny and leave it open:
 

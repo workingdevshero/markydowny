@@ -93,10 +93,10 @@ The hook reads the edited file's path (`tool_input.file_path`) from the JSON Cla
 [markychecky](plugins/markychecky) is a Claude Code plugin that keeps a live board of what every session is doing. Each session gets its own section of one markdown file, with what it's working on now and its checklist, ticked off as it goes. The board opens in Markydowny, so you can watch your agents work.
 
 ```
-claude plugin install markychecky --marketplace workingdevshero/markydowny
+curl -fsSL https://markydowny.com/markychecky.sh | bash
 ```
 
-Then turn on the task list it reads, which some setups leave off, by adding `"env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }` to `~/.claude/settings.json`, and restart your sessions. The [markychecky page](https://markydowny.com/docs/markychecky/) has the full setup, step by step, written so you can hand it to your agent, including a section of the board for questions waiting on you.
+That installs the plugin and turns on the task list it reads, which some setups leave off, by adding `"env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }` to `~/.claude/settings.json`. Then restart your sessions. To do it by hand instead, run `claude plugin install markychecky --marketplace workingdevshero/markydowny` and add that setting yourself. The [markychecky page](https://markydowny.com/docs/markychecky/) has the full setup, step by step, written so you can hand it to your agent, including a section of the board for questions waiting on you.
 
 ### Install
 

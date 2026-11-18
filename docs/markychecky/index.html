@@ -63,14 +63,21 @@
 </ul>
 <h2 id="set-it-up"><a class="heading-anchor" href="#set-it-up" aria-label="Link to this section">#</a>Set it up</h2>
 <p>markychecky works in Claude Code in the terminal, in the <strong>Code</strong> tab of the Claude desktop app, and in the VS Code extension, on macOS and Linux. They all read the same settings on one computer, so setting it up once covers all of them.</p>
-<h3 id="1-check-what-you-need"><a class="heading-anchor" href="#1-check-what-you-need" aria-label="Link to this section">#</a>1. Check what you need</h3>
+<p>In a terminal:</p>
+<pre><code class="language-bash">curl -fsSL https://markydowny.com/markychecky.sh | bash
+</code></pre>
+<p>That checks for <code>claude</code> and <code>python3</code>, installs the plugin (or updates it), turns on the task list in <code>~/.claude/settings.json</code> and, on a Mac, offers to download Markydowny. It changes nothing else without asking, and running it again changes nothing that&#39;s already set up. To skip the Markydowny offer, end the command with <code>bash -s -- --no-app</code> instead of <code>bash</code>. Then restart any Claude Code session that was already open (<code>claude --resume</code>). The <a href="https://markydowny.com/markychecky.sh">script</a> is short and readable, if you&#39;d like to see it first.</p>
+<p>If something&#39;s still missing, a new session says what, when it starts.</p>
+<h3 id="or-step-by-step"><a class="heading-anchor" href="#or-step-by-step" aria-label="Link to this section">#</a>Or step by step</h3>
+<p>These are the steps the command takes, for anyone who wants to see what changes.</p>
+<h4 id="1-check-what-you-need"><a class="heading-anchor" href="#1-check-what-you-need" aria-label="Link to this section">#</a>1. Check what you need</h4>
 <p>You need Claude Code, and Markydowny (or Python 3) for the plugin&#39;s hook to run on:</p>
 <pre><code class="language-bash">claude --version   # Claude Code
 ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac or on Linux
 python3 --version  # or Python 3
 </code></pre>
-<p>The hook runs on Markydowny when it&#39;s installed (<a href="https://markydowny.com/docs/install/">install it</a>), and falls back to <code>python3</code> when it isn&#39;t. On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>); most Linux systems have it already. With neither, the plugin tells you once and does nothing.</p>
-<h3 id="2-install-the-plugin"><a class="heading-anchor" href="#2-install-the-plugin" aria-label="Link to this section">#</a>2. Install the plugin</h3>
+<p>The hook runs on Markydowny when it&#39;s installed (<a href="https://markydowny.com/docs/install/">install it</a>), and falls back to <code>python3</code> when it isn&#39;t. On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>); most Linux systems have it already. With neither, the board doesn&#39;t update, and each new session says so as it starts.</p>
+<h4 id="2-install-the-plugin"><a class="heading-anchor" href="#2-install-the-plugin" aria-label="Link to this section">#</a>2. Install the plugin</h4>
 <p>In a terminal:</p>
 <pre><code class="language-bash">claude plugin install markychecky --marketplace workingdevshero/markydowny
 </code></pre>
@@ -80,7 +87,7 @@ claude plugin install markychecky@markydowny
 </code></pre>
 <p>Inside a Claude Code session, the same thing is <code>/plugin marketplace add workingdevshero/markydowny</code>, then <code>/plugin install markychecky@markydowny</code>. In the desktop app&#39;s <strong>Code</strong> tab, after the marketplace is added, it&#39;s also in <strong>+</strong> &gt; <strong>Add plugins</strong>.</p>
 <p><strong>Check:</strong> <code>claude plugin list</code> shows <code>markychecky@markydowny</code>, enabled.</p>
-<h3 id="3-turn-on-the-task-list"><a class="heading-anchor" href="#3-turn-on-the-task-list" aria-label="Link to this section">#</a>3. Turn on the task list</h3>
+<h4 id="3-turn-on-the-task-list"><a class="heading-anchor" href="#3-turn-on-the-task-list" aria-label="Link to this section">#</a>3. Turn on the task list</h4>
 <p>markychecky reads each session&#39;s task list (Claude Code&#39;s <code>TaskCreate</code> and <code>TaskUpdate</code> tools), and some setups don&#39;t have those tools turned on. Add <code>CLAUDE_CODE_ENABLE_TODO_TOOLS</code> to the <code>env</code> block of <code>~/.claude/settings.json</code>:</p>
 <pre><code class="language-json">{
   &quot;env&quot;: {
@@ -101,14 +108,14 @@ print(&quot;CLAUDE_CODE_ENABLE_TODO_TOOLS is on&quot;)
 EOF
 </code></pre>
 <p><strong>Check:</strong> <code>python3 -c &#39;import json,os; print(json.load(open(os.path.expanduser(&quot;~/.claude/settings.json&quot;)))[&quot;env&quot;])&#39;</code> prints <code>{&#39;CLAUDE_CODE_ENABLE_TODO_TOOLS&#39;: &#39;1&#39;}</code> along with any other variables you had.</p>
-<h3 id="4-start-your-sessions"><a class="heading-anchor" href="#4-start-your-sessions" aria-label="Link to this section">#</a>4. Start your sessions</h3>
+<h4 id="4-start-your-sessions"><a class="heading-anchor" href="#4-start-your-sessions" aria-label="Link to this section">#</a>4. Start your sessions</h4>
 <p>Sessions you start from now on write to the board. A session that&#39;s already running picks it up when you restart it: quit, then <code>claude --resume</code> to carry on where you were.</p>
 <p><strong>Check:</strong> run one short session that makes a task list:</p>
 <pre><code class="language-bash">claude -p &quot;Make a task list with one task, &#39;Say hello to markychecky&#39;, mark it in progress, then mark it done.&quot;
 grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 </code></pre>
 <p>The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day.</p>
-<h3 id="5-watch-the-board"><a class="heading-anchor" href="#5-watch-the-board" aria-label="Link to this section">#</a>5. Watch the board</h3>
+<h4 id="5-watch-the-board"><a class="heading-anchor" href="#5-watch-the-board" aria-label="Link to this section">#</a>5. Watch the board</h4>
 <p>Open <code>~/markychecky.md</code> in Markydowny and leave it open:</p>
 <ul>
 <li><strong>Mac app:</strong> <a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-mac.dmg">download Markydowny for Mac</a> (signed and notarized; the <a href="/docs/install/">Download</a> page has Linux too). Once it&#39;s installed, markychecky opens the board in it by itself the first time a session writes to it, in the background, without taking focus from your terminal.</li>

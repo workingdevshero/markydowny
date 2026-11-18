@@ -75,10 +75,10 @@ Without `-g`, every later edit would bring Markydowny to the front too.
 When you have several Claude Code sessions going at once, the [markychecky](markychecky.md) plugin keeps one live board of what each of them is doing: a markdown file with a section per session, holding what it's working on now and its checklist, ticked off as it goes. Open the board in Markydowny and watch it update.
 
 ```bash
-claude plugin install markychecky --marketplace workingdevshero/markydowny
+curl -fsSL https://markydowny.com/markychecky.sh | bash
 ```
 
-Then turn on the task list it reads, which some setups leave off, by adding `"env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }` to `~/.claude/settings.json`, and restart your sessions. The [markychecky](markychecky.md) page has the full setup, step by step, with a check for each step.
+That installs the plugin and turns on the task list it reads, which some setups leave off, by adding `"env": { "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" }` to `~/.claude/settings.json`. Then restart your sessions. To do it by hand instead, run `claude plugin install markychecky --marketplace workingdevshero/markydowny` and add that setting yourself. The [markychecky](markychecky.md) page has the full setup, step by step, with a check for each step.
 
 ## On the web
 
