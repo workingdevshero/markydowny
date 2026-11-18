@@ -4,7 +4,9 @@
 //!
 //! * A window may only write the document it shows: the path it asks for has to be that one.
 //! * The write is refused if the file no longer holds the content the editor started from, so
-//!   a change made elsewhere is never silently overwritten.
+//!   a change made elsewhere is never silently overwritten. The file is checked again once the
+//!   new content is on disk, just before the rename, so a change landing while it's written
+//!   (and synced) is caught too; only the rename itself is left unguarded.
 //! * The new content goes to a temporary file in the same folder, which is then renamed over the
 //!   document: a reader (or a crash) sees the old file or the new one, never half of each. The
 //!   document's permissions carry over.
@@ -56,22 +58,36 @@ where
     if current != base {
         return Err(SaveError::Conflict { content: current });
     }
-    write_atomically(&requested, content.as_bytes()).map_err(|e| SaveError::Failed {
-        message: format!("Can't save {}: {e}", requested.display()),
+    write_atomically(&requested, content.as_bytes(), || {
+        // Writing and syncing take a while: a save from elsewhere meanwhile still wins.
+        let now = read(&requested).map_err(|message| SaveError::Failed { message })?;
+        if now == base {
+            Ok(())
+        } else {
+            Err(SaveError::Conflict { content: now })
+        }
     })
 }
 
 /// Replaces the file at `path` with `content` through a temporary file in the same folder,
-/// keeping the file's permissions.
-pub fn write_atomically(path: &Path, content: &[u8]) -> io::Result<()> {
-    let permissions = fs::metadata(path)?.permissions();
-    let (tmp, mut file) = create_temp_beside(path)?;
+/// keeping the file's permissions. `before_rename` runs once the content is on disk; an error
+/// from it leaves the file as it is.
+pub fn write_atomically<C>(path: &Path, content: &[u8], before_rename: C) -> Result<(), SaveError>
+where
+    C: FnOnce() -> Result<(), SaveError>,
+{
+    let failed = |e: io::Error| SaveError::Failed {
+        message: format!("Can't save {}: {e}", path.display()),
+    };
+    let permissions = fs::metadata(path).map_err(failed)?.permissions();
+    let (tmp, mut file) = create_temp_beside(path).map_err(failed)?;
     let written = (|| {
-        file.write_all(content)?;
-        file.sync_all()?;
+        file.write_all(content).map_err(failed)?;
+        file.sync_all().map_err(failed)?;
         drop(file);
-        fs::set_permissions(&tmp, permissions)?;
-        fs::rename(&tmp, path)
+        fs::set_permissions(&tmp, permissions).map_err(failed)?;
+        before_rename()?;
+        fs::rename(&tmp, path).map_err(failed)
     })();
     if written.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -203,6 +219,33 @@ mod tests {
         fs::write(&file, "changed elsewhere").unwrap();
 
         let result = save_document(Some(&file), &file, "what the editor read", "mine", read);
+        assert_eq!(
+            result,
+            Err(SaveError::Conflict {
+                content: "changed elsewhere".into()
+            })
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "changed elsewhere");
+        assert_eq!(entries(tmp.path()), vec!["notes.md"]);
+    }
+
+    #[test]
+    fn refuses_a_change_that_lands_while_the_content_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("notes.md");
+        fs::write(&file, "a").unwrap();
+        let reads = std::cell::Cell::new(0);
+        // The first read (the check before writing) sees "a"; another editor saves before the
+        // second (just before the rename).
+        let racing_read = |path: &Path| {
+            reads.set(reads.get() + 1);
+            if reads.get() == 2 {
+                fs::write(path, "changed elsewhere").unwrap();
+            }
+            read(path)
+        };
+
+        let result = save_document(Some(&file), &file, "a", "mine", racing_read);
         assert_eq!(
             result,
             Err(SaveError::Conflict {

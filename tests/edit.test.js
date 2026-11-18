@@ -104,6 +104,20 @@ test('blockIndexAt and blockOffset map between text offsets and rendered blocks'
     assert.equal(core.blockOffset(['Same.', 'Same.'], twice, 1), 7);
 });
 
+test('blockIndexAt and blockOffset find multi-line blocks in CRLF and CR text', () => {
+    // The lexer hands back raws with '\n' line breaks whatever the file uses.
+    const raws = ['# Title', '```\ncode\n```', '- a\n- b', 'Last.'];
+    for (const eol of ['\r\n', '\r']) {
+        const text = ['# Title', '', '```', 'code', '```', '', '- a', '- b', '', 'Last.', ''].join(eol);
+        assert.equal(core.blockOffset(raws, text, 1), text.indexOf('```'));
+        assert.equal(core.blockOffset(raws, text, 2), text.indexOf('- a'));
+        assert.equal(core.blockOffset(raws, text, 3), text.indexOf('Last.'));
+        assert.equal(core.blockIndexAt(raws, text, text.indexOf('code')), 1);
+        assert.equal(core.blockIndexAt(raws, text, text.indexOf('- b')), 2);
+        assert.equal(core.blockIndexAt(raws, text, text.indexOf('Last.') + 2), 3);
+    }
+});
+
 // ------------------------------------------------------------------
 // The unsaved-changes and conflict reducer
 // ------------------------------------------------------------------

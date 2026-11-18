@@ -87,7 +87,8 @@
     let webWatched = null;
     // The file selector's "Open all as tabs" action (desktop only), or null.
     let openAllAction = null;
-    // While editing: { view, cm, separator, state (core.editReducer), saving }.
+    // While editing: { view, cm, separator, state (core.editReducer), saving (the save being
+    // written, a promise, or null) }.
     let editing = null;
     let codeMirrorLoad = null;
     // Whether the title on screen carries the unsaved-changes mark.
@@ -120,7 +121,11 @@
         e.stopPropagation();
         chooseFile();
     });
-    cancelSelectorButton.addEventListener('click', showDropZone);
+    cancelSelectorButton.addEventListener('click', () => {
+        leaveEditor().then(left => {
+            if (left) showDropZone();
+        });
+    });
     openAllTabsButton.addEventListener('click', () => {
         if (openAllAction) openAllAction();
     });
@@ -414,6 +419,12 @@
             renderWatchFolderButton();
             if (currentSource && currentSource.path) await watchDesktopDocument(currentSource.path);
             return;
+        }
+        // Following switches files by itself, which the editor can't: back to the rendered view
+        // first (asking about unsaved changes).
+        if (editing) {
+            await finishEditing();
+            if (editing || !desktopFolder || desktopFolder.following) return;
         }
         const generation = ++watchGeneration;
         try {
@@ -756,7 +767,8 @@
         source.markdown = markdownText;
 
         if (!reload || !rendered) {
-            // A different document replaces the one being edited (its changes were asked about).
+            // A different document replaces the one being edited. Every way to get here asks
+            // about unsaved changes first (leaveEditor).
             if (editing && editing === editorAtStart) closeEditor();
             commitBlocks(built, null);
             anchorHold = null;
@@ -1306,7 +1318,7 @@
             const raws = rendered ? rendered.blocks.map(block => block.raw) : [];
             const anchor = rendered && markdownContent.style.display !== 'none' ? captureAnchor() : null;
             const separator = core.lineSeparator(text);
-            const session = { cm, separator, view: null, state: null, saving: false };
+            const session = { cm, separator, view: null, state: null, saving: null };
             session.state = core.editReducer(null, { type: 'open', content: text }).state;
             editorHost.replaceChildren();
             session.view = cm.createEditor(editorHost, text, {
@@ -1365,6 +1377,9 @@
      * discard. Discarding drops the changes; the editor stays open for the caller to close.
      */
     async function leaveEditor() {
+        // A save still being written finishes first: discarding meanwhile would let it write
+        // the discarded text, and what's unsaved is only known once it's done.
+        if (editing && editing.saving) await editing.saving;
         if (!hasUnsavedChanges()) return true;
         if (!(await confirmDiscard())) return false;
         if (editing) dispatchEdit({ type: 'revert' });
@@ -1464,11 +1479,21 @@
         if (!editing || editing.saving || !currentSource) return;
         const session = editing;
         if (!session.state.dirty) return;
-        const source = currentSource;
+        session.saving = writeSession(session, currentSource);
+        renderEditControls();
+        try {
+            await session.saving;
+        } finally {
+            session.saving = null;
+            renderEditControls();
+        }
+    }
+
+    /** Writes the editor's text (saveDocument). Never rejects: failures are reported here. */
+    async function writeSession(session, source) {
         const content = editorText();
         const base = session.state.base;
-        session.saving = true;
-        renderEditControls();
+        let writable = null;
         try {
             const mode = saveMode();
             if (isDesktop) {
@@ -1479,9 +1504,20 @@
                     if (editing === session) dispatchEdit({ type: 'saveConflict', content: current, text: editorText() });
                     return;
                 }
-                const writable = await source.handle.createWritable();
+                // Left meanwhile (the drop zone): nothing to save any more.
+                if (editing !== session) return;
+                writable = await source.handle.createWritable();
                 await writable.write(content);
-                await writable.close();
+                // The permission prompt may have been up for a while: a change from elsewhere
+                // meanwhile still wins, and the file is left as it is.
+                const now = await (await source.handle.getFile()).text();
+                if (now !== base) {
+                    if (editing === session) dispatchEdit({ type: 'saveConflict', content: now, text: editorText() });
+                    return;
+                }
+                const closing = writable;
+                writable = null;
+                await closing.close();
             } else {
                 downloadText(content, source.title);
             }
@@ -1495,8 +1531,8 @@
             console.error('Save failed:', err);
             alert(`Could not save: ${err && err.message ? err.message : err}`);
         } finally {
-            session.saving = false;
-            renderEditControls();
+            // Not closed: drop what was written, and the lock on the file with it.
+            if (writable) writable.abort().catch(() => {});
         }
     }
 
@@ -1530,8 +1566,11 @@
             saveButton.title = download
                 ? 'This browser can\'t save in place: download a copy'
                 : `Save (${IS_MAC ? '⌘S' : 'Ctrl+S'})`;
-            saveButton.disabled = !dirty || editing.saving;
-            revertButton.disabled = !dirty && editing.state.conflict === null;
+            saveButton.disabled = !dirty || Boolean(editing.saving);
+            // Dropping the changes waits for the save being written, which would write them.
+            revertButton.disabled = Boolean(editing.saving) || (!dirty && editing.state.conflict === null);
+            bannerReload.disabled = Boolean(editing.saving);
+            bannerKeep.disabled = Boolean(editing.saving);
         }
         if (dirty !== titleMarked && currentSource) showTitle(currentSource.title);
         syncCloseGuard(dirty);
@@ -1542,7 +1581,7 @@
         if (!isDesktop || !tauri.window) return;
         if (dirty && !closeGuard) {
             const guard = tauri.window.getCurrentWindow().onCloseRequested(async (event) => {
-                if (hasUnsavedChanges() && !(await confirmDiscard())) event.preventDefault();
+                if (!(await leaveEditor())) event.preventDefault();
             });
             closeGuard = guard;
             guard.catch(err => {
@@ -1647,7 +1686,8 @@
         markdownContent.style.display = 'none';
         fileSelector.style.display = 'block';
         container.classList.add('file-selector-active');
-        // Shown again with the file picked from the list. (Unsaved changes were asked about.)
+        // Shown again with the file picked from the list. (A drop, the only way here while
+        // editing, asked about unsaved changes first.)
         closeEditor();
         editButton.hidden = true;
         fileList.replaceChildren();
@@ -1672,7 +1712,10 @@
             // A button to keyboards and assistive tech, so a file can be picked without a mouse.
             item.setAttribute('role', 'button');
             item.tabIndex = 0;
-            const pick = () => {
+            const pick = async () => {
+                // The list stays up beside the document, so the file being edited can be left
+                // from here.
+                if (!(await leaveEditor())) return;
                 fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
                 entry.load();

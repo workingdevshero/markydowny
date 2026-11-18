@@ -144,11 +144,17 @@ test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
     }
 });
 
-test('unsaved changes are guarded: closing the window, the browser tab, Open another and drops', () => {
-    assert.match(app, /onCloseRequested\(async \(event\) => \{\s*if \(hasUnsavedChanges\(\) && !\(await confirmDiscard\(\)\)\) event\.preventDefault\(\);/);
+test('unsaved changes are guarded: closing the window, the browser tab, Open another, drops and the file list', () => {
+    assert.match(app, /onCloseRequested\(async \(event\) => \{\s*if \(!\(await leaveEditor\(\)\)\) event\.preventDefault\(\);/);
     assert.match(app, /addEventListener\('beforeunload'/);
     assert.match(app, /backButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
     assert.match(app, /leaveEditor\(\)\.then\(left => \{\s*if \(left\) handleDesktopDrop\(paths\);/);
+    // The file list stays up beside the document: picking from it, Cancel and Watch this folder.
+    assert.match(app, /const pick = async \(\) => \{[\s\S]*?if \(!\(await leaveEditor\(\)\)\) return;/);
+    assert.match(app, /cancelSelectorButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
+    assert.match(app, /async function toggleWatchFolder\(\) \{[\s\S]*?if \(editing\) \{\s*await finishEditing\(\);/);
+    // A save being written finishes before anything is discarded.
+    assert.match(app, /async function leaveEditor\(\) \{[\s\S]*?if \(editing && editing\.saving\) await editing\.saving;/);
     // Closing needs the window's destroy permission once a JS listener takes over.
     const capability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
     assert.ok(capability.permissions.includes('core:window:allow-destroy'));

@@ -480,16 +480,31 @@
     /**
      * Where each block's raw text starts in `text`: the blocks come from the markdown lexer, in
      * order, so each is found after the one before. A block that can't be found starts where
-     * the previous one ended.
+     * the previous one ended. The lexer turns '\r\n' and '\r' into '\n', so the search runs on
+     * text with the same line breaks, and the starts are offsets in `text` as it is.
      */
     function blockStarts(raws, text) {
+        const lf = (value) => value.replace(/\r\n?/g, '\n');
+        const flat = lf(text);
+        // Offset in `text` of each offset in `flat` (only needed when they differ).
+        let original = null;
+        if (flat !== text) {
+            original = new Uint32Array(flat.length + 1);
+            let j = 0;
+            for (let i = 0; i < text.length; i++) {
+                original[j++] = i;
+                if (text.charCodeAt(i) === 13 && text.charCodeAt(i + 1) === 10) i++;
+            }
+            original[j] = text.length;
+        }
         const starts = [];
         let at = 0;
         for (const raw of raws) {
-            const found = raw ? text.indexOf(raw, at) : -1;
+            const block = raw ? lf(raw) : '';
+            const found = block ? flat.indexOf(block, at) : -1;
             const start = found === -1 ? at : found;
-            starts.push(start);
-            at = start + (found === -1 ? 0 : raw.length);
+            starts.push(original ? original[start] : start);
+            at = start + (found === -1 ? 0 : block.length);
         }
         return starts;
     }
