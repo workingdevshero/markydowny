@@ -1,0 +1,28 @@
+{
+  "description": "Mirrors each session's task list to its own section of the markychecky board",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "TaskCreate|TaskUpdate|TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v python3 >/dev/null 2>&1 && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.py\" task || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v python3 >/dev/null 2>&1 && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.py\" end || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

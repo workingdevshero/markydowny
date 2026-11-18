@@ -4,3 +4,7 @@ src-tauri/target/
 src-tauri/gen/
 .DS_Store
 src-tauri/bugsplat-helpers/
+
+# Python bytecode (plugins/markychecky)
+__pycache__/
+*.pyc
