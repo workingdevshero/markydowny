@@ -86,6 +86,24 @@
         return (leadingSlash ? '/' : '') + stack.join('/');
     }
 
+    /**
+     * The path of `toPath` relative to the directory `fromDir` ('../' to climb out of it), as a
+     * document links to a file: relativePath('/a/docs/', '/a/img/x.png') is '../img/x.png'.
+     * Both are absolute, or both relative to the same place; null when one is and one isn't.
+     */
+    function relativePath(fromDir, toPath) {
+        const from = String(fromDir);
+        const to = String(toPath);
+        if (from.startsWith('/') !== to.startsWith('/')) return null;
+        const segments = (path) => path.split('/').filter(part => part !== '' && part !== '.');
+        const dir = segments(from);
+        const target = segments(to);
+        let common = 0;
+        // The file's own name is never a directory in common.
+        while (common < dir.length && common < target.length - 1 && dir[common] === target[common]) common++;
+        return '../'.repeat(dir.length - common) + target.slice(common).join('/');
+    }
+
     /** GitHub-style heading slug: "Hello, World!" -> "hello-world". */
     function slugify(text) {
         return String(text)
@@ -543,6 +561,23 @@
             : `${n(selected)} of ${n(total)} ${unit}`;
     }
 
+    const EDITOR_MODES = ['rich', 'markdown', 'split'];
+
+    /**
+     * The editor's view for the chosen `mode` ('rich', 'markdown' or 'split'): Split isn't
+     * offered at phone widths (`splitOffered` false), where it shows as Markdown, its source.
+     */
+    function editorView(mode, splitOffered) {
+        if (!EDITOR_MODES.includes(mode)) return 'rich';
+        return mode === 'split' && !splitOffered ? 'markdown' : mode;
+    }
+
+    /** The view after `mode` in the switch (⌘/ goes round them): Rich, Markdown, then Split where it's offered. */
+    function nextEditorMode(mode, splitOffered) {
+        const modes = EDITOR_MODES.filter(m => splitOffered || m !== 'split');
+        return modes[(modes.indexOf(editorView(mode, splitOffered)) + 1) % modes.length];
+    }
+
     /**
      * The line break the editor should use for `text`: '\r\n' when every line ends that way,
      * otherwise '\n' (any other '\r' stays in the text as it is), so saving changes no bytes
@@ -638,6 +673,26 @@
         return starts[Math.min(Math.max(index, 0), starts.length - 1)];
     }
 
+    /**
+     * Split view: where scroll position `y` in one pane is in the other, matching their blocks.
+     * `from` and `to` are the tops of the same blocks in each pane (ascending, in the pane's
+     * own coordinates), each ending with where its content ends. A position between two block
+     * tops lands as far between the same two in the other pane; before the first, it's scaled
+     * from the top of the pane; past the end, it carries on one for one.
+     */
+    function mapScrollPosition(from, to, y) {
+        const count = Math.min(from.length, to.length);
+        // The point at or before y: -1 is the top of the pane.
+        let i = -1;
+        while (i + 1 < count && from[i + 1] <= y) i++;
+        const fromStart = i < 0 ? 0 : from[i];
+        const toStart = i < 0 ? 0 : to[i];
+        if (i + 1 >= count) return toStart + (y - fromStart);
+        const span = from[i + 1] - fromStart;
+        const fraction = span > 0 ? (y - fromStart) / span : 0;
+        return toStart + fraction * (to[i + 1] - toStart);
+    }
+
     /** How many recent saves are remembered, so their echo from the file watch is recognised. */
     const MAX_WRITTEN = 4;
 
@@ -730,10 +785,15 @@
         editorShortcut,
         countWords,
         formatWordCount,
+        EDITOR_MODES,
+        editorView,
+        nextEditorMode,
         lineSeparator,
         textChange,
+        blockStarts,
         blockIndexAt,
         blockOffset,
+        mapScrollPosition,
         editReducer,
         fileWatchSupport,
         pollDecision,
@@ -753,6 +813,7 @@
         isExternalUrl,
         classifyLink,
         resolveRelativePath,
+        relativePath,
         slugify,
         uniqueSlug,
         MAX_OPEN_ALL,

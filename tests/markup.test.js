@@ -215,7 +215,7 @@ test('the formatting toolbar has a labelled control for every command', () => {
     }
 });
 
-test('the Rich | Markdown switch sits beside the pencil, a radio group of the two views', () => {
+test('the Rich | Markdown | Split switch sits beside the pencil, a radio group of the views', () => {
     const actions = html.match(/<div class="topbar-actions">[\s\S]*?\n {12}<\/div>\n/)[0];
     const group = actions.match(/<div class="mode-switch" id="modeSwitch"[^>]*>([\s\S]*?)<\/div>/);
     assert.ok(group, 'the switch is in the top bar');
@@ -223,8 +223,45 @@ test('the Rich | Markdown switch sits beside the pencil, a radio group of the tw
     assert.match(group[0], /aria-label="Editor view"/);
     assert.match(group[0], /hidden>/, 'hidden until editing');
     const modes = [...group[1].matchAll(/<button[^>]*role="radio"[^>]*data-mode="(\w+)"[^>]*>(\w+)</g)].map(m => [m[1], m[2]]);
-    assert.deepEqual(modes, [['rich', 'Rich'], ['markdown', 'Markdown']]);
+    assert.deepEqual(modes, [['rich', 'Rich'], ['markdown', 'Markdown'], ['split', 'Split']]);
     assert.ok(actions.indexOf('id="modeSwitch"') < actions.indexOf('id="editButton"'), 'next to the pencil');
-    // Rich unless the reader last chose Markdown.
-    assert.match(app, /getItem\(MODE_KEY\) === 'markdown' \? 'markdown' : 'rich'/);
+    // Rich unless the reader last chose another view.
+    assert.match(app, /return core\.EDITOR_MODES\.includes\(saved\) \? saved : 'rich'/);
+    // Split isn't offered at phone widths.
+    const phone = html.match(/@media \(max-width: 700px\) \{[\s\S]*?\n {8}\}\n/)[0];
+    assert.match(phone, /\.mode-option\[data-mode="split"\] \{\s*display: none;/);
+    assert.match(app, /window\.matchMedia\('\(max-width: 700px\)'\)/);
+});
+
+test('split view renders the document beside the editor, outside the rendered markdown', () => {
+    const main = html.match(/<main>([\s\S]*?)<\/main>/)[1];
+    const preview = main.match(/<article class="markdown-content split-preview" id="splitPreview"[^>]*>([\s\S]*?)<\/article>/);
+    assert.ok(preview, 'the split preview is in main');
+    assert.match(preview[0], /\shidden>/);
+    assert.equal(preview[1].trim(), '');
+    assert.ok(main.indexOf('id="editorHost"') < main.indexOf('id="splitPreview"'), 'the editor on the left');
+});
+
+test('the toolbar inserts tables, images and rules, which narrow widths reach through the overflow menu', () => {
+    const toolbar = html.match(/<div class="format-toolbar"[\s\S]*?\n {12}<\/div>\n/)[0];
+    for (const action of ['table', 'image', 'horizontalRule']) {
+        const button = toolbar.match(new RegExp(`<button class="tool"[^>]*data-action="${action}"[^>]*>`));
+        assert.ok(button, `a toolbar button for ${action}`);
+        assert.match(button[0], /aria-label="[^"]+"/, `${action} has a label`);
+        assert.doesNotMatch(button[0], /aria-pressed/, `${action} is an action, not a toggle`);
+        assert.match(button[0], /data-tool/, `${action} takes part in the arrow keys`);
+    }
+    for (const [, action] of toolbar.matchAll(/data-action="(\w+)" data-tool data-overflow/g)) {
+        assert.match(toolbar, new RegExp(`role="menuitem"[^>]*data-action="${action}"`), `${action} in the overflow menu`);
+    }
+    // The table's size picker is a dialog the table button opens.
+    assert.match(toolbar, /id="tableButton"[^>]*aria-haspopup="dialog"[^>]*aria-controls="tablePicker"/);
+    assert.match(toolbar, /<div class="table-picker" id="tablePicker" role="dialog" aria-label="[^"]+" hidden>/);
+});
+
+test('desktop images are picked by the app, which offers to copy them next to the document', () => {
+    assert.match(app, /invoke\('choose_image'\)/);
+    assert.match(app, /core\.relativePath\(source\.dir, picked\)/);
+    const lib = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+    assert.match(lib, /generate_handler!\[[\s\S]*?\bchoose_image,/);
 });

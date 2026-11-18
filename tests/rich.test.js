@@ -292,3 +292,57 @@ test('switching modes keeps the text, selection and undo history', () => {
     assert.equal(state.sliceDoc(), text + ' more');
     assert.equal(cm.undoDepth(state), 1);
 });
+
+/**
+ * Tab (1) or Shift-Tab (-1) in `marked`, written with '^' for the cursor or '«' '»' around a
+ * selection (tables are full of '|'): the text and selection after, marked the same way, or
+ * null when the key is left alone.
+ */
+function tab(marked, direction = 1) {
+    const text = marked.replace(/[\^«»]/g, '');
+    let anchor = marked.indexOf('^');
+    let head = anchor;
+    if (anchor === -1) {
+        anchor = marked.indexOf('«');
+        head = marked.indexOf('»') - 1;
+    }
+    const state = cm.createState(text).update({ selection: { anchor, head } }).state;
+    const spec = cm.tableCellMove(state, direction);
+    if (!spec) return null;
+    const next = state.update(spec).state;
+    const { from, to } = next.selection.main;
+    const out = next.sliceDoc();
+    if (from === to) return out.slice(0, from) + '^' + out.slice(from);
+    return out.slice(0, from) + '«' + out.slice(from, to) + '»' + out.slice(to);
+}
+
+test('Tab moves to the next cell of a table, selecting its text', () => {
+    const doc = (body) => `Intro\n\n${body}\n\nOutro`;
+    assert.equal(tab(doc('| A^ | B |\n| --- | --- |\n| 1 | 2 |')), doc('| A | «B» |\n| --- | --- |\n| 1 | 2 |'));
+    // Off the end of a row: the next row, past the delimiter row.
+    assert.equal(tab(doc('| A | B^ |\n| --- | --- |\n| 1 | 2 |')), doc('| A | B |\n| --- | --- |\n| «1» | 2 |'));
+    assert.equal(tab(doc('| A | B |\n| -^-- | --- |\n| 1 | 2 |')), doc('| A | B |\n| --- | --- |\n| «1» | 2 |'));
+    // An empty cell: the cursor a space in.
+    assert.equal(tab(doc('| ^    |     |\n| --- | --- |')), doc('|     | ^    |\n| --- | --- |'));
+    // Rows without the outer pipes.
+    assert.equal(tab(doc('A^ | B\n--- | ---\n1 | 2')), doc('A | «B»\n--- | ---\n1 | 2'));
+});
+
+test('Shift-Tab moves to the previous cell, and stays in the first', () => {
+    assert.equal(tab('| A | B |\n| --- | --- |\n| 1^ | 2 |\n', -1), '| A | «B» |\n| --- | --- |\n| 1 | 2 |\n');
+    assert.equal(tab('| A | «B» |\n| --- | --- |\n', -1), '| «A» | B |\n| --- | --- |\n');
+    assert.equal(tab('| A^ | B |\n| --- | --- |\n', -1), '| A^ | B |\n| --- | --- |\n');
+});
+
+test('Tab in the last cell adds a row as wide as the header', () => {
+    assert.equal(tab('| A | B |\n| --- | --- |\n| 1 | 2^ |\n\nAfter'), '| A | B |\n| --- | --- |\n| 1 | 2 |\n| ^    |     |\n\nAfter');
+    // Inside a quote, the new row is quoted too.
+    assert.equal(tab('> | A |\n> | --- |\n> | 1^ |'), '> | A |\n> | --- |\n> | 1 |\n> | ^    |');
+    // Under a table with no body yet.
+    assert.equal(tab('| A | «B» |\n| --- | --- |'), '| A | B |\n| --- | --- |\n| ^    |     |');
+});
+
+test('Tab outside a table is left alone', () => {
+    assert.equal(tab('Just a^ paragraph with a | pipe'), null);
+    assert.equal(tab('| A |\n| --- |\n\nAfter^'), null);
+});
