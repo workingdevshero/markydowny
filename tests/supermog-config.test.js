@@ -9,3 +9,7 @@ test('supermog may push workflow changes, so it can build the release workflow (
     // A top-level `access:` block with `workflows: true` under it.
     assert.match(config, /^access:\n(?:[ \t]+.*\n|[ \t]*#.*\n)*?[ \t]+workflows:[ \t]*true[ \t]*$/m);
 });
+
+test('supermog merges a pull request itself once it verifies', () => {
+    assert.match(config, /^merge:[ \t]*auto[ \t]*$/m);
+});
