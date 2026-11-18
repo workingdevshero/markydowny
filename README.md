@@ -2,7 +2,7 @@
 
 # Markydowny
 
-A simple, beautiful markdown viewer — on the web at [markydowny.com](https://markydowny.com), and as a native macOS app that opens `.md` files when you double-click them.
+A simple, beautiful markdown viewer — on the web at [markydowny.com](https://markydowny.com), and as a desktop app for macOS, Windows and Linux that opens `.md` files when you double-click them.
 
 📖 **Docs:** [markydowny.com/docs](https://markydowny.com/docs/), one page per feature (sources in [`docs/`](docs/)).
 
@@ -155,10 +155,11 @@ Releases are built by [`.github/workflows/release.yml`](.github/workflows/releas
    A version with a hyphen (`1.2.0-beta.1`) makes a prerelease, whose `.deb` is versioned `1.2.0~beta.1` so
    the release upgrades it.
 3. The workflow checks the tag against the three files (`node scripts/check-release-version.mjs v1.2.0` does
-   the same by hand), builds a universal `.dmg` for macOS and a `.deb` and `.AppImage` for Linux on x86_64
-   and arm64, and attaches them, with `SHA256SUMS.txt`, to a release, which it publishes once every file is
-   attached. It shows up on the [releases page](https://github.com/workingdevshero/markydowny/releases) about
-   20 minutes after the tag is pushed.
+   the same by hand), builds a universal `.dmg` for macOS, a `.deb` and `.AppImage` for Linux on x86_64
+   and arm64, and an installer (`-setup.exe`) and `.msi` for Windows on x64, and attaches them, with
+   `SHA256SUMS.txt`, to a release, which it publishes once every file is attached. A prerelease has no `.msi`:
+   WiX only takes a numeric prerelease. It shows up on the
+   [releases page](https://github.com/workingdevshero/markydowny/releases) about 20 minutes after the tag is pushed.
 
 Pushing a tag by hand still works: `git tag v1.2.0 && git push origin v1.2.0` on a commit with the version
 already bumped releases it. tag-release.yml skips a version that already has a release, so the two never make
@@ -180,7 +181,9 @@ open Markydowny-*-universal.dmg   # then drag Markydowny to Applications
 
 The Mac build is notarized, so it opens like any other app, however it was downloaded. (A release built
 without the Apple secrets isn't, and its notes say how to open it.) The Linux packages need glibc 2.38 or
-newer (Ubuntu 24.04, Debian 13, Fedora 39 and later).
+newer (Ubuntu 24.04, Debian 13, Fedora 39 and later). The Windows installers aren't code-signed yet, so
+SmartScreen warns the first time one runs: click **More info**, then **Run anyway**. See
+[Download](https://markydowny.com/docs/install/#windows) for making it the default for `.md` files.
 
 ## Project Layout
 

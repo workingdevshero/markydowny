@@ -25,12 +25,43 @@ test('dirname and basename split paths', () => {
     assert.equal(core.basename('a.md'), 'a.md');
 });
 
+test('Windows paths from the desktop app split on either separator', () => {
+    assert.equal(core.windowsRoot('C:\\Users\\me\\a.md'), 'C:\\');
+    assert.equal(core.windowsRoot('d:/notes'), 'd:\\');
+    assert.equal(core.windowsRoot('\\\\server\\share\\docs\\a.md'), '\\\\server\\share\\');
+    assert.equal(core.windowsRoot('\\\\server\\share'), '\\\\server\\share\\');
+    for (const path of ['/Users/me/a.md', 'docs/a.md', 'a.md', 'C:', 'C:a.md', '']) {
+        assert.equal(core.windowsRoot(path), null, path);
+    }
+    assert.equal(core.dirname('C:\\Users\\me\\a.md'), 'C:\\Users\\me\\');
+    assert.equal(core.basename('C:\\Users\\me\\a.md'), 'a.md');
+    assert.equal(core.basename('C:\\Users\\me/notes\\a.md'), 'a.md');
+    assert.equal(core.basename('\\\\server\\share\\a.md'), 'a.md');
+    // Outside a Windows path a backslash is part of a name, as macOS and Linux allow.
+    assert.equal(core.basename('/Users/me/a\\b.md'), 'a\\b.md');
+    assert.equal(core.dirname('docs\\a.md'), '');
+});
+
+test('isInsideFolder matches whole folder names, with either platform\'s separator', () => {
+    assert.ok(core.isInsideFolder('/a/docs', '/a/docs/x.md'));
+    assert.ok(core.isInsideFolder('/a/docs/', '/a/docs/sub/x.md'));
+    assert.ok(!core.isInsideFolder('/a/docs', '/a/docs2/x.md'));
+    assert.ok(core.isInsideFolder('C:\\a\\docs', 'C:\\a\\docs\\x.md'));
+    assert.ok(core.isInsideFolder('C:\\', 'C:\\x.md'));
+    assert.ok(!core.isInsideFolder('C:\\a\\docs', 'C:\\a\\docs2\\x.md'));
+});
+
 test('isExternalUrl detects schemes and protocol-relative URLs', () => {
     for (const url of ['https://x.com/a.png', 'http://x', 'data:image/png;base64,AA', 'blob:abc', 'mailto:a@b.c', '//cdn.x/y.png', 'asset://localhost/a']) {
         assert.ok(core.isExternalUrl(url), url);
     }
     for (const url of ['img.png', './img.png', '../img.png', '/abs/img.png']) {
         assert.ok(!core.isExternalUrl(url), url);
+    }
+    // A Windows drive path is a file, not a `d:` URL, as written or as an inserted image encodes it.
+    for (const url of ['D:\\a.png', 'd:/a.png', 'D:%5Ca.png', 'D:%5cpics%5Ca.png', '\\\\server\\share\\a.png']) {
+        assert.ok(!core.isExternalUrl(url), url);
+        assert.equal(core.classifyLink(url), 'relative', url);
     }
 });
 
@@ -163,6 +194,41 @@ test('relativePath links a file from a document\'s folder', () => {
     // It reads back as the file, the way the page resolves links.
     for (const [dir, file] of [['/a/docs/guide/', '/a/img/shot.png'], ['/a/docs/', '/a/docs/x/y.png'], ['/x/', '/y/z/w.png']]) {
         assert.equal(core.resolveRelativePath(dir, core.relativePath(dir, file)), file);
+    }
+});
+
+test('resolveRelativePath and relativePath work against a Windows document folder', () => {
+    const dir = 'C:\\Users\\me\\notes\\';
+    assert.equal(core.resolveRelativePath(dir, 'img/a.png'), 'C:\\Users\\me\\notes\\img\\a.png');
+    assert.equal(core.resolveRelativePath(dir, './img\\a.png'), 'C:\\Users\\me\\notes\\img\\a.png');
+    assert.equal(core.resolveRelativePath(dir, '../pics/a%20b.png?raw=1'), 'C:\\Users\\me\\pics\\a b.png');
+    assert.equal(core.resolveRelativePath(dir, '/top.png'), 'C:\\top.png');
+    assert.equal(core.resolveRelativePath(dir, '../../../../a.png'), null);
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '../a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '../../a.md'), null);
+    // A target that is itself a Windows path is used as it is, not resolved under the document's root.
+    assert.equal(core.resolveRelativePath(dir, '\\\\server\\share\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '\\\\server\\share\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath('\\\\other\\x\\docs\\', '\\\\server\\share\\b\\..\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath(dir, 'D:\\a.png'), 'D:\\a.png');
+    assert.equal(core.resolveRelativePath(dir, 'D:%5Cpics%5Ca%20b.png'), 'D:\\pics\\a b.png');
+    assert.equal(core.resolveRelativePath(dir, 'd:/pics/./a.png'), 'd:\\pics\\a.png');
+    assert.equal(core.resolveRelativePath(dir, 'D:\\..\\a.png'), null);
+    // A single separator is still the root of the document's own drive or share.
+    assert.equal(core.resolveRelativePath(dir, '\\a.png'), 'C:\\a.png');
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '\\a.png'), '\\\\server\\share\\a.png');
+    // POSIX documents are unchanged: there a drive-like name is just a relative name.
+    assert.equal(core.resolveRelativePath('/a/docs/', 'D:/x.png'), '/a/docs/D:/x.png');
+
+    assert.equal(core.relativePath(dir, 'C:\\Users\\me\\notes\\img\\a.png'), 'img/a.png');
+    assert.equal(core.relativePath(dir, 'C:\\Users\\me\\pics\\a.png'), '../pics/a.png');
+    assert.equal(core.relativePath(dir, 'c:\\x.png'), '../../../x.png');
+    // No relative link from one drive or share to another, nor between Windows and POSIX.
+    assert.equal(core.relativePath(dir, 'D:\\x.png'), null);
+    assert.equal(core.relativePath(dir, '\\\\server\\share\\x.png'), null);
+    assert.equal(core.relativePath('/a/docs/', 'C:\\x.png'), null);
+    for (const [from, file] of [[dir, 'C:\\Users\\me\\pics\\a.png'], ['\\\\s\\sh\\a\\', '\\\\s\\sh\\b\\c.png']]) {
+        assert.equal(core.resolveRelativePath(from, core.relativePath(from, file)), file);
     }
 });
 

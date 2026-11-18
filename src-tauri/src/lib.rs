@@ -13,6 +13,8 @@
 //! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
 //! * File > Open Recent, kept across launches (`recent.rs`).
 
+#[cfg(test)]
+mod bundled_helpers;
 mod crash_reporting;
 mod docs;
 mod images;
@@ -131,7 +133,8 @@ impl AppState {
 pub struct Document {
     path: String,
     name: String,
-    /// Parent directory with a trailing `/`, used to resolve relative links.
+    /// Parent directory with a trailing separator (`\` on Windows), used to resolve relative
+    /// links.
     dir: String,
     content: String,
 }
@@ -237,8 +240,7 @@ fn list_markdown_files(paths: Vec<String>) -> Vec<MarkdownEntry> {
         .into_iter()
         .map(|(path, display)| MarkdownEntry {
             // Canonical, like `Document::path`, so the list can find the file on screen.
-            path: path
-                .canonicalize()
+            path: dunce::canonicalize(&path)
                 .unwrap_or(path)
                 .to_string_lossy()
                 .into_owned(),
@@ -413,7 +415,7 @@ fn choose_image(
         .showing(window.label())
         .map(Path::to_path_buf)
         .ok_or_else(|| "No document is open".to_string())?;
-    let document = document.canonicalize().unwrap_or(document);
+    let document = dunce::canonicalize(&document).unwrap_or(document);
     let dir = document
         .parent()
         .map(Path::to_path_buf)
@@ -429,9 +431,8 @@ fn choose_image(
     };
     let image = picked.into_path().map_err(|e| e.to_string())?;
     // Canonical, as the document's path is, so the page can work out the relative link.
-    let image = image
-        .canonicalize()
-        .map_err(|e| format!("Can't open {}: {e}", image.display()))?;
+    let image =
+        dunce::canonicalize(&image).map_err(|e| format!("Can't open {}: {e}", image.display()))?;
     if images::is_inside(&dir, &image) {
         return Ok(Some(image.to_string_lossy().into_owned()));
     }
@@ -466,7 +467,7 @@ fn choose_image(
         _ => return Ok(None),
     }
     let copied = images::copy_into(&image, &dir).map_err(|e| format!("Can't copy {name}: {e}"))?;
-    let copied = copied.canonicalize().unwrap_or(copied);
+    let copied = dunce::canonicalize(&copied).unwrap_or(copied);
     Ok(Some(copied.to_string_lossy().into_owned()))
 }
 
@@ -503,7 +504,7 @@ fn watch_folder(
     let latest = seeded
         .into_iter()
         .max_by_key(|(p, _)| std::fs::metadata(p).and_then(|m| m.modified()).ok());
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     Ok(FolderWatch {
         name: root
             .file_name()
@@ -573,13 +574,13 @@ fn read_text(path: &Path) -> Result<String, String> {
 }
 
 fn document_for(path: &Path, content: String) -> Document {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut dir = path
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if !dir.ends_with('/') {
-        dir.push('/');
+    if !dir.ends_with(std::path::MAIN_SEPARATOR) {
+        dir.push(std::path::MAIN_SEPARATOR);
     }
     Document {
         name: path
@@ -919,7 +920,8 @@ fn open_recent(app: &AppHandle, index: usize) {
 }
 
 /// The default macOS menu, plus File > New Tab (⌘T), Open… (⌘O) and Open Recent. The
-/// Window menu's tab items are added natively, by `tabs::native`.
+/// Window menu's tab items are added natively, by `tabs::native`. Windows' default menu has a
+/// File menu too, where New Tab opens a window of its own.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     let new_tab = MenuItemBuilder::with_id(NEW_TAB_MENU_ID, "New Tab")
@@ -1117,6 +1119,21 @@ pub fn run() {
     });
 }
 
+/// Helpers for the tests of every module.
+#[cfg(test)]
+mod test_support {
+    use std::path::Path;
+
+    /// Makes `link` a symbolic link to the file `target`. On Windows that takes an administrator
+    /// (as on GitHub's runners) or Developer Mode.
+    pub fn symlink(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1128,11 +1145,12 @@ mod tests {
         std::fs::write(&file, "# Hello\n").unwrap();
 
         let doc = read_document_at(&file).unwrap();
-        let canonical_dir = tmp.path().canonicalize().unwrap();
+        let canonical_dir = dunce::canonicalize(tmp.path()).unwrap();
         assert_eq!(doc.name, "notes.md");
         assert_eq!(doc.content, "# Hello\n");
-        assert_eq!(doc.dir, format!("{}/", canonical_dir.display()));
-        assert!(doc.path.ends_with("/notes.md"));
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(doc.dir, format!("{}{sep}", canonical_dir.display()));
+        assert!(doc.path.ends_with(&format!("{sep}notes.md")));
     }
 
     #[test]

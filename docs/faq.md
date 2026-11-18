@@ -48,7 +48,7 @@ HTML in a markdown file is rendered in both.
 
 ## Is there a Windows or Linux app?
 
-Linux, yes: `.deb` and `.AppImage` packages for x86_64 and arm64 are on the [Download](install.md#linux) page. Windows is coming in the next release. Until then, the website works in any browser on any system.
+Yes. Linux has `.deb` and `.AppImage` packages for x86_64 and arm64, and Windows has an installer for 64-bit Windows 10 and 11, both on the [Download](install.md) page. The website also works in any browser on any system.
 
 ## Why can't I find it in the Mac App Store?
 

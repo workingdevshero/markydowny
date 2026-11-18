@@ -118,7 +118,7 @@ test('the release workflow runs on v* tags, and dry-runs on PRs and workflow_dis
     assert.doesNotMatch(on, /branches:/, 'pushing a branch never releases');
     assert.match(on, /^ {2}pull_request:\n {4}paths:\n(?: {6}- .*\n)*? {6}- \.github\/workflows\/release\.yml\n/m);
     assert.match(on, /^ {2}workflow_dispatch:/m);
-    assert.deepEqual(Object.keys(jobs()), ['version', 'mac', 'linux', 'release']);
+    assert.deepEqual(Object.keys(jobs()), ['version', 'mac', 'linux', 'windows', 'release']);
 });
 
 test('only the release job can write, and it runs only for a tag, after every build', () => {
@@ -134,7 +134,7 @@ test('only the release job can write, and it runs only for a tag, after every bu
     // A tag pushed by hand, or one tag-release.yml made and dispatched this workflow on. Pull
     // requests and dispatches on a branch have a branch ref, so they never get here.
     assert.match(release, /^ {4}if: github\.ref_type == 'tag'$/m);
-    assert.match(release, /^ {4}needs: \[version, mac, linux\]$/m);
+    assert.match(release, /^ {4}needs: \[version, mac, linux, windows\]$/m);
 });
 
 test('the release job attaches everything to a draft, with checksums, and re-runs replace its files', () => {
@@ -145,6 +145,7 @@ test('the release job attaches everything to a draft, with checksums, and re-run
     // A re-run's notes follow its build (notarized or not), not the first run's.
     assert.match(release, /gh release edit "\$TAG" --notes-file full-notes\.md/);
     assert.match(release, /glibc 2\.38/);
+    assert.match(release, /SmartScreen warns the first time\. Windows: click \*\*More info\*\*, then \*\*Run anyway\*\*\./);
 });
 
 test('the release job publishes the release once every file is attached', () => {
@@ -164,7 +165,7 @@ test('the release job publishes the release once every file is attached', () => 
 });
 
 test('the builds are the ones the release promises', () => {
-    const { mac, linux, version } = jobs();
+    const { mac, linux, windows, version } = jobs();
     assert.match(version, /node scripts\/check-release-version\.mjs "\$GITHUB_REF_NAME"/);
     assert.match(mac, /runs-on: macos-latest/);
     assert.match(mac, /scripts\/release-mac\.sh --arch universal --identity "\$SIGNING_IDENTITY" --notary-profile markydowny-notary\n/);
@@ -172,7 +173,9 @@ test('the builds are the ones the release promises', () => {
     assert.match(linux, /runner: ubuntu-24\.04\n/);
     assert.match(linux, /runner: ubuntu-24\.04-arm\n/);
     assert.match(linux, /npx tauri build --bundles deb,appimage/);
-    for (const [id, text] of Object.entries({ mac, linux })) {
+    assert.match(windows, /runs-on: windows-latest/);
+    assert.match(windows, /\$bundles = if \(\$env:PRERELEASE -eq 'true'\) \{ 'nsis' \} else \{ 'nsis,msi' \}\n\s+npx tauri build --bundles \$bundles\n/);
+    for (const [id, text] of Object.entries({ mac, linux, windows })) {
         assert.match(text, /timeout-minutes: \d+/, `${id} has a timeout`);
         assert.match(text, /needs: version/, `${id} waits for the version check`);
         assert.match(text, /BUGSPLAT_DATABASE: \$\{\{ secrets\.BUGSPLAT_DATABASE \}\}/, `${id} reads the database from the secret`);
@@ -268,7 +271,7 @@ test('the Linux packages carry the crash reporting helpers next to the executabl
     }
 });
 
-test('the release job gathers the Linux packages out of their folders before the checksums', () => {
+test('the release job gathers the Linux and Windows packages out of their folders before the checksums', () => {
     const release = jobs().release;
     const gather = release.indexOf('name: Gather the files');
     assert.ok(gather > 0 && gather < release.indexOf('name: Checksums'), 'gathering comes before the checksums');
@@ -277,10 +280,12 @@ test('the release job gathers the Linux packages out of their folders before the
     const run = dir => spawnSync('bash', ['-e', '-c', script], { cwd: dir, encoding: 'utf8' });
     const fresh = () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-artifacts-'));
-        fs.mkdirSync(path.join(dir, 'deb')); fs.mkdirSync(path.join(dir, 'appimage'));
+        for (const sub of ['deb', 'appimage', 'nsis', 'msi']) fs.mkdirSync(path.join(dir, sub));
         fs.writeFileSync(path.join(dir, 'Markydowny-1.0.0-universal.dmg'), 'dmg');
         for (const arch of ['amd64', 'arm64']) fs.writeFileSync(path.join(dir, 'deb', `Markydowny_1.0.0_${arch}.deb`), arch);
         for (const arch of ['amd64', 'aarch64']) fs.writeFileSync(path.join(dir, 'appimage', `Markydowny_1.0.0_${arch}.AppImage`), arch);
+        fs.writeFileSync(path.join(dir, 'nsis', 'Markydowny_1.0.0_x64-setup.exe'), 'exe');
+        fs.writeFileSync(path.join(dir, 'msi', 'Markydowny_1.0.0_x64_en-US.msi'), 'msi');
         return dir;
     };
     const dir = fresh();
@@ -288,7 +293,8 @@ test('the release job gathers the Linux packages out of their folders before the
     assert.equal(ok.status, 0, ok.stderr + ok.stdout);
     assert.deepEqual(fs.readdirSync(dir).sort(), [
         'Markydowny-1.0.0-universal.dmg', 'Markydowny_1.0.0_aarch64.AppImage', 'Markydowny_1.0.0_amd64.AppImage',
-        'Markydowny_1.0.0_amd64.deb', 'Markydowny_1.0.0_arm64.deb',
+        'Markydowny_1.0.0_amd64.deb', 'Markydowny_1.0.0_arm64.deb', 'Markydowny_1.0.0_x64-setup.exe',
+        'Markydowny_1.0.0_x64_en-US.msi',
     ]);
     // Two files with one name: the step fails instead of silently dropping one.
     const clash = fresh();
@@ -296,4 +302,46 @@ test('the release job gathers the Linux packages out of their folders before the
     const bad = run(clash);
     assert.notEqual(bad.status, 0);
     assert.match(bad.stdout, /same name/);
+});
+
+test('the Windows installers are built, checked for the crash reporting helpers, and attached', () => {
+    const { windows } = jobs();
+    // MSVC on PATH for bugsplat-sys, and the build in PowerShell, where Git Bash's link.exe can't
+    // shadow MSVC's.
+    assert.match(windows, /- uses: ilammy\/msvc-dev-cmd@v1\n\s+with:\n\s+arch: x64\n/);
+    assert.doesNotMatch(step(windows, 'Build the installers'), /shell: bash/);
+    const check = step(windows, 'Check the crash reporting helpers are installed');
+    assert.doesNotMatch(check, /shell: bash/);
+    assert.match(check, /'markydowny\.exe', 'BugSplatMonitor\.exe', 'BugSplatReporter\.exe', 'theme\\theme\.json'/);
+    assert.match(check, /-ArgumentList '\/S', "\/D=\$nsis"/);
+    assert.match(check, /msiexec\.exe -ArgumentList '\/a'/);
+    // Unsigned for now, said so in the summary, with the spot for signing marked.
+    assert.match(windows, /# TODO\(windows-signing\)/);
+    assert.match(step(windows, 'Code signing'), /\*\*not code-signed\*\*/);
+    // The .pdb goes up as it is: no dump_syms.
+    const symbols = step(windows, 'Upload symbols');
+    assert.match(symbols, /npx symbol-upload -a Markydowny -v "\$VERSION" -d src-tauri\/target\/release -f "markydowny\.\{exe,pdb\}"\n/);
+    assert.doesNotMatch(symbols, / -m\b/);
+    assert.match(windows, /name: windows-x64\n\s+path: \|\n\s+src-tauri\/target\/release\/bundle\/nsis\/\*-setup\.exe\n\s+src-tauri\/target\/release\/bundle\/msi\/\*\.msi\n/);
+});
+
+test('the Windows packages carry the crash reporting helpers next to the executable', () => {
+    const conf = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'tauri.windows.conf.json'), 'utf8'));
+    assert.deepEqual(conf.bundle.targets, ['nsis', 'msi']);
+    assert.deepEqual(conf.bundle.resources, {
+        'bugsplat-helpers/BugSplatMonitor.exe': 'BugSplatMonitor.exe',
+        'bugsplat-helpers/BugSplatReporter.exe': 'BugSplatReporter.exe',
+        'bugsplat-helpers/theme': 'theme',
+    });
+    // Explorer opens the same files with Markydowny as Finder does: Tauri's Windows bundlers
+    // register the base config's file associations.
+    const base = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+    assert.equal(conf.bundle.fileAssociations, undefined);
+    assert.deepEqual(base.bundle.fileAssociations[0].ext, ['md', 'markdown', 'mdown', 'mkd', 'mkdn']);
+});
+
+test('a pull request that changes the Windows bundle runs the release dry run', () => {
+    const on = workflow.split(/^on:\n/m)[1].split(/^\S/m)[0];
+    assert.match(on, /^ {6}- src-tauri\/tauri\.windows\.conf\.json$/m);
+    assert.match(on, /^ {6}- src-tauri\/src\/bundled_helpers\.rs$/m);
 });

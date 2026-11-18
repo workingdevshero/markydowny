@@ -31,19 +31,21 @@ test('the fixed-name step makes one copy of each release file', () => {
     const { script, names } = fixedNameStep();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-names-'));
     for (const f of ['Markydowny-1.2.0-universal.dmg', 'Markydowny_1.2.0_amd64.deb', 'Markydowny_1.2.0_arm64.deb',
-        'Markydowny_1.2.0_amd64.AppImage', 'Markydowny_1.2.0_aarch64.AppImage']) {
+        'Markydowny_1.2.0_amd64.AppImage', 'Markydowny_1.2.0_aarch64.AppImage', 'Markydowny_1.2.0_x64-setup.exe',
+        'Markydowny_1.2.0_x64_en-US.msi']) {
         fs.writeFileSync(path.join(dir, f), f);
     }
     const run = spawnSync('bash', ['-e', '-c', script], { cwd: dir, encoding: 'utf8' });
     assert.equal(run.status, 0, run.stderr);
     assert.deepEqual(names.sort(), [
         'Markydowny-linux-arm64.AppImage', 'Markydowny-linux-x86_64.AppImage', 'Markydowny-mac.dmg',
-        'markydowny-linux-arm64.deb', 'markydowny-linux-x86_64.deb',
+        'Markydowny-windows-x64-setup.exe', 'markydowny-linux-arm64.deb', 'markydowny-linux-x86_64.deb',
     ]);
     // Each copy is the file it names: the dmg is the dmg, the arm64 AppImage is the aarch64 one.
     assert.equal(fs.readFileSync(path.join(dir, 'Markydowny-mac.dmg'), 'utf8'), 'Markydowny-1.2.0-universal.dmg');
     assert.equal(fs.readFileSync(path.join(dir, 'Markydowny-linux-arm64.AppImage'), 'utf8'), 'Markydowny_1.2.0_aarch64.AppImage');
     assert.equal(fs.readFileSync(path.join(dir, 'markydowny-linux-x86_64.deb'), 'utf8'), 'Markydowny_1.2.0_amd64.deb');
+    assert.equal(fs.readFileSync(path.join(dir, 'Markydowny-windows-x64-setup.exe'), 'utf8'), 'Markydowny_1.2.0_x64-setup.exe');
 });
 
 test('every download link on the site points at a file the release attaches', () => {
@@ -56,7 +58,7 @@ test('every download link on the site points at a file the release attaches', ()
             linked.add(m[1]);
         }
     }
-    // The Download page offers all five, and the homepage button is the Mac download.
+    // The Download page offers all six, and the homepage button is the Mac download.
     for (const name of names) assert.ok(read('docs/install.md').includes(LATEST + name), `the Download page links ${name}`);
     assert.match(read('index.html'), /<a class="btn btn-primary" href="https:\/\/github\.com\/workingdevshero\/markydowny\/releases\/latest\/download\/Markydowny-mac\.dmg">Download for Mac<\/a>/);
 });

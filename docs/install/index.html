@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/install.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
     <title>Download · Markydowny docs</title>
-    <meta name="description" content="Download Markydowny for macOS (signed and notarized) or Linux, make it the default app for markdown files, or use it on the web with nothing to install.">
+    <meta name="description" content="Download Markydowny for macOS (signed and notarized), Linux or Windows, make it the default app for markdown files, or use it on the web with nothing to install.">
     <link rel="canonical" href="https://markydowny.com/docs/install/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/install/">
     <meta property="og:title" content="Download · Markydowny docs">
-    <meta property="og:description" content="Download Markydowny for macOS (signed and notarized) or Linux, make it the default app for markdown files, or use it on the web with nothing to install.">
+    <meta property="og:description" content="Download Markydowny for macOS (signed and notarized), Linux or Windows, make it the default app for markdown files, or use it on the web with nothing to install.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -88,9 +88,17 @@
 </ul>
 <p>Documents open in separate windows rather than tabs.</p>
 <h2 id="windows"><a class="heading-anchor" href="#windows" aria-label="Link to this section">#</a>Windows</h2>
-<blockquote>
-<p><strong>Coming soon.</strong> A Windows installer is on its way in the next release.</p>
-</blockquote>
+<p><strong><a href="https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-windows-x64-setup.exe">⬇ Download Markydowny for Windows</a></strong></p>
+<p>For 64-bit Windows 10 and 11. Run <code>Markydowny-windows-x64-setup.exe</code>, which installs it for your account without asking for an administrator. An <code>.msi</code>, for installing with <code>msiexec</code>, is on the <a href="https://github.com/workingdevshero/markydowny/releases">releases page</a>.</p>
+<p>The installer isn&#39;t code-signed yet, so Microsoft Defender SmartScreen stops it the first time with <strong>Windows protected your PC</strong>. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+<p>Double-click a markdown file to open it. Each document opens in a window of its own rather than a tab, so <strong>File &gt; New Tab</strong> opens a new window. <strong>File &gt; Open…</strong> and <strong>Open Recent</strong> work as on the Mac.</p>
+<h3 id="make-it-the-default-for-markdown-1"><a class="heading-anchor" href="#make-it-the-default-for-markdown-1" aria-label="Link to this section">#</a>Make it the default for markdown</h3>
+<p>The installer registers Markydowny for <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code> and <code>.mkdn</code>, but Windows asks you before it changes the app a file type opens with:</p>
+<ol>
+<li>In File Explorer, right-click any <code>.md</code> file and choose <strong>Open with &gt; Choose another app</strong>.</li>
+<li>Choose <strong>Markydowny</strong>, then <strong>Always</strong>. (On Windows 10, check <strong>Always use this app to open .md files</strong>, then click <strong>OK</strong>.)</li>
+</ol>
+<p>Repeat for <code>.markdown</code> (and <code>.mdown</code>, <code>.mkd</code> or <code>.mkdn</code>) if you use them.</p>
 <h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
 <p>Nothing to install: open <a href="https://markydowny.com">markydowny.com</a> in any modern browser. Once it has loaded it works offline. For live reload and saving in place, use Chrome, Edge or another Chromium browser (see <a href="/docs/live-reload/#browser-support">Browser support</a>).</p>
 <h2 id="checksums-and-older-versions"><a class="heading-anchor" href="#checksums-and-older-versions" aria-label="Link to this section">#</a>Checksums and older versions</h2>

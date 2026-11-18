@@ -568,6 +568,21 @@ test('a picked path with spaces or parentheses still reads as one link', () => {
     assert.equal(format.linkDestination('a<b>\\c.png'), 'a%3Cb%3E%5Cc.png');
 });
 
+test('a picked file on another Windows drive or share links its path, named by its file name', () => {
+    const core = require('../js/core.js');
+    const dir = 'C:\\Users\\me\\notes\\';
+    for (const [path, name] of [['D:\\pics\\shot.png', 'shot'], ['\\\\server\\share\\a b.png', 'a b']]) {
+        // As js/app.js inserts it: relativePath has no link across drives or shares.
+        assert.equal(core.relativePath(dir, path), null);
+        const out = format.insertImage({ text: '', selection: { anchor: 0, head: 0 } }, { path });
+        const image = marked.lexer(out.text)[0].tokens[0];
+        assert.equal(image.type, 'image');
+        assert.equal(image.text, name);
+        assert.ok(!core.isExternalUrl(image.href), image.href);
+        assert.equal(core.resolveRelativePath(dir, image.href), path);
+    }
+});
+
 test('a picked name with ?, #, [ or ] is still an image of that file', () => {
     const core = require('../js/core.js');
     for (const path of ['shot#2.png', 'q?.png', 'dir/#a.png', 'foo bar/#x.png', 'a]b.png', 'a[b.png', 'x\\]y.png']) {

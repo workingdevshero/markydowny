@@ -527,8 +527,7 @@
 
     function isInFolder(path) {
         if (!desktopFolder || !path) return false;
-        const root = desktopFolder.root;
-        return path.startsWith(root.endsWith('/') ? root : root + '/');
+        return core.isInsideFolder(desktopFolder.root, path);
     }
 
     function folderTitle(doc) {
