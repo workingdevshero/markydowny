@@ -263,3 +263,33 @@ test('the Linux packages carry the crash reporting helpers next to the executabl
         }, bundle);
     }
 });
+
+test('the release job gathers the Linux packages out of their folders before the checksums', () => {
+    const release = jobs().release;
+    const gather = release.indexOf('name: Gather the files');
+    assert.ok(gather > 0 && gather < release.indexOf('name: Checksums'), 'gathering comes before the checksums');
+    // Run the step's own script against what the download produces.
+    const script = release.slice(gather).match(/run: \|\n((?: {10}.*\n)+)/)[1].replace(/^ {10}/gm, '');
+    const run = dir => spawnSync('bash', ['-e', '-c', script], { cwd: dir, encoding: 'utf8' });
+    const fresh = () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-artifacts-'));
+        fs.mkdirSync(path.join(dir, 'deb')); fs.mkdirSync(path.join(dir, 'appimage'));
+        fs.writeFileSync(path.join(dir, 'Markydowny-1.0.0-universal.dmg'), 'dmg');
+        for (const arch of ['amd64', 'arm64']) fs.writeFileSync(path.join(dir, 'deb', `Markydowny_1.0.0_${arch}.deb`), arch);
+        for (const arch of ['amd64', 'aarch64']) fs.writeFileSync(path.join(dir, 'appimage', `Markydowny_1.0.0_${arch}.AppImage`), arch);
+        return dir;
+    };
+    const dir = fresh();
+    const ok = run(dir);
+    assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+    assert.deepEqual(fs.readdirSync(dir).sort(), [
+        'Markydowny-1.0.0-universal.dmg', 'Markydowny_1.0.0_aarch64.AppImage', 'Markydowny_1.0.0_amd64.AppImage',
+        'Markydowny_1.0.0_amd64.deb', 'Markydowny_1.0.0_arm64.deb',
+    ]);
+    // Two files with one name: the step fails instead of silently dropping one.
+    const clash = fresh();
+    fs.writeFileSync(path.join(clash, 'Markydowny_1.0.0_amd64.deb'), 'other');
+    const bad = run(clash);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stdout, /same name/);
+});

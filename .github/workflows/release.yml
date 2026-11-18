@@ -333,6 +333,18 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      # The Linux jobs upload from two folders, bundle/deb and bundle/appimage, and the download
+      # keeps them as subfolders. Everything goes on the release side by side, so move every file
+      # to the top; a name clash leaves a file behind in its folder and fails here.
+      - name: Gather the files
+        working-directory: artifacts
+        run: |
+          find . -mindepth 2 -type f -exec mv -n {} . \;
+          find . -mindepth 1 -type d -empty -delete
+          if [[ -n "$(find . -mindepth 1 -type d)" ]]; then
+            echo "::error::Two release files have the same name:"; find . -mindepth 2 -type f; exit 1
+          fi
+          ls -l
       - name: Checksums
         working-directory: artifacts
         run: |
