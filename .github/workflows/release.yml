@@ -390,7 +390,8 @@ jobs:
       # take the SmartScreen line out of the release notes.
       - name: Code signing
         shell: bash
-        run: echo "Windows: **not code-signed**: there's no Windows certificate yet, so SmartScreen warns the first time the installer runs." >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Windows: **not code-signed**: there's no Windows certificate yet, so SmartScreen warns the first time the installer runs." >> "$GITHUB_STEP_SUMMARY"
       - name: Crash reporting
         shell: bash
         run: |
