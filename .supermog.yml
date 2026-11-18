@@ -1,16 +1,27 @@
 # supermog config — schema documented in workingdevshero/supermog (README, Verification).
 #
 # The website is a static page at the repository root (GitHub Pages serves main from /), so
-# verification serves the checkout over HTTP and drives it in a real browser. The macOS app can't
-# run on the fleet's Linux boxes; its Rust is covered by CI (.github/workflows/ci.yml), which is
-# supermog's check gate.
+# verification serves the checkout over HTTP and drives it in a real browser. The desktop app is
+# built and driven on a Linux desktop (`desktop` below); its Rust is also covered by CI
+# (.github/workflows/ci.yml), which is supermog's check gate.
 verify:
   # In a dot-directory so GitHub Pages' Jekyll build doesn't publish it as a page.
   notes: .supermog/VERIFY.md
-  # Only what the browser renders. The desktop app (src-tauri/**), tests and build scripts never
-  # change the website, so a PR touching only those isn't verified in a browser.
-  paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico"]
+  # What a round can see change: the website's files in a browser, and the desktop app's. Tests and
+  # CI change neither.
+  paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico", "src-tauri/**", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
   evidence: both
+  # The desktop app, built from the pull request and driven on a Linux desktop of the round's own.
+  # `build` prints the built binary's path as its last line. The Dockerfile is the toolchain, so a
+  # round only compiles. `paths` keeps website-only pull requests off the desktop.
+  #
+  # No `macos` yet: a macOS round needs a Mac running supermog's desktop bridge. Until one does,
+  # what the app does only on macOS (native tabs, the menu bar) is not verified by a round.
+  desktop:
+    linux:
+      build: scripts/build-desktop.sh
+      dockerfile: .supermog/desktop-linux.Dockerfile
+      paths: ["src-tauri/**", "js/**", "index.html", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
 
 # supermog builds and maintains this repo's GitHub Actions workflows too (the release workflow,
 # #33), so its jobs need `workflows: write`. It's off by default because most jobs never touch
