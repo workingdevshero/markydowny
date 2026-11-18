@@ -64,7 +64,7 @@ test('lineSeparator keeps CRLF files CRLF, and anything mixed as it is', () => {
     assert.equal(core.lineSeparator(''), '\n');
 });
 
-test('editorShortcut: ⌘E and ⌘S on a Mac, Ctrl+E and Ctrl+S elsewhere', () => {
+test('editorShortcut: ⌘E, ⌘S and ⌘F on a Mac, Ctrl+E, Ctrl+S and Ctrl+F elsewhere', () => {
     const key = (k, mods = {}) => ({ key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...mods });
     assert.equal(core.editorShortcut(key('e', { metaKey: true }), true), 'toggle');
     assert.equal(core.editorShortcut(key('s', { metaKey: true }), true), 'save');
@@ -73,6 +73,10 @@ test('editorShortcut: ⌘E and ⌘S on a Mac, Ctrl+E and Ctrl+S elsewhere', () =
     assert.equal(core.editorShortcut(key('e', { ctrlKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e', { ctrlKey: true }), false), 'toggle');
     assert.equal(core.editorShortcut(key('s', { ctrlKey: true }), false), 'save');
+    assert.equal(core.editorShortcut(key('f', { metaKey: true }), true), 'find');
+    assert.equal(core.editorShortcut(key('f', { ctrlKey: true }), false), 'find');
+    assert.equal(core.editorShortcut(key('f', { ctrlKey: true }), true), null, 'Ctrl+F is "forward a character" on a Mac');
+    assert.equal(core.editorShortcut(key('f', { metaKey: true, shiftKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e', { metaKey: true }), false), null);
     assert.equal(core.editorShortcut(key('s', { metaKey: true, shiftKey: true }), true), null, 'Save As is not Save');
     assert.equal(core.editorShortcut(key('e', { metaKey: true, altKey: true }), true), null);
@@ -291,4 +295,88 @@ test('only a few recent saves are remembered', () => {
         state = run([{ type: 'saved', content: String(i), text: String(i) }], state).state;
     }
     assert.deepEqual(state.written, ['7', '8', '9', '10']);
+});
+
+test('countWords counts plain prose', () => {
+    assert.equal(core.countWords('The quick brown fox jumps over the lazy dog.'), 9);
+    assert.equal(core.countWords('One,two three—four well-known it’s 3.14'), 5);
+    assert.equal(core.countWords('First paragraph here.\n\nSecond one.\r\nThird line\rfourth'), 8);
+});
+
+test('countWords leaves out heading markers and emphasis', () => {
+    assert.equal(core.countWords('# A title\n\n## Second level ##\n\nSetext\n======\n\n---'), 5);
+    assert.equal(core.countWords('**bold** and *italic* and ***both*** and ~~gone~~ and __under__'), 9);
+    assert.equal(core.countWords('a ** b * c _ d'), 4, 'stray markers are not words');
+});
+
+test('countWords leaves out list markers and task boxes', () => {
+    assert.equal(core.countWords('- one\n* two\n+ three\n1. four\n2) five\n10. six'), 6);
+    assert.equal(core.countWords('- [ ] buy milk\n- [x] walk the dog\n  - [X] nested'), 6);
+    assert.equal(core.countWords('> quoted words\n> - in a list'), 5);
+    assert.equal(core.countWords('In 2024 we shipped 3 things'), 6, 'numbers in prose still count');
+});
+
+test('countWords counts link text, not URLs', () => {
+    assert.equal(core.countWords('See [the docs](https://example.com/docs "Docs title") now.'), 4);
+    assert.equal(core.countWords('A [reference link][ref] and [another] [x][].\n\n[ref]: https://example.com "Title"'), 6);
+    assert.equal(core.countWords('[wiki](https://en.wikipedia.org/wiki/Foo_(bar)) done'), 2);
+    assert.equal(core.countWords('[spaced](<a url with spaces.md>) here'), 2);
+    assert.equal(core.countWords('Bare <https://example.com> autolink'), 3, 'an autolink shows its URL');
+    assert.equal(core.countWords('Note[^1] here.\n\n[^1]: The footnote text.'), 5);
+    assert.equal(core.countWords('[foo]: /url\n"title words here"\n\nSee [foo].'), 2, 'a title on the next line');
+    assert.equal(core.countWords('[ref]: <my file.md> "Title words"\n\nSee [ref].'), 2, 'a <destination> with spaces');
+});
+
+test('countWords counts image alt text, not the path', () => {
+    assert.equal(core.countWords('![A happy mascot](marky.png "Marky")'), 3);
+    assert.equal(core.countWords('[![build status](https://ci/badge.svg)](https://ci/run)'), 2);
+    assert.equal(core.countWords('![](empty-alt.png) text'), 1);
+});
+
+test('countWords counts inline code as written', () => {
+    assert.equal(core.countWords('Run `npm test` now'), 4);
+    assert.equal(core.countWords('Literal `[not](a link)` stays'), 4);
+    assert.equal(core.countWords('``code with ` tick`` x'), 4);
+});
+
+test('countWords counts code but not fences or info strings', () => {
+    assert.equal(core.countWords('Before\n\n```javascript title="a.js"\nconst answer = 42;\n```\n\nAfter'), 5);
+    assert.equal(core.countWords('~~~python\nprint("hi")\n~~~'), 1);
+    assert.equal(core.countWords('```\n[x](y) **z**\n````\nafter'), 3, 'markup inside code is code');
+    assert.equal(core.countWords('- item\n  ```sh\n  ls -la\n  ```'), 3);
+    assert.equal(core.countWords('```\nunclosed fence\nruns to the end'), 6);
+    const link = '\n\nSee [docs](https://example.com "title words")';
+    assert.equal(core.countWords('> ```\n> code\n> ```' + link), 3, 'a fence in a blockquote closes');
+    assert.equal(core.countWords('- item\n    ```\n    code word\n    ```' + link), 5, 'an indented fence in a list closes');
+    assert.equal(core.countWords('``` not a fence ``` x'), 4, 'backticks with a backtick after are inline code');
+});
+
+test('countWords counts table cells, not their borders', () => {
+    const table = '| Name | Role |\n|:-----|-----:|\n| Ada Lovelace | Engineer |\n|Bob|Ops|';
+    assert.equal(core.countWords(table), 7);
+});
+
+test('countWords counts each CJK character, and leaves out HTML tags and comments', () => {
+    assert.equal(core.countWords('日本語のテキスト'), 8);
+    assert.equal(core.countWords('你好，世界'), 4);
+    assert.equal(core.countWords('Hello世界 world'), 4);
+    assert.equal(core.countWords('한국어 단어 세 개'), 4, 'Korean spaces its words');
+    assert.equal(core.countWords('<div align="center">Centered text</div> <!-- a hidden note -->'), 2);
+    assert.equal(core.countWords('<img src="a.png" alt="x"> <br/>'), 0);
+});
+
+test('countWords of an empty document is 0', () => {
+    assert.equal(core.countWords(''), 0);
+    assert.equal(core.countWords('   \n\n\t'), 0);
+    assert.equal(core.countWords(null), 0);
+    assert.equal(core.countWords('---\n***\n- \n#'), 0);
+});
+
+test('formatWordCount reads "1,204 words" and "37 of 1,204 words"', () => {
+    assert.equal(core.formatWordCount(1204), '1,204 words');
+    assert.equal(core.formatWordCount(1204, 37), '37 of 1,204 words');
+    assert.equal(core.formatWordCount(1), '1 word');
+    assert.equal(core.formatWordCount(0), '0 words');
+    assert.equal(core.formatWordCount(5, 0), '0 of 5 words');
+    assert.equal(core.formatWordCount(1, 1), '1 of 1 word');
 });

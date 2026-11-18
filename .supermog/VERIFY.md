@@ -138,6 +138,21 @@ changes put a dot before the title in the top bar and the page title ("• live.
   "Leave site?" prompt (`beforeunload`). Without unsaved changes none of them ask.
 - **Phone width.** While editing, the pencil goes icon-only and fullscreen steps aside, so
   *Revert* and *Save* fit in the top bar.
+- **Find and replace.** ⌘F / Ctrl+F while editing opens CodeMirror's search panel at the bottom
+  of the editor, with the focus in *Find*: matches are tinted, and *replace* / *replace all* act
+  on them. The panel takes the page's fonts and colours, so check it in light and dark. While
+  viewing, ⌘F is the browser's own find: the page doesn't call `preventDefault` and opens
+  nothing. To check it end to end, open an OPFS handle as in *Live reload*, press *Edit*,
+  press Ctrl+F, type a word that occurs several times, type the replacement in the second field,
+  click *replace all*, press Ctrl+S, and read the file back
+  (`await (await handle.getFile()).text()`): every match is replaced and no other byte changed.
+  Type into the fields with real key presses: the panel takes its query from `keyup` and
+  `change`, which `browser_evaluate` setting `.value` doesn't fire.
+- **Word count.** While editing, the top bar shows "1,204 words" where *Updated* would be, and
+  "37 of 1,204 words" while text is selected. It updates a moment (200 ms) after typing stops.
+  Markup doesn't count: `#`, `**`, list markers and task boxes, a link's URL, code fences and
+  their info strings. Link text, alt text and code do. It isn't shown at phone width, where the
+  top bar has no room for it.
 
 ### Formatting toolbar
 

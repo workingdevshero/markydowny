@@ -1209,6 +1209,20 @@
             font-weight: 400;
         }
 
+        /* Shown by app.js while editing, where "Updated" would be. */
+        .word-count {
+            display: none;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        body.editing .word-count:not([hidden]) {
+            display: inline-flex;
+            align-items: center;
+        }
+
         .editor-host:not([hidden]) {
             display: block;
             font-size: 1.0625rem;
@@ -1464,7 +1478,8 @@
                 display: none;
             }
 
-            .live-status {
+            .live-status,
+            .word-count {
                 display: none !important;
             }
 
@@ -1657,6 +1672,7 @@
             <div class="doc-title" id="docTitle"></div>
             <div class="topbar-actions">
                 <span class="live-status" id="liveStatus" hidden></span>
+                <span class="word-count" id="wordCount" hidden></span>
                 <button class="btn btn-ghost follow-button" id="followButton" type="button" aria-pressed="false" hidden>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
                     <span id="followLabel">Follow</span>

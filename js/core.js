@@ -432,7 +432,115 @@
         if (event.shiftKey) return null;
         if (key === 'e') return 'toggle';
         if (key === 's') return 'save';
+        if (key === 'f') return 'find';
         return null;
+    }
+
+    // Han and kana: written without spaces, so each character counts as a word, as word
+    // processors count them. (Korean puts spaces between its words.)
+    const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]|[\ud840-\ud87f][\udc00-\udfff]/g;
+    const WORD_CHAR = /[\p{L}\p{N}]/u;
+    // A link or image destination, with an optional title: (url "title"), (<url> 'title').
+    const LINK_TARGET = String.raw`\(\s*(?:<[^>\n]*>|(?:[^()\s]|\([^()\s]*\))*)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\)`;
+    const IMAGE = new RegExp(String.raw`!\[([^\[\]]*)\](?:${LINK_TARGET}|\[[^\[\]]*\])?`, 'g');
+    const LINK = new RegExp(String.raw`\[([^\[\]]*)\](?:${LINK_TARGET}|\[[^\[\]]*\])`, 'g');
+
+    /** Words in a run of markdown prose (no code blocks), with the markup taken out. */
+    function proseWords(text) {
+        const spans = [];
+        // Inline code is text as written: set it aside so nothing below rewrites it.
+        let s = text.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (m, ticks, code) => {
+            spans.push(code);
+            return ` \u0000${spans.length - 1}\u0000 `;
+        });
+        s = s
+            .replace(/<!--[\s\S]*?-->/g, ' ')
+            // Reference definitions ([id]: url "title"; the url may be in <> or on the next
+            // line, and the title on the next line). Before tags, so <url> isn't taken for one.
+            .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\n?[ \t]*(?:<[^<>\n]*>|\S+)(?:(?:[ \t]+|[ \t]*\n[ \t]*)(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/gm, ' ')
+            // Autolinks show their URL, so it counts; other tags are markup.
+            .replace(/<((?:[a-z][a-z0-9+.-]*:|mailto:)[^\s<>]+|[^\s<>@]+@[^\s<>@]+)>/gi, ' $1 ')
+            .replace(/<\/?[a-z][^<>]*>/gi, ' ')
+            // Footnote markers ([^1]).
+            .replace(/\[\^[^\]\s]+\]:?/g, ' ');
+        // Images inside links resolve first; a link's text and an image's alt text count.
+        let previous;
+        do {
+            previous = s;
+            s = s.replace(IMAGE, ' $1 ').replace(LINK, ' $1 ');
+        } while (s !== previous);
+        s = s
+            // Blockquote markers, then list markers and task boxes, at the start of a line.
+            .replace(/^[ \t]*(?:>[ \t]?)+/gm, '')
+            .replace(/^[ \t]*(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$)[ \t]*(?:\[[ xX]\](?=[ \t]|$))?/gm, ' ')
+            // Table cell borders.
+            .replace(/\|/g, ' ')
+            .replace(/\u0000(\d+)\u0000/g, (m, i) => spans[Number(i)]);
+        return countTokens(s);
+    }
+
+    /** Whitespace-separated runs with a letter or digit in them, plus one per CJK character. */
+    function countTokens(text) {
+        let count = 0;
+        for (const token of text.split(/\s+/)) {
+            const cjk = token.match(CJK_CHAR);
+            if (!cjk) {
+                if (WORD_CHAR.test(token)) count++;
+                continue;
+            }
+            count += cjk.length;
+            for (const part of token.split(CJK_CHAR)) {
+                if (WORD_CHAR.test(part)) count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Words in `markdown` as a reader sees them: markup (#, **, list markers and task boxes,
+     * a link's URL, code fences and their info strings, HTML tags) doesn't count, while a link's
+     * text, an image's alt text and code do. CJK characters count one each.
+     */
+    function countWords(markdown) {
+        const lines = String(markdown || '').split(/\r\n|\r|\n/);
+        let count = 0;
+        let prose = [];
+        let fence = null;
+        const flush = () => {
+            if (prose.length) count += proseWords(prose.join('\n'));
+            prose = [];
+        };
+        for (const line of lines) {
+            if (fence) {
+                // The closer sits behind the same blockquote markers and list indent as the opener.
+                const close = line.match(/^(?:[ \t]*>)*[ \t]*(`{3,}|~{3,})[ \t]*$/);
+                if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
+                    fence = null;
+                } else {
+                    count += countTokens(line);
+                }
+                continue;
+            }
+            // A fence may sit in a list item or a blockquote.
+            const open = line.match(/^(?:[ \t]*(?:>[ \t]?|[-*+][ \t]|\d{1,9}[.)][ \t]))*[ \t]*(`{3,}|~{3,})(.*)$/);
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+                flush();
+                fence = open[1];
+                continue;
+            }
+            prose.push(line);
+        }
+        flush();
+        return count;
+    }
+
+    /** "1,204 words", or "37 of 1,204 words" when `selected` (a count of words) isn't null. */
+    function formatWordCount(total, selected = null) {
+        const n = (value) => Number(value).toLocaleString('en-US');
+        const unit = total === 1 ? 'word' : 'words';
+        return selected === null || selected === undefined
+            ? `${n(total)} ${unit}`
+            : `${n(selected)} of ${n(total)} ${unit}`;
     }
 
     /**
@@ -620,6 +728,8 @@
 
     return {
         editorShortcut,
+        countWords,
+        formatWordCount,
         lineSeparator,
         textChange,
         blockIndexAt,
