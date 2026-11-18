@@ -3,8 +3,9 @@
 # a .dmg that opens without Gatekeeper warnings. Prints the .dmg's path as the last line; its
 # SHA-256 is written next to it.
 #
-#   scripts/release-mac.sh             build, sign, notarize, staple, package
-#   scripts/release-mac.sh --dry-run   print every step instead of running it (no credentials)
+#   scripts/release-mac.sh             build, sign, package, notarize, staple
+#   scripts/release-mac.sh --dry-run   print every step instead of running it (no credentials, and
+#                                      on any OS)
 #
 # Options (or the same names as environment variables):
 #   --arch universal|arm64|x86_64   ARCH, default universal (Apple silicon and Intel in one app)
@@ -65,13 +66,15 @@ step() {
     fi
 }
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "this builds the Mac app; run it on a Mac"
+$dry_run || [[ "$(uname -s)" == "Darwin" ]] || fail "this builds the Mac app; run it on a Mac"
 [[ "$identity" != "-" ]] || ! $notarize || fail "an ad-hoc signature (--identity -) can't be notarized; add --no-notarize"
 cd "$root"
 
 version=$(node -p "require('$root/src-tauri/tauri.conf.json').version")
 product=$(node -p "require('$root/src-tauri/tauri.conf.json').productName")
-app="$root/src-tauri/target/$target/release/bundle/macos/$product.app"
+# Where Cargo (and so Tauri) builds: CARGO_TARGET_DIR when it's set, as Cargo reads it.
+target_dir=${CARGO_TARGET_DIR:-$root/src-tauri/target}
+app="$target_dir/$target/release/bundle/macos/$product.app"
 dist="$root/dist-release"
 dmg="$dist/$product-$version-$arch.dmg"
 
@@ -96,7 +99,8 @@ if [[ "$target" == "universal-apple-darwin" ]]; then
 else
     step rustup target add "$target"
 fi
-step npm ci --no-audit --no-fund
+# --include=dev: the Tauri CLI is a devDependency, which NODE_ENV=production would leave out.
+step npm ci --include=dev --no-audit --no-fund
 step npx tauri build --bundles app --target "$target"
 
 # --- Universal helpers ----------------------------------------------------------------------
@@ -105,24 +109,33 @@ step npx tauri build --bundles app --target "$target"
 # BugSplat helpers reach the bundle through build.rs's single bugsplat-helpers/ folder, which the
 # second architecture's build overwrites: they came out Intel-only. Merge each architecture's own
 # build of them instead.
-helper_build() { # <rust target> <path under bugsplat-native/>
-    local found
-    found=$(ls -td "src-tauri/target/$1/release/build"/bugsplat-sys-*/out/build/bugsplat-native/"$2" 2>/dev/null | head -1 || true)
-    if [[ -z "$found" ]]; then
-        $dry_run || fail "no $2 built for $1"
-        found="src-tauri/target/$1/release/build/bugsplat-sys-<hash>/out/build/bugsplat-native/$2"
+# bugsplat-sys's CMake build writes where it put the helpers to bugsplat-link.txt. Read that
+# rather than guessing the path: Cargo's build directory is build/bugsplat-sys-<hash>/ before
+# 1.100 and build/bugsplat-sys/<hash>/ since, and an older build can still be on disk next to
+# the current one, so take the newest.
+helpers_for() { # <rust target>; sets monitor and reporter
+    local info="" f
+    while IFS= read -r -d '' f; do
+        if [[ -z "$info" || "$f" -nt "$info" ]]; then info=$f; fi
+    done < <(find "$target_dir/$1/release/build" -path '*/bugsplat-sys*/out/build/bugsplat-link.txt' -print0 2>/dev/null)
+    if [[ -z "$info" ]]; then
+        $dry_run || fail "no BugSplat helpers built for $1 (no bugsplat-link.txt)"
+        monitor="$target_dir/$1/release/build/bugsplat-sys-<hash>/out/build/bugsplat-native/monitor/BugSplatMonitor"
+        reporter="$target_dir/$1/release/build/bugsplat-sys-<hash>/out/build/bugsplat-native/reporter/BugSplatReporter.app"
+        return
     fi
-    printf '%s\n' "$found"
+    monitor=$(sed -n 's/^monitor=//p' "$info")
+    reporter=$(sed -n 's/^reporter=//p' "$info")
+    [[ -n "$monitor" && -n "$reporter" ]] || fail "$info names no monitor or reporter"
 }
 reporter_exe=BugSplatReporter.app/Contents/MacOS/BugSplatReporter
 if [[ "$target" == "universal-apple-darwin" ]]; then
-    step lipo -create \
-        "$(helper_build aarch64-apple-darwin monitor/BugSplatMonitor)" \
-        "$(helper_build x86_64-apple-darwin monitor/BugSplatMonitor)" \
-        -output "$app/Contents/Helpers/BugSplatMonitor"
-    step lipo -create \
-        "$(helper_build aarch64-apple-darwin "reporter/$reporter_exe")" \
-        "$(helper_build x86_64-apple-darwin "reporter/$reporter_exe")" \
+    helpers_for aarch64-apple-darwin
+    arm_monitor=$monitor arm_reporter=$reporter
+    helpers_for x86_64-apple-darwin
+    # The reporter line names the .app bundle on macOS; its executable is what gets merged.
+    step lipo -create "$arm_monitor" "$monitor" -output "$app/Contents/Helpers/BugSplatMonitor"
+    step lipo -create "$arm_reporter/Contents/MacOS/BugSplatReporter" "$reporter/Contents/MacOS/BugSplatReporter" \
         -output "$app/Contents/Helpers/$reporter_exe"
 fi
 
