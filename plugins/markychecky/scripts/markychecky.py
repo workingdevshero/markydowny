@@ -193,7 +193,13 @@ def place(cwd):
     if not top:
         return os.path.basename(os.path.normpath(cwd)) or cwd
     branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
-    name = os.path.basename(top)
+    # In a linked worktree, the top level is the worktree's own folder; name the repository
+    # after the main checkout, which holds the shared .git directory.
+    common = git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common and os.path.basename(os.path.normpath(common)) == ".git":
+        name = os.path.basename(os.path.dirname(os.path.normpath(common)))
+    else:
+        name = os.path.basename(top)
     return f"{name} · {branch}" if branch and branch != "HEAD" else name
 
 

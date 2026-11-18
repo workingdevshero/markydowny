@@ -296,3 +296,17 @@ test('the markychecky page has every setup step an agent needs, each with a chec
     const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
     assert.deepEqual(settings, { model: 'opus', env: { FOO: 'bar', CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
 });
+
+test('a session in a git worktree is named after the repository, not the worktree folder', { skip: !hasPython }, () => {
+    const box = sandbox();
+    const repo = path.join(box.dir, 'widgets');
+    const tree = path.join(box.dir, 'wt-fix-login');
+    const g = (...args) => assert.equal(spawnSync('git', args, { encoding: 'utf8' }).status, 0, args.join(' '));
+    g('init', '-q', '-b', 'main', repo);
+    g('-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init');
+    g('-C', repo, 'worktree', 'add', '-q', '-b', 'fix/login', tree);
+    hook(box, 'task', { ...create('s1', 1, 'Fix the login'), cwd: tree });
+    hook(box, 'task', { ...create('s2', 1, 'Plan the release'), cwd: repo });
+    assert.match(section(read(box), 's1'), /^## widgets · fix\/login$/m);
+    assert.match(section(read(box), 's2'), /^## widgets · main$/m);
+});
