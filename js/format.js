@@ -117,21 +117,160 @@
         return { indent, quote, list, listKind, heading, level };
     }
 
-    /** [start, end) of each fenced code block, as line indexes (end: the closing fence's line, or the end). */
+    function quoteDepth(p) {
+        return (p.quote.match(/>/g) || []).length;
+    }
+
+    /** Length of the first `depth` quote markers at the start of `line` (all it has, if fewer). */
+    function quotePrefixLength(line, depth) {
+        let at = 0;
+        for (let n = 0; n < depth; n++) {
+            const m = /^[ \t]{0,3}>[ \t]?/.exec(line.slice(at));
+            if (!m) break;
+            at += m[0].length;
+        }
+        return at;
+    }
+
+    function leadingSpaces(text) {
+        return /^[ \t]*/.exec(text)[0].length;
+    }
+
+    /**
+     * Each fenced code block, as line indexes: [{ start, end, depth, list, unclosed }]. `end` is
+     * the closing fence's line, or (`unclosed`) the block's last line. A fence can follow quote
+     * markers (`depth` of them) and a list marker (`list`: the column the item's content starts
+     * at); the block then ends with its quote or list item, if it isn't closed first.
+     */
     function fencedBlocks(lines) {
         const blocks = [];
         let open = null;
         for (let i = 0; i < lines.length; i++) {
-            const m = FENCE.exec(lines[i]);
-            if (!open) {
-                if (m) open = { start: i, char: m[1][0], size: m[1].length };
-            } else if (m && m[1][0] === open.char && m[1].length >= open.size && lines[i].trim() === m[1]) {
-                blocks.push({ start: open.start, end: i });
+            const line = lines[i];
+            if (open) {
+                const quoted = quotePrefixLength(line, open.depth);
+                const inQuote = open.depth === 0 || quoteDepth(parseLine(line)) >= open.depth;
+                const after = line.slice(quoted);
+                const inItem = !open.list || after.trim() === '' || leadingSpaces(after) >= open.list;
+                if (inQuote && inItem) {
+                    const m = FENCE.exec(after.slice(Math.min(open.list, leadingSpaces(after))));
+                    if (m && m[1][0] === open.char && m[1].length >= open.size && after.trim() === m[1]) {
+                        blocks.push({ start: open.start, end: i, depth: open.depth, list: open.list });
+                        open = null;
+                    }
+                    continue;
+                }
+                blocks.push({ start: open.start, end: i - 1, depth: open.depth, list: open.list, unclosed: true });
                 open = null;
             }
+            const p = parseLine(line);
+            const depth = p.quote ? quoteDepth(p) : 0;
+            const prefix = depth || p.list ? p.indent.length + p.quote.length + p.list.length : 0;
+            const m = FENCE.exec(line.slice(prefix));
+            if (m) {
+                const list = p.list ? (depth ? 0 : p.indent.length) + p.list.length : 0;
+                open = { start: i, char: m[1][0], size: m[1].length, depth, list };
+            }
         }
-        if (open) blocks.push({ start: open.start, end: lines.length - 1, unclosed: true });
+        if (open) blocks.push({ start: open.start, end: lines.length - 1, depth: open.depth, list: open.list, unclosed: true });
         return blocks;
+    }
+
+    const INDENTED = /^(?: {4}| {0,3}\t)/;
+    const ATX = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+    const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+    const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/;
+
+    /**
+     * Each indented code block, as line indexes: [{ start, end }]. It can't interrupt a
+     * paragraph, and indented lines in a list are the item's, not code.
+     */
+    function indentedBlocks(lines, fences) {
+        const fenced = new Set();
+        for (const b of fences) for (let i = b.start; i <= b.end; i++) fenced.add(i);
+        const blocks = [];
+        let open = null;
+        let prev = -1;
+        let inList = false;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim() === '') continue;
+            const indented = !fenced.has(i) && INDENTED.test(line);
+            if (open && indented) {
+                open.end = i;
+            } else {
+                if (open) blocks.push(open);
+                open = null;
+                if (indented && !inList) {
+                    const prevEnds = prev < i - 1 || prev === -1 || fenced.has(prev) || ATX.test(lines[prev]) || RULE.test(lines[prev]);
+                    if (prevEnds) open = { start: i, end: i };
+                }
+                if (!indented && !fenced.has(i)) {
+                    const p = parseLine(line);
+                    inList = Boolean(p.list) && !p.quote;
+                }
+            }
+            prev = i;
+        }
+        if (open) blocks.push(open);
+        return blocks;
+    }
+
+    /** Each setext heading, as line indexes: [{ start, end, level }], `end` being its underline. */
+    function setextHeadings(lines, code) {
+        const headings = [];
+        let start = null;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (code.has(i) || line.trim() === '') {
+                start = null;
+                continue;
+            }
+            if (start !== null && SETEXT.test(line)) {
+                headings.push({ start, end: i, level: line.trim()[0] === '=' ? 1 : 2 });
+                start = null;
+                continue;
+            }
+            const p = parseLine(line);
+            if (p.quote || p.list || p.level || RULE.test(line)) start = null;
+            else if (start === null) start = i;
+        }
+        return headings;
+    }
+
+    /**
+     * The document's blocks, as the editor's syntax tree reads them: { fences, indented,
+     * setexts, styleOf(i) }, styleOf giving line i's block style ('codeBlock', 'quote',
+     * 'h1'-'h6' or 'paragraph', the order a line's style is read in when it has several).
+     */
+    function blockStructure(lines) {
+        const fences = fencedBlocks(lines);
+        const indented = indentedBlocks(lines, fences);
+        const code = new Set();
+        for (const b of [...fences, ...indented]) for (let i = b.start; i <= b.end; i++) code.add(i);
+        const setexts = setextHeadings(lines, code);
+        const styleOf = (i) => {
+            if (code.has(i)) return 'codeBlock';
+            const p = parseLine(lines[i]);
+            if (p.quote) return 'quote';
+            if (p.level) return 'h' + p.level;
+            const heading = setexts.find(h => h.start <= i && i <= h.end);
+            return heading ? 'h' + heading.level : 'paragraph';
+        };
+        return { fences, indented, setexts, styleOf };
+    }
+
+    /** How many characters make up the first 4 columns of an indented code line. */
+    function dedentLength(line) {
+        let column = 0;
+        let at = 0;
+        while (at < line.length && column < 4) {
+            if (line[at] === '\t') column += 4 - (column % 4);
+            else if (line[at] === ' ') column++;
+            else break;
+            at++;
+        }
+        return at;
     }
 
     // ------------------------------------------------------------------
@@ -225,7 +364,9 @@
             if (masked[i] || (ch !== '*' && ch !== '_' && ch !== '~')) continue;
             let j = i;
             while (j < line.length && line[j] === ch && !masked[j]) j++;
-            const before = line[i - 1];
+            // Of a longer run of tildes, only the last two are strikethrough's (as the editor reads it).
+            const start = ch === '~' && j - i > 2 ? j - 2 : i;
+            const before = line[start - 1];
             const after = line[j];
             const leftFlanking = !isSpace(after) && (!isPunct(after) || isSpace(before) || isPunct(before));
             const rightFlanking = !isSpace(before) && (!isPunct(before) || isSpace(after) || isPunct(after));
@@ -235,29 +376,32 @@
                 canOpen = leftFlanking && (!rightFlanking || isPunct(before));
                 canClose = rightFlanking && (!leftFlanking || isPunct(after));
             }
-            runs.push({ char: ch, from: i, to: j, canOpen, canClose });
+            runs.push({ char: ch, from: start, to: j, canOpen, canClose, length: j - start });
             i = j - 1;
         }
         const spans = [];
         const stack = [];
+        // CommonMark's rule of 3: a run that can both open and close pairs with another only if
+        // their lengths don't add up to a multiple of 3, unless both lengths are.
+        const pairs = (opener, closer) => {
+            // Tildes pair with a run of their own length: two for strikethrough, one for subscript.
+            if (opener.char === '~') return opener.length === closer.length;
+            if (!(opener.canClose || closer.canOpen)) return true;
+            return (opener.length + closer.length) % 3 !== 0 || (opener.length % 3 === 0 && closer.length % 3 === 0);
+        };
         for (const run of runs) {
-            const rest = { char: run.char, from: run.from, to: run.to };
+            const rest = { ...run };
             if (run.canClose) {
                 while (rest.to > rest.from) {
                     let k = stack.length - 1;
-                    while (k >= 0 && stack[k].char !== run.char) k--;
+                    while (k >= 0 && !(stack[k].char === run.char && pairs(stack[k], run))) k--;
                     if (k < 0) break;
                     const opener = stack[k];
                     stack.length = k + 1;
                     const openSize = opener.to - opener.from;
                     const closeSize = rest.to - rest.from;
-                    let use;
-                    if (run.char === '~') {
-                        if (openSize !== closeSize) break;
-                        use = openSize;
-                    } else {
-                        use = openSize >= 2 && closeSize >= 2 ? 2 : 1;
-                    }
+                    // Two at a time (strong emphasis) while both runs have them.
+                    const use = openSize >= 2 && closeSize >= 2 ? 2 : 1;
                     spans.push({
                         char: run.char,
                         size: use,
@@ -278,7 +422,8 @@
     function inlineSpans(line, style) {
         const spec = INLINE[style];
         if (spec.kind === 'code') return codeSpans(line);
-        return emphasisSpans(line).filter(span => spec.chars.includes(span.char) && (span.char === '~' || span.size === spec.size));
+        // A single tilde is subscript, not strikethrough.
+        return emphasisSpans(line).filter(span => spec.chars.includes(span.char) && span.size === spec.size);
     }
 
     /** The innermost span of `style` around [from, to] in the line, or null. */
@@ -416,28 +561,112 @@
     // Links
     // ------------------------------------------------------------------
 
-    /** Inline links in `line`: [{ from, to, text: {from, to}, url: {from, to} }], relative to the line. */
+    /** The index just past the `]` closing the bracket at `open` (brackets nest), or -1. */
+    function closingBracket(line, open) {
+        let depth = 0;
+        for (let i = open; i < line.length; i++) {
+            if (line[i] === '\\') i++;
+            else if (line[i] === '[') depth++;
+            else if (line[i] === ']' && --depth === 0) return i + 1;
+        }
+        return -1;
+    }
+
+    /**
+     * An inline link's `(destination "title")` starting at `open` (the '('):
+     * { url: {from, to}, end } (end: just past the ')'), or null. A bare destination may hold
+     * balanced parentheses, as in CommonMark.
+     */
+    function inlineDestination(line, open) {
+        let i = open + 1;
+        const skipSpace = () => {
+            while (i < line.length && /[ \t]/.test(line[i])) i++;
+        };
+        skipSpace();
+        let url;
+        if (line[i] === '<') {
+            const from = i + 1;
+            for (i = from; i < line.length && line[i] !== '>'; i++) {
+                if (line[i] === '\\') i++;
+                else if (line[i] === '<') return null;
+            }
+            if (i >= line.length) return null;
+            url = { from, to: i };
+            i++;
+        } else {
+            const from = i;
+            let depth = 0;
+            for (; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '\\') i++;
+                else if (/[\s\x00-\x1f]/.test(ch)) break;
+                else if (ch === '(') depth++;
+                else if (ch === ')' && depth-- === 0) break;
+            }
+            if (depth > 0) return null;
+            i = Math.min(i, line.length);
+            url = { from, to: i };
+        }
+        const beforeTitle = i;
+        skipSpace();
+        const close = { '"': '"', "'": "'", '(': ')' }[line[i]];
+        if (close && (i > beforeTitle || url.from === url.to)) {
+            for (i++; i < line.length && line[i] !== close; i++) if (line[i] === '\\') i++;
+            if (i >= line.length) return null;
+            i++;
+            skipSpace();
+        }
+        return line[i] === ')' ? { url, end: i + 1 } : null;
+    }
+
+    /**
+     * The links in `line` (relative to the line): [{ from, to, image, text: {from, to},
+     * url: {from, to} }]. `url` is what Link selects in it: an inline link's destination, a
+     * reference link's label, or (for [text][] and [text]) the text itself.
+     */
     function linksIn(line) {
         const links = [];
-        const re = /!?\[((?:\\.|[^\]\\])*)\]\(\s*(<[^>\n]*>|[^\s)]*)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
-        let m;
-        while ((m = re.exec(line))) {
-            const textFrom = m.index + m[0].indexOf('[') + 1;
-            const textTo = textFrom + m[1].length;
-            let urlFrom = line.indexOf(m[2], textTo + 2);
-            let urlTo = urlFrom + m[2].length;
-            if (m[2].startsWith('<')) {
-                urlFrom++;
-                urlTo--;
+        const masked = new Array(line.length).fill(false);
+        for (const span of codeSpans(line)) {
+            for (let i = span.open.from; i < span.close.to; i++) masked[i] = true;
+        }
+        // Not the list's task box, nor a link reference definition's label.
+        const start = contentStart(line);
+        if (/^ {0,3}\[(?:\\.|[^\]\\])+\]:/.test(line)) return links;
+        for (let i = start; i < line.length; i++) {
+            if (line[i] === '\\') {
+                i++;
+                continue;
             }
-            links.push({ from: m.index, to: m.index + m[0].length, text: { from: textFrom, to: textTo }, url: { from: urlFrom, to: urlTo } });
+            if (line[i] !== '[' || masked[i]) continue;
+            const image = line[i - 1] === '!' && line[i - 2] !== '\\';
+            const from = image ? i - 1 : i;
+            const textEnd = closingBracket(line, i);
+            if (textEnd === -1) continue;
+            const text = { from: i + 1, to: textEnd - 1 };
+            let link = null;
+            const inline = line[textEnd] === '(' ? inlineDestination(line, textEnd) : null;
+            if (inline) {
+                link = { from, to: inline.end, image, text, url: inline.url };
+            } else if (line[textEnd] === '[') {
+                const labelEnd = line.indexOf(']', textEnd);
+                if (labelEnd !== -1) {
+                    const label = { from: textEnd + 1, to: labelEnd };
+                    link = { from, to: labelEnd + 1, image, text, url: label.from === label.to ? text : label };
+                }
+            }
+            if (!link && text.to > text.from) link = { from, to: textEnd, image, text, url: text };
+            if (!link) continue;
+            links.push(link);
+            i = link.to - 1;
         }
         return links;
     }
 
     /**
-     * Link: a selection becomes [text](url) with `url` selected; in an existing link, its URL is
-     * selected; with the URL already selected, the link is removed and its text kept.
+     * Link: a selection becomes [text](url) with `url` selected; in an existing link, its URL
+     * (or reference label) is selected; with that already selected, the link is removed and its
+     * text kept.
      */
     function toggleLink(input) {
         const text = String(input.text);
@@ -449,7 +678,7 @@
             const link = linksIn(line.text).find(l => l.from <= a && b <= l.to);
             if (link) {
                 // An image's URL is selected too, but an image is never turned into its text.
-                if (a === link.url.from && b === link.url.to && !line.text.startsWith('!', link.from)) {
+                if (a === link.url.from && b === link.url.to && !link.image) {
                     const edits = [
                         { from: line.from + link.from, to: line.from + link.text.from, insert: '' },
                         { from: line.from + link.text.to, to: line.from + link.to, insert: '' },
@@ -512,71 +741,113 @@
      */
     function blockStyleAt(text, pos) {
         const { lines, first } = selectedLineIndexes(String(text), { anchor: pos, head: pos });
-        if (fencedBlocks(lines).some(b => b.start <= first && first <= b.end)) return 'codeBlock';
-        const p = parseLine(lines[first]);
-        if (p.quote) return 'quote';
-        if (p.level) return 'h' + p.level;
-        return 'paragraph';
+        return blockStructure(lines).styleOf(first);
     }
 
     /**
      * Sets the block style of every line the selection touches: 'paragraph', 'h1'-'h3',
      * 'quote' or 'codeBlock'. A style the lines all have already is toggled off (back to a
      * paragraph). A heading replaces the line's heading marker rather than adding another.
+     * Code blocks (fenced or indented) and setext headings touched lose their fences, indent
+     * or underline, whatever the lines become.
      */
     function setBlock(style, input) {
         if (!BLOCK_STYLES.includes(style)) throw new Error(`Unknown block style: ${style}`);
         const text = String(input.text);
         const { lines, first, last } = selectedLineIndexes(text, input.selection);
         const starts = lineStarts(lines);
-        const fences = fencedBlocks(lines).filter(b => b.start <= last && first <= b.end);
-        const isFence = (i) => fences.some(b => i === b.start || (i === b.end && !b.unclosed));
-        const inFence = (i) => fences.some(b => b.start < i && (i < b.end || b.unclosed));
+        const blocks = blockStructure(lines);
+        const touches = (b) => b.start <= last && first <= b.end;
+        const fences = blocks.fences.filter(touches);
+        const indented = blocks.indented.filter(touches);
+        const setexts = blocks.setexts.filter(touches);
+        const isMarker = (i) => fences.some(b => i === b.start || (i === b.end && !b.unclosed)) || setexts.some(h => i === h.end);
+        const fenceOf = (i) => fences.find(b => b.start < i && (i < b.end || (b.unclosed && i <= b.end)));
+        const indentedOf = (i) => indented.find(b => b.start <= i && i <= b.end);
         const between = (from, to) => {
             const out = [];
-            for (let i = from; i <= to; i++) if (!isFence(i)) out.push(i);
+            for (let i = from; i <= to; i++) if (!isMarker(i)) out.push(i);
             return out;
         };
-        const styleOf = (i) => {
-            if (inFence(i)) return 'codeBlock';
-            const p = parseLine(lines[i]);
-            return p.quote ? 'quote' : p.level ? 'h' + p.level : 'paragraph';
-        };
 
-        let content = between(first, last);
+        // A setext heading's text goes with its underline.
+        let top = Math.min(first, ...setexts.map(h => h.start));
+        let bottom = Math.max(last, ...setexts.map(h => h.end));
+        let content = between(top, bottom);
         const styled = content.filter(i => lines[i].trim() !== '');
         let target = style;
-        if (style !== 'paragraph' && styled.every(i => styleOf(i) === style) && (styled.length > 0 || style === 'codeBlock' && fences.length > 0)) {
+        const codeTouched = fences.length > 0 || indented.length > 0;
+        if (style !== 'paragraph' && styled.every(i => blocks.styleOf(i) === style) && (styled.length > 0 || style === 'codeBlock' && codeTouched)) {
             target = 'paragraph';
         }
         // A code block takes in the whole of any code block it touches.
-        if (target === 'codeBlock' && fences.length > 0) {
-            content = between(Math.min(first, ...fences.map(b => b.start)), Math.max(last, ...fences.map(b => b.end)));
+        if (target === 'codeBlock' && codeTouched) {
+            const code = [...fences, ...indented];
+            top = Math.min(top, ...code.map(b => b.start));
+            bottom = Math.max(bottom, ...code.map(b => b.end));
+            content = between(top, bottom);
         }
 
-        // The code blocks touched lose their fences, whatever the lines become.
         const edits = [];
+        const removed = setexts.map(heading => heading.end);
         for (const block of fences) {
-            edits.push(removeLine(lines, starts, block.start));
-            if (!block.unclosed) edits.push(removeLine(lines, starts, block.end));
+            if (block.list) {
+                // The fence opens a list item, which stays: just the fence goes.
+                const line = lines[block.start];
+                const p = parseLine(line);
+                const marker = p.indent.length + p.quote.length + p.list.trimEnd().length;
+                edits.push({ from: starts[block.start] + marker, to: starts[block.start] + line.length, insert: '' });
+                if (target !== 'quote' && block.depth) edits.push({ from: starts[block.start], to: starts[block.start] + quotePrefixLength(line, block.depth), insert: '' });
+            } else {
+                removed.push(block.start);
+            }
+            if (!block.unclosed) removed.push(block.end);
         }
+        edits.push(...removeLines(lines, starts, removed));
+        // Indented code is dedented as a whole, so none of it is left as code.
+        const inContent = new Set(content);
+        for (const block of indented) {
+            for (let i = block.start; i <= block.end; i++) {
+                if (!inContent.has(i)) edits.push({ from: starts[i], to: starts[i] + dedentLength(lines[i]), insert: '' });
+            }
+        }
+
         const nonBlank = content.filter(i => lines[i].trim() !== '');
         for (const i of content) {
             const line = lines[i];
             const p = parseLine(line);
             const base = starts[i];
-            // Code keeps its text exactly as it is.
-            if (inFence(i) && (target === 'codeBlock' || target === 'paragraph')) continue;
+            const blank = line.trim() === '';
+            // The quote keeps the blank lines between its paragraphs.
+            const insideQuote = nonBlank[0] < i && i < nonBlank[nonBlank.length - 1];
+            const fence = fenceOf(i);
+            const block = fence || indentedOf(i);
+            if (block) {
+                // Code keeps its text exactly as it is: only the quote markers or indent that
+                // made it code go (a list item's indent stays).
+                const quoted = fence ? quotePrefixLength(line, fence.depth) : 0;
+                const strip = fence ? quoted : dedentLength(line);
+                const at = base + strip + (fence ? Math.min(fence.list, leadingSpaces(line.slice(quoted))) : 0);
+                let marker = '';
+                if (target === 'quote') {
+                    if (fence && fence.depth) continue;
+                    if (blank && !insideQuote) continue;
+                    marker = blank ? '>' : '> ';
+                } else if (target !== 'paragraph' && target !== 'codeBlock' && !blank) {
+                    marker = '#'.repeat(Number(target.slice(1))) + ' ';
+                }
+                if (strip) edits.push({ from: base, to: base + strip, insert: '' });
+                if (marker) edits.push({ from: at, to: at, insert: marker, stick: 'after' });
+                continue;
+            }
             const quoteEdit = p.quote
                 ? [{ from: base + p.indent.length, to: base + p.indent.length + p.quote.length, insert: '' }]
                 : [];
             if (target === 'quote') {
                 if (p.quote) continue;
-                // The quote keeps the blank lines between its paragraphs.
-                const blank = line.trim() === '';
-                if (blank && !(nonBlank[0] < i && i < nonBlank[nonBlank.length - 1])) continue;
+                if (blank && !insideQuote) continue;
                 edits.push(...dropHeading(p, base), { from: base + p.indent.length, to: base + p.indent.length, insert: blank ? '>' : '> ', stick: 'after' });
-            } else if (line.trim() === '') {
+            } else if (blank) {
                 continue;
             } else if (target === 'paragraph' || target === 'codeBlock') {
                 edits.push(...quoteEdit, ...dropHeading(p, base));
@@ -601,11 +872,20 @@
         return [{ from: at, to: at + p.heading.length, insert: '' }];
     }
 
-    /** An edit that removes line `i` with its line break. */
-    function removeLine(lines, starts, i) {
-        if (i < lines.length - 1) return { from: starts[i], to: starts[i + 1], insert: '' };
-        const from = i > 0 ? starts[i] - 1 : 0;
-        return { from, to: starts[i] + lines[i].length, insert: '' };
+    /** Edits that remove lines `indexes` with their line breaks, a run of lines in one edit. */
+    function removeLines(lines, starts, indexes) {
+        const sorted = [...new Set(indexes)].sort((a, b) => a - b);
+        const edits = [];
+        for (let n = 0; n < sorted.length; n++) {
+            const first = sorted[n];
+            while (sorted[n + 1] === sorted[n] + 1) n++;
+            const last = sorted[n];
+            const end = starts[last] + lines[last].length;
+            // The break before them, so a position on them ends up at the end of the line above.
+            if (first > 0) edits.push({ from: starts[first] - 1, to: end, insert: '' });
+            else edits.push({ from: 0, to: last + 1 < lines.length ? starts[last + 1] : end, insert: '' });
+        }
+        return edits;
     }
 
     /**

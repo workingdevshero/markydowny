@@ -118,7 +118,7 @@ function inlineStyles(state, pos, side) {
  * { bold, italic, strikethrough, code, link (booleans), block: 'paragraph' | 'h1'-'h6' |
  *   'quote' | 'codeBlock', list: 'bullet' | 'ordered' | 'task' | null }.
  * An inline style counts when the whole selection is in it; a cursor counts on either side of
- * it, as the toolbar's commands do. The block and list are the selection head's.
+ * it, as the toolbar's commands do. The block and list are those of the selection head's line.
  */
 export function formatState(state) {
     const { from, to, head } = state.selection.main;
@@ -129,9 +129,12 @@ export function formatState(state) {
         const end = inlineStyles(state, to, -1);
         styles = new Set([...inlineStyles(state, from, 1)].filter(style => end.has(style)));
     }
-    // Inside the head's line: at its start, the character after; anywhere else, the one before.
+    // The head's line, read at its last character: the line's indent and quote or list markers
+    // can sit outside the block they open (a code block starts after its indent). A blank line
+    // is read at its start, from the character after.
     const line = state.doc.lineAt(head);
-    const nodes = nodesAt(state, head, head === line.from ? 1 : -1);
+    const end = line.from + line.text.trimEnd().length;
+    const nodes = end > line.from ? nodesAt(state, end, -1) : nodesAt(state, line.from, 1);
     const has = (name) => nodes.some(node => node.name === name);
     let block = 'paragraph';
     if (has('FencedCode') || has('CodeBlock')) {

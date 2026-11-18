@@ -1054,6 +1054,19 @@
             margin: 12px 0 0 max(16px, calc((100vw - 900px) / 2 + 40px));
         }
 
+        /* Too narrow for both (app.js measures): the toolbar goes below the Edit controls, and
+           the conflict banner below it. */
+        body.desktop.toolbar-below .format-toolbar {
+            top: 64px;
+            width: auto;
+            max-width: none;
+            margin: 64px 16px 0;
+        }
+
+        body.desktop.toolbar-below .edit-banner {
+            top: 116px;
+        }
+
         /* Changed blocks: a tint (drawn with shadows, so the block's own background survives)
            that fades out. Removed blocks: a thin line where they were. */
         .markdown-content .block-changed {

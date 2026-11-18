@@ -10,6 +10,7 @@ const context = {};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/vendor/codemirror.js'), 'utf8'), context);
 const cm = context.MarkyCodeMirror;
+const format = require('../js/format.js');
 
 /** formatState with the selection marked in the text: '|' for a cursor, '{' and '}' around a selection. */
 function stateAt(marked) {
@@ -59,6 +60,10 @@ test('the block style comes from the line the cursor is on', () => {
     assert.equal(stateAt('```\nco|de\n```').block, 'codeBlock');
     assert.equal(stateAt('```\ncode\n```|').block, 'codeBlock');
     assert.equal(stateAt('# Title\n\n|').block, 'paragraph');
+    // Anywhere on the line, its indent and markers included.
+    assert.equal(stateAt('|    code').block, 'codeBlock');
+    assert.equal(stateAt('|> ```\n> code\n> ```').block, 'codeBlock');
+    assert.equal(stateAt('# h\n  |  code').block, 'codeBlock');
 });
 
 test('the list comes from the item the cursor is in', () => {
@@ -67,4 +72,51 @@ test('the list comes from the item the cursor is in', () => {
     assert.equal(stateAt('- [ ] ta|sk').list, 'task');
     assert.equal(stateAt('- [x] |done').list, 'task');
     assert.equal(stateAt('pla|in').list, null);
+});
+
+// The toolbar shows formatState and edits with format.js: they must read the document alike, or
+// a pressed button does the opposite of what it shows.
+const DOCUMENTS = [
+    'Title\n=====\n\npara',
+    'a\nb\n---\n\nc\n\n---',
+    '    code\n    more\n\npara\n    cont',
+    '- a\n\n    cont',
+    '# h\n    code\n---\n    code',
+    '> ```\n> code\n> ```\nafter',
+    '- ```\n  code\n  ```\n- b',
+    '> - ```\n>   code\n>   ```\n> after',
+    '```\nx\n> q\n```\n> quote\n\n    code',
+    'text\n\n```js\nunclosed\nmore',
+];
+
+test('format.js reads every line\'s block style as the syntax tree does', () => {
+    for (const doc of DOCUMENTS) {
+        for (let pos = 0; pos <= doc.length; pos++) {
+            const state = cm.createState(doc).update({ selection: { anchor: pos } }).state;
+            assert.equal(format.blockStyleAt(doc, pos), cm.formatState(state).block, `${JSON.stringify(doc)} at ${pos}`);
+        }
+    }
+});
+
+const INLINE_DOCUMENTS = [
+    '*foo**bar**baz*',
+    'x ~sub~ y ~~st~~ z ~~~sub~~~ w',
+    'a **bold** and *it* `code` _a_ __b__ ***both***',
+    '*italic **bold** text* **a *b* c** foo*bar*baz',
+    'see [the docs][ref] and [the docs][] and [docs] x',
+    '[docs](https://en.wikipedia.org/wiki/Markdown_(markup_language)) a [x](<a b> "t") b',
+];
+
+test('an inline style the tree shows is the one its command removes', () => {
+    for (const doc of INLINE_DOCUMENTS) {
+        for (let pos = 0; pos <= doc.length; pos++) {
+            const state = cm.formatState(cm.createState(doc).update({ selection: { anchor: pos } }).state);
+            for (const style of ['bold', 'italic', 'strikethrough', 'code', 'link']) {
+                let out = format.apply(style, { text: doc, selection: { anchor: pos, head: pos } });
+                // Link selects the URL first; the second press removes the link.
+                if (style === 'link' && state.link) out = format.apply(style, out);
+                assert.equal(out.text.length < doc.length, state[style], `${style} in ${JSON.stringify(doc)} at ${pos}: ${JSON.stringify(out.text)}`);
+            }
+        }
+    }
 });

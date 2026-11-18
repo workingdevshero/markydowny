@@ -119,6 +119,16 @@ test('inline styles never rewrite markers outside the selection', () => {
     assert.equal(out, '__keep__ this, *and* this\n\nchange __me__\n');
 });
 
+test('strikethrough leaves a single-tilde subscript alone', () => {
+    assert.equal(run('strikethrough', 'x ~s|ub~ y'), 'x ~~~s|ub~~~ y');
+    assert.equal(run('strikethrough', 'x ~~~s|ub~~~ y'), 'x ~s|ub~ y');
+});
+
+test('emphasis pairs the way the editor reads it (CommonMark\'s rule of 3)', () => {
+    assert.equal(run('bold', '*foo**b|ar**baz*'), '*foob|arbaz*');
+    assert.equal(run('italic', '*foo**b|ar**baz*'), 'foo**b|ar**baz');
+});
+
 test('inline code picks markers its content can\'t close', () => {
     assert.equal(run('code', 'run {a`b}'), 'run ``{a`b}``');
     assert.equal(run('code', 'run {`a}'), 'run `` {`a} ``');
@@ -165,6 +175,28 @@ test('link with its url selected removes the link, keeping its text', () => {
     const out = runAt('link', text, 15, 18);
     assert.equal(out.text, 'see the docs now');
     assert.equal(out.text.slice(out.selection.anchor, out.selection.head), 'the docs');
+});
+
+test('link reads a destination with balanced parentheses to its end', () => {
+    const text = '[docs](https://en.wikipedia.org/wiki/Markdown_(markup_language)) x';
+    const out = runAt('link', text, 2);
+    assert.equal(out.text.slice(out.selection.anchor, out.selection.head), 'https://en.wikipedia.org/wiki/Markdown_(markup_language)');
+    assert.equal(format.apply('link', out).text, 'docs x');
+});
+
+test('link in a reference link selects its label, then removes the link', () => {
+    for (const [text, label, after] of [
+        ['see [the docs][ref] now', 'ref', 'see the docs now'],
+        ['see [the docs][] now', 'the docs', 'see the docs now'],
+        ['see [docs] now', 'docs', 'see docs now'],
+    ]) {
+        const out = runAt('link', text, 7);
+        assert.equal(out.text, text);
+        assert.equal(out.text.slice(out.selection.anchor, out.selection.head), label, text);
+        assert.equal(format.apply('link', out).text, after, text);
+    }
+    // A task's box isn't a link.
+    assert.equal(runAt('link', '- [ ] task', 8).text, '- [ ] [task](url)');
 });
 
 test('link over several lines wraps the whole selection', () => {
@@ -236,6 +268,44 @@ test('a code block keeps its code as it is, and takes in the code blocks it touc
     assert.equal(run('block:codeBlock', '`|``\ncode\n```'), '|code');
     assert.equal(run('block:codeBlock', '{```\nx\n```}'), '{x}');
     assert.equal(format.blockStyleAt('```\nx\n```', 0), 'codeBlock');
+});
+
+test('a setext heading reads as a heading, and loses its underline', () => {
+    assert.equal(format.blockStyleAt('Title\n=====', 2), 'h1');
+    assert.equal(format.blockStyleAt('Title\n-----', 8), 'h2');
+    assert.equal(run('block:paragraph', 'Ti|tle\n====='), 'Ti|tle');
+    assert.equal(run('block:h1', 'Ti|tle\n====='), 'Ti|tle');
+    assert.equal(run('block:h1', '{Title\n=====}\n\nnext'), '{Title}\n\nnext');
+    assert.equal(run('block:h2', 'Title\n==|==='), '## Title|');
+    assert.equal(run('block:h1', 'Ti|tle\n-----'), '# Ti|tle');
+    assert.equal(run('block:quote', 'Ti|tle\n-----\nafter'), '> Ti|tle\nafter');
+    // A rule after a blank line is no underline.
+    assert.equal(format.blockStyleAt('Text\n\n---', 0), 'paragraph');
+});
+
+test('indented code reads as a code block, and is dedented out of it', () => {
+    assert.equal(format.blockStyleAt('    code', 6), 'codeBlock');
+    assert.equal(run('block:codeBlock', '    co|de'), 'co|de');
+    assert.equal(run('block:paragraph', 'a\n\n    co|de\n\n    more\n\nb'), 'a\n\nco|de\n\nmore\n\nb');
+    assert.equal(run('block:h2', '    co|de\n    more'), '## co|de\nmore');
+    assert.equal(run('block:quote', '\tco|de'), '> co|de');
+    // Not after a paragraph, nor in a list: there it's the paragraph's or the item's.
+    assert.equal(format.blockStyleAt('para\n    cont', 8), 'paragraph');
+    assert.equal(format.blockStyleAt('- a\n\n    cont', 9), 'paragraph');
+    assert.equal(run('block:codeBlock', 'para\n    co|nt'), 'para\n```\n    co|nt\n```');
+});
+
+test('a code block in a quote or a list item is one code block', () => {
+    assert.equal(format.blockStyleAt('> ```\n> code\n> ```', 9), 'codeBlock');
+    assert.equal(run('block:codeBlock', '> ```\n> co|de\n> ```'), 'co|de');
+    assert.equal(run('block:paragraph', '> ```\n> co|de\n> ```'), 'co|de');
+    assert.equal(run('block:quote', '> ```\n> co|de\n> ```'), '> co|de');
+    // The quote ends the block when it isn't closed first.
+    assert.equal(run('block:codeBlock', '> ```\n> co|de\nafter'), 'co|de\nafter');
+    // In a list item, the item stays.
+    assert.equal(format.blockStyleAt('- ```\n  code\n  ```', 9), 'codeBlock');
+    assert.equal(run('block:codeBlock', '- ```\n  co|de\n  ```\n- b'), '-\n  co|de\n- b');
+    assert.equal(run('block:h1', '- ```\n  co|de\n  ```'), '-\n  # co|de');
 });
 
 test('block styles never rewrite markers outside the selection', () => {

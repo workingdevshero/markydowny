@@ -176,7 +176,12 @@
     });
     window.addEventListener('resize', () => {
         if (editing) syncRovingItem();
+        placeToolbar();
     });
+    // The floating Edit controls change width as Save, Revert and Follow come and go.
+    if (isDesktop && typeof ResizeObserver === 'function') {
+        new ResizeObserver(() => placeToolbar()).observe(document.querySelector('.topbar'));
+    }
     if (!isDesktop) {
         window.addEventListener('beforeunload', (e) => {
             if (!hasUnsavedChanges()) return;
@@ -986,10 +991,29 @@
         return bar.getBoundingClientRect().height;
     }
 
-    /** While editing: the top bar and the formatting toolbar under it, which cover the editor's top. */
+    /**
+     * While editing: the top bar, the formatting toolbar under it and (on desktop, where it's
+     * sticky too) the conflict banner, which cover the editor's top.
+     */
     function editorTopInset() {
-        const toolbar = formatToolbar.getBoundingClientRect();
-        return Math.max(topInset(), toolbar.height > 0 ? toolbar.bottom : 0);
+        const covers = [formatToolbar];
+        if (!editBanner.hidden && getComputedStyle(editBanner).position === 'sticky') covers.push(editBanner);
+        const bottoms = covers.map(el => el.getBoundingClientRect()).filter(rect => rect.height > 0).map(rect => rect.bottom);
+        return Math.max(topInset(), ...bottoms);
+    }
+
+    /**
+     * Desktop: the toolbar sits beside the floating Edit controls, or below them when the
+     * window is too narrow for both (the controls are fixed over the page, so it would slide
+     * under them).
+     */
+    function placeToolbar() {
+        if (!isDesktop || !editing) return;
+        document.body.classList.remove('toolbar-below');
+        const controls = document.querySelector('.topbar').getBoundingClientRect();
+        if (controls.width > 0 && formatToolbar.getBoundingClientRect().right > controls.left - 8) {
+            document.body.classList.add('toolbar-below');
+        }
     }
 
     /** Page position of each rendered block (blocks without elements sit where the last ended). */
@@ -1396,6 +1420,7 @@
             anchorHold = null;
             renderEditControls();
             renderToolbar();
+            placeToolbar();
 
             const pos = docPosition(text, core.blockOffset(raws, text, anchor ? anchor.index : 0), separator);
             session.view.dispatch({
@@ -1712,7 +1737,8 @@
                 el.appendChild(hint);
             }
         });
-        syncRovingItem();
+        // One tab stop, on the first item (the block style menu, which never overflows).
+        setRovingItem(formatToolbar.querySelector('[data-tool]'));
     }
 
     /** Shows the formatting at the cursor: pressed buttons, checked menu items, the block style. */
