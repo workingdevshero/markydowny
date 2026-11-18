@@ -126,7 +126,12 @@ test('CodeMirror is loaded only when editing starts, never by the page itself', 
     const mentions = [...app.matchAll(/js\/vendor\/codemirror\.js/g)];
     assert.equal(mentions.length, 1, 'app.js names the bundle once');
     const loader = app.match(/function loadCodeMirror[\s\S]*?\n {4}}\n/)[0];
-    assert.match(loader, /script\.src = CODEMIRROR_SRC/);
+    assert.match(loader, /loadScript\(CODEMIRROR_SRC, 'MarkyCodeMirror'\)/);
+    // The toolbar's commands come with it, not with the page.
+    assert.match(loader, /loadScript\(FORMAT_SRC, 'MarkyFormat'\)/);
+    assert.doesNotMatch(html, /format\.js/, 'index.html must not load the toolbar\'s commands');
+    const loadScript = app.match(/function loadScript[\s\S]*?\n {4}}\n/)[0];
+    assert.match(loadScript, /script\.src = src/);
     // Only startEditing loads it.
     const callers = [...app.matchAll(/(?<!function )loadCodeMirror\(\)/g)];
     assert.equal(callers.length, 1);
@@ -139,7 +144,7 @@ test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
     assert.match(bundle, /^var MarkyCodeMirror=/);
     const window = {};
     new Function('window', 'self', `${bundle}\nwindow.MarkyCodeMirror = MarkyCodeMirror;`)(window, window);
-    for (const name of ['createEditor', 'EditorView', 'Transaction']) {
+    for (const name of ['createEditor', 'createState', 'formatState', 'EditorView', 'Transaction']) {
         assert.ok(window.MarkyCodeMirror[name], `MarkyCodeMirror.${name}`);
     }
 });
@@ -158,4 +163,25 @@ test('unsaved changes are guarded: closing the window, the browser tab, Open ano
     // Closing needs the window's destroy permission once a JS listener takes over.
     const capability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
     assert.ok(capability.permissions.includes('core:window:allow-destroy'));
+});
+
+test('the formatting toolbar has a labelled control for every command', () => {
+    const format = require('../js/format.js');
+    const toolbar = html.match(/<div class="format-toolbar"[\s\S]*?\n {12}<\/div>\n/)[0];
+    assert.match(toolbar, /role="toolbar"/);
+    assert.match(toolbar, /aria-label="Formatting"/);
+    for (const command of format.COMMANDS) {
+        const button = toolbar.match(new RegExp(`<button class="tool"[^>]*data-command="${command}"[^>]*>`));
+        assert.ok(button, `a toolbar button for ${command}`);
+        assert.match(button[0], /aria-label="[^"]+"/, `${command} has a label`);
+        assert.match(button[0], /aria-pressed="false"/, `${command} shows whether it's on`);
+        assert.match(button[0], /data-tool/, `${command} takes part in the arrow keys`);
+    }
+    for (const style of format.BLOCK_STYLES) {
+        assert.match(toolbar, new RegExp(`role="menuitemradio"[^>]*data-command="block:${style}"`), `a menu item for ${style}`);
+    }
+    // Whatever moves into the overflow menu at narrow widths is in it.
+    for (const [, command] of toolbar.matchAll(/data-command="(\w+)" data-tool data-overflow/g)) {
+        assert.match(toolbar, new RegExp(`role="menuitemcheckbox"[^>]*data-command="${command}"`), `${command} in the overflow menu`);
+    }
 });

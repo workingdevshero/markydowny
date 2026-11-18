@@ -139,6 +139,29 @@ changes put a dot before the title in the top bar and the page title ("• live.
 - **Phone width.** While editing, the pencil goes icon-only and fullscreen steps aside, so
   *Revert* and *Save* fit in the top bar.
 
+### Formatting toolbar
+
+While editing, a toolbar sticks under the top bar (`role="toolbar"`, `#formatToolbar`): a block
+style menu (Paragraph, Heading 1-3, Quote, Code block), Bold, Italic, Strikethrough, Inline code,
+Link, and bulleted, numbered and task lists. Each button's tooltip names its shortcut (Ctrl on
+Linux and Windows, ⌘ on a Mac): Ctrl+B, Ctrl+I, Ctrl+Shift+X, Ctrl+Shift+C, Ctrl+K,
+Ctrl+Shift+8/7/9, and Ctrl+Alt+0-3 for paragraph and headings. `js/format.js` is loaded with
+CodeMirror, on first edit, never before.
+
+- **Commands edit the markdown.** With the cursor in a word, Bold wraps the word; pressing it
+  again unwraps it. A selection is wrapped; a multi-line selection styles each line. Italic uses
+  `_` when the document already does. Link wraps the selection as `[text](url)` with `url`
+  selected; in a link it selects the URL, and with the URL selected it removes the link. Saving
+  afterwards changes only the lines touched. Each command is one undo step.
+- **Active state.** `aria-pressed` on the buttons (and the block menu's label) follows the
+  cursor: in `**bold**` Bold is pressed, in `## Title` the menu reads *Heading 2*. CodeMirror's
+  view is reachable with `MarkyCodeMirror.EditorView.findFromDOM(document.querySelector('.cm-editor'))`
+  to place a selection from `browser_evaluate`.
+- **Keyboard.** One toolbar item is in the tab order; arrow keys, Home and End move between
+  items. ArrowDown on the block menu opens it at the current style; Enter picks, Escape closes.
+- **Phone width.** Strikethrough, Inline code, Numbered list and Task list move into a *More
+  formatting* (⋯) menu, and the toolbar fits without scrolling sideways.
+
 The desktop app saves through `write_document` (atomic, permission-keeping, refused when the file
 changed since the editor read it) and asks before closing a window with unsaved changes; that
 side can't run here, and its Rust is covered by `cargo test`.
