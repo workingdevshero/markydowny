@@ -2,7 +2,7 @@
 title: Watching Claude Code
 nav: Watching Claude Code
 order: 3
-description: Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.
+description: Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, open every file it edits automatically with a PostToolUse hook, and keep a live board of every session with markychecky.
 ---
 
 # Watching Claude Code
@@ -69,6 +69,67 @@ It needs `jq`. macOS 15 Sequoia and later include it; on macOS 12 to 14, install
 - Later edits to the same file re-open a file that's already showing. Markydowny keeps its one tab, live-reloads it, and with `-g` doesn't take focus.
 
 Without `-g`, every later edit would bring Markydowny to the front too.
+
+## Watch every session: markychecky
+
+When you have several Claude Code sessions going at once, [markychecky](https://github.com/workingdevshero/markydowny/tree/main/plugins/markychecky) keeps one board of what each of them is doing. The board is a markdown file, `~/markychecky.md`. Each session gets its own section: what it's working on now, then its checklist, ticked off as it goes. Issue and pull request numbers become links. The board opens in Markydowny, so you watch it update.
+
+```markdown
+## markydowny · main
+
+**Now:** Signing the app
+
+- [x] Build a universal release
+- [ ] **Sign the app and its helpers**
+- [ ] Package and notarize the .dmg
+```
+
+### Set it up
+
+1. **Install the plugin.** In a terminal:
+
+   ```
+   claude plugin install markychecky --marketplace workingdevshero/markydowny
+   ```
+
+   Or inside Claude Code: `/plugin marketplace add workingdevshero/markydowny`, then `/plugin install markychecky@markydowny`.
+
+2. **Turn on the task list.** markychecky copies each session's task list (Claude Code's `TaskCreate` and `TaskUpdate` tools) to the board, and some setups don't have those tools on. Add this to `~/.claude/settings.json` so every session has them:
+
+   ```json
+   {
+     "env": {
+       "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+     }
+   }
+   ```
+
+   If the file already has settings, add the `env` block alongside them.
+
+3. **Start your sessions.** Sessions you start from now on write to the board. A session that's already running picks it up when you restart it with `claude --resume`.
+
+It needs `python3`, which comes with the Xcode Command Line Tools. Without it, the plugin does nothing.
+
+### Questions for you, and parked work
+
+A session's task list holds the steps of what it's doing now. Questions for you, work that's parked, and things waiting on someone else don't fit there, and they matter more than any one session's checklist. Keep them in one section of your own at the top of the board:
+
+```markdown
+# Markychecky
+
+## Waiting on you
+
+- markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
+- Parked: the notarized release ([#26](https://github.com/workingdevshero/markydowny/issues/26)), needs a Developer ID certificate
+```
+
+markychecky only rewrites the sections it made, which are marked with hidden comments, so anything else in the file stays as you left it. To have your sessions use the section, add a line like this to `~/.claude/CLAUDE.md`:
+
+```
+Put questions for me, and work that's parked or waiting on someone else, in the "Waiting on you" section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, and remove your lines once they're resolved.
+```
+
+The plugin's [README](https://github.com/workingdevshero/markydowny/tree/main/plugins/markychecky) has its settings: which file to use, whether to open it in Markydowny, and how long ended sessions stay on the board.
 
 ## On the web
 

@@ -242,9 +242,35 @@ test('issue and PR references in task text become links into the session\'s GitH
     assert.match(s, /\[other-org\/tools#5\]\(https:\/\/github\.com\/other-org\/tools\/issues\/5\)/);
 });
 
+test('a reference in parentheses links, but existing links and anchors are left alone', { skip: !hasPython }, () => {
+    const box = sandbox();
+    spawnSync('git', ['init', '-q', box.dir]);
+    spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+    hook(box, 'task', create('s1', 1, 'Merge Open Recent (#36), see [#9](https://x) and [top](#12)'));
+    const s = section(read(box), 's1');
+    assert.match(s, /Merge Open Recent \(\[#36\]\(https:\/\/github\.com\/acme\/widgets\/issues\/36\)\)/);
+    assert.match(s, /see \[#9\]\(https:\/\/x\) and \[top\]\(#12\)/);
+});
+
 test('references that can\'t be linked for sure stay plain text', { skip: !hasPython }, () => {
     const box = sandbox(); // not a git repo: no GitHub remote
     hook(box, 'task', create('s1', 1, 'See #7 and somerepo#8, issue#3, C# and [#9](https://x)'));
     const s = section(read(box), 's1');
     assert.match(s, /See #7 and somerepo#8, issue#3, C# and \[#9\]\(https:\/\/x\)/);
+});
+
+test('every place markychecky is documented says how to turn on the task list', () => {
+    const docs = {
+        'plugin README': path.join(plugin, 'README.md'),
+        'README': path.join(root, 'README.md'),
+        'docs page': path.join(root, 'docs', 'claude-code.md'),
+    };
+    for (const [name, file] of Object.entries(docs)) {
+        const text = fs.readFileSync(file, 'utf8');
+        assert.match(text, /CLAUDE_CODE_ENABLE_TODO_TOOLS/, `${name} doesn't mention CLAUDE_CODE_ENABLE_TODO_TOOLS`);
+        assert.match(text, /claude plugin install markychecky --marketplace workingdevshero\/markydowny/, `${name} doesn't give the install command`);
+    }
+    // The README links to the docs page's markychecky section by its anchor.
+    const html = fs.readFileSync(path.join(root, 'docs', 'claude-code', 'index.html'), 'utf8');
+    assert.match(html, /id="watch-every-session-markychecky"/);
 });

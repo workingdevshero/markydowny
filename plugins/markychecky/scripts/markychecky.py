@@ -157,9 +157,10 @@ def github_repo(cwd):
 
 # `owner/repo#12`, `#12` (the session's repo) or `repo#12` when it names the session's own repo.
 # Anything else, such as another owner's `repo#12`, stays text rather than becoming a wrong link.
-# Not inside an existing link or a word.
+# Not inside an existing link's text (`[#9]`) or target (`](#12)`), and not part of a word.
+# A plain parenthesis is fine: "Open Recent (#36)" links.
 REF_RE = re.compile(
-    r"(?<![\w/\[(#-])(?:(?P<owner>[\w.-]+)/)?(?P<repo>[\w.-]+)?#(?P<num>\d+)\b(?![\]\w])"
+    r"(?<![\w/\[#-])(?<!\]\()(?:(?P<owner>[\w.-]+)/)?(?P<repo>[\w.-]+)?#(?P<num>\d+)\b(?![\]\w])"
 )
 
 

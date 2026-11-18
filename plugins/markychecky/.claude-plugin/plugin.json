@@ -1,6 +1,6 @@
 {
   "name": "markychecky",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A live board of what every Claude Code session is doing: each session's task list in its own section of one markdown file, opened in Markydowny so you can watch your agents check things off.",
   "author": {
     "name": "Working Devs Hero"

@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/claude-code.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
     <title>Watching Claude Code · Markydowny docs</title>
-    <meta name="description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.">
+    <meta name="description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, open every file it edits automatically with a PostToolUse hook, and keep a live board of every session with markychecky.">
     <link rel="canonical" href="https://markydowny.com/docs/claude-code/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/claude-code/">
     <meta property="og:title" content="Watching Claude Code · Markydowny docs">
-    <meta property="og:description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.">
+    <meta property="og:description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, open every file it edits automatically with a PostToolUse hook, and keep a live board of every session with markychecky.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -95,6 +95,49 @@
 <li>Later edits to the same file re-open a file that&#39;s already showing. Markydowny keeps its one tab, live-reloads it, and with <code>-g</code> doesn&#39;t take focus.</li>
 </ul>
 <p>Without <code>-g</code>, every later edit would bring Markydowny to the front too.</p>
+<h2 id="watch-every-session-markychecky"><a class="heading-anchor" href="#watch-every-session-markychecky" aria-label="Link to this section">#</a>Watch every session: markychecky</h2>
+<p>When you have several Claude Code sessions going at once, <a href="https://github.com/workingdevshero/markydowny/tree/main/plugins/markychecky">markychecky</a> keeps one board of what each of them is doing. The board is a markdown file, <code>~/markychecky.md</code>. Each session gets its own section: what it&#39;s working on now, then its checklist, ticked off as it goes. Issue and pull request numbers become links. The board opens in Markydowny, so you watch it update.</p>
+<pre><code class="language-markdown">## markydowny · main
+
+**Now:** Signing the app
+
+- [x] Build a universal release
+- [ ] **Sign the app and its helpers**
+- [ ] Package and notarize the .dmg
+</code></pre>
+<h3 id="set-it-up"><a class="heading-anchor" href="#set-it-up" aria-label="Link to this section">#</a>Set it up</h3>
+<ol>
+<li><p><strong>Install the plugin.</strong> In a terminal:</p>
+<pre><code>claude plugin install markychecky --marketplace workingdevshero/markydowny
+</code></pre>
+<p>Or inside Claude Code: <code>/plugin marketplace add workingdevshero/markydowny</code>, then <code>/plugin install markychecky@markydowny</code>.</p>
+</li>
+<li><p><strong>Turn on the task list.</strong> markychecky copies each session&#39;s task list (Claude Code&#39;s <code>TaskCreate</code> and <code>TaskUpdate</code> tools) to the board, and some setups don&#39;t have those tools on. Add this to <code>~/.claude/settings.json</code> so every session has them:</p>
+<pre><code class="language-json">{
+  &quot;env&quot;: {
+    &quot;CLAUDE_CODE_ENABLE_TODO_TOOLS&quot;: &quot;1&quot;
+  }
+}
+</code></pre>
+<p>If the file already has settings, add the <code>env</code> block alongside them.</p>
+</li>
+<li><p><strong>Start your sessions.</strong> Sessions you start from now on write to the board. A session that&#39;s already running picks it up when you restart it with <code>claude --resume</code>.</p>
+</li>
+</ol>
+<p>It needs <code>python3</code>, which comes with the Xcode Command Line Tools. Without it, the plugin does nothing.</p>
+<h3 id="questions-for-you-and-parked-work"><a class="heading-anchor" href="#questions-for-you-and-parked-work" aria-label="Link to this section">#</a>Questions for you, and parked work</h3>
+<p>A session&#39;s task list holds the steps of what it&#39;s doing now. Questions for you, work that&#39;s parked, and things waiting on someone else don&#39;t fit there, and they matter more than any one session&#39;s checklist. Keep them in one section of your own at the top of the board:</p>
+<pre><code class="language-markdown"># Markychecky
+
+## Waiting on you
+
+- markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
+- Parked: the notarized release ([#26](https://github.com/workingdevshero/markydowny/issues/26)), needs a Developer ID certificate
+</code></pre>
+<p>markychecky only rewrites the sections it made, which are marked with hidden comments, so anything else in the file stays as you left it. To have your sessions use the section, add a line like this to <code>~/.claude/CLAUDE.md</code>:</p>
+<pre><code>Put questions for me, and work that&#39;s parked or waiting on someone else, in the &quot;Waiting on you&quot; section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, and remove your lines once they&#39;re resolved.
+</code></pre>
+<p>The plugin&#39;s <a href="https://github.com/workingdevshero/markydowny/tree/main/plugins/markychecky">README</a> has its settings: which file to use, whether to open it in Markydowny, and how long ended sessions stay on the board.</p>
 <h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
 <p>Without the Mac app, open the file on <a href="https://markydowny.com">markydowny.com</a> in Chrome, Edge or another Chromium browser with <strong>Choose File</strong>, or by dropping it on the page, and leave the tab open. Live reload and Follow work the same way; the folder watch and the hook need the app. See <a href="/docs/live-reload/#browser-support">Browser support</a>.</p>
         </main>
