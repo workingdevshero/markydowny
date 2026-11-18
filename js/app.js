@@ -342,7 +342,7 @@
             } else if (type === 'drop') {
                 unhighlight();
                 leaveEditor().then(left => {
-                    if (left) handleDesktopDrop(paths);
+                    if (left) handleDesktopDrop(paths, { dropped: true });
                 });
             }
         });
@@ -385,8 +385,11 @@
         }
     }
 
-    /** Shows the markdown in dropped files/folders. Returns false when there was none. */
-    async function handleDesktopDrop(paths) {
+    /**
+     * Shows the markdown in dropped files/folders. Returns false when there was none.
+     * `dropped` is a drop on the window; a pending folder was recorded by the app already.
+     */
+    async function handleDesktopDrop(paths, { dropped = false } = {}) {
         if (!paths || paths.length === 0) return false;
         const entries = await invoke('list_markdown_files', { paths });
         if (entries.length === 0) {
@@ -394,7 +397,7 @@
             return false;
         }
         // File > Open Recent lists what was dropped (other opens go through the app already).
-        invoke('add_recent_documents', { paths }).catch(console.error);
+        if (dropped) invoke('add_recent_documents', { paths }).catch(console.error);
         if (entries.length === 1) {
             closeFileSelector();
             desktopFolder = null;

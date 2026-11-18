@@ -873,7 +873,7 @@ fn fill_recent_menu(
     let titles = list.titles();
     for (index, (_, title)) in titles.iter().enumerate() {
         let id = format!("{RECENT_MENU_PREFIX}{index}");
-        menu.append(&MenuItemBuilder::with_id(id, title).build(app)?)?;
+        menu.append(&MenuItemBuilder::with_id(id, menu_label(title)).build(app)?)?;
     }
     if !titles.is_empty() {
         menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -882,6 +882,12 @@ fn fill_recent_menu(
         .enabled(!titles.is_empty())
         .build(app)?;
     menu.append(&clear)
+}
+
+/// `title` as a menu item shows it: muda reads `&` as a mnemonic marker (dropped on macOS,
+/// an underline on Linux), and `&&` as a literal `&`.
+fn menu_label(title: &str) -> String {
+    title.replace('&', "&&")
 }
 
 /// File > Open Recent > an entry: opens it like File > Open…. One that's gone is taken off
@@ -1127,6 +1133,13 @@ mod tests {
         assert_eq!(doc.content, "# Hello\n");
         assert_eq!(doc.dir, format!("{}/", canonical_dir.display()));
         assert!(doc.path.ends_with("/notes.md"));
+    }
+
+    #[test]
+    fn menu_labels_keep_ampersands_literal() {
+        assert_eq!(menu_label("R&D.md"), "R&&D.md");
+        assert_eq!(menu_label("a&&b.md — x&y"), "a&&&&b.md — x&&y");
+        assert_eq!(menu_label("notes.md"), "notes.md");
     }
 
     #[test]
