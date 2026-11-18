@@ -394,17 +394,17 @@
 
         /* ---------- Homepage: around the drop zone, only while it shows ---------- */
 
-        body.document-open .marketing,
-        .container.file-selector-active .marketing {
+        body.document-open main > .marketing,
+        .container.file-selector-active main > .marketing {
             display: none;
         }
 
-        .hero {
+        main > .hero {
             text-align: center;
             padding: 12px 0 28px;
         }
 
-        .hero-title {
+        main > .marketing .hero-title {
             font-size: clamp(2rem, 5vw, 3rem);
             font-weight: 800;
             letter-spacing: -0.035em;
@@ -412,7 +412,7 @@
             margin-bottom: 12px;
         }
 
-        .hero-text {
+        main > .marketing .hero-text {
             max-width: 560px;
             margin: 0 auto;
             font-size: 1.1rem;
@@ -420,14 +420,14 @@
             color: var(--text-muted);
         }
 
-        .features {
+        main > .features {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 16px;
             margin-top: 72px;
         }
 
-        .feature {
+        main > .marketing .feature {
             display: flex;
             flex-direction: column;
             padding: 28px;
@@ -439,11 +439,11 @@
         }
 
         /* An odd one out spans the row. */
-        .feature:last-child:nth-child(odd) {
+        main > .marketing .feature:last-child:nth-child(odd) {
             grid-column: 1 / -1;
         }
 
-        .feature-icon {
+        main > .marketing .feature-icon {
             width: 40px;
             height: 40px;
             padding: 9px;
@@ -453,22 +453,22 @@
             background: var(--accent-soft);
         }
 
-        .feature h2 {
+        main > .marketing .feature h2 {
             font-size: 1.2rem;
             letter-spacing: -0.015em;
             line-height: 1.3;
             margin-bottom: 8px;
         }
 
-        .feature p {
+        main > .marketing .feature p {
             margin-bottom: 10px;
         }
 
-        .feature strong {
+        main > .marketing .feature strong {
             font-weight: 650;
         }
 
-        .feature code {
+        main > .marketing .feature code {
             font-family: var(--font-mono);
             font-size: 0.875em;
             background: var(--code-bg);
@@ -477,12 +477,12 @@
             border-radius: 6px;
         }
 
-        .feature-note {
+        main > .marketing .feature-note {
             font-size: 0.9rem;
             color: var(--text-muted);
         }
 
-        .feature-link {
+        main > .marketing .feature-link {
             margin-top: auto;
             padding-top: 6px;
             font-size: 0.9rem;
@@ -491,16 +491,16 @@
             text-decoration: none;
         }
 
-        .feature-link::after {
+        main > .marketing .feature-link::after {
             content: " →";
         }
 
-        .feature-link:hover {
+        main > .marketing .feature-link:hover {
             text-decoration: underline;
             text-underline-offset: 3px;
         }
 
-        .download-strip {
+        main > .download-strip {
             display: flex;
             align-items: center;
             gap: 20px;
@@ -511,35 +511,35 @@
             background: var(--accent-soft);
         }
 
-        .download-mark {
+        main > .marketing .download-mark {
             flex: none;
             width: 56px;
             height: 56px;
             object-fit: contain;
         }
 
-        .download-text {
+        main > .marketing .download-text {
             flex: 1;
         }
 
-        .download-text h2 {
+        main > .marketing .download-text h2 {
             font-size: 1.2rem;
             letter-spacing: -0.015em;
             margin-bottom: 4px;
         }
 
-        .download-text p {
+        main > .marketing .download-text p {
             color: var(--text-muted);
             line-height: 1.5;
         }
 
-        .download-actions {
+        main > .marketing .download-actions {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
         }
 
-        .download-actions .btn {
+        main > .marketing .download-actions .btn {
             text-decoration: none;
         }
 
@@ -1692,24 +1692,24 @@
                 padding: 8px;
             }
 
-            .hero {
+            main > .hero {
                 padding: 8px 0 18px;
             }
 
-            .hero-text {
+            main > .marketing .hero-text {
                 font-size: 1rem;
             }
 
-            .features {
+            main > .features {
                 grid-template-columns: minmax(0, 1fr);
                 margin-top: 48px;
             }
 
-            .feature {
+            main > .marketing .feature {
                 padding: 22px;
             }
 
-            .download-strip {
+            main > .download-strip {
                 flex-direction: column;
                 align-items: flex-start;
                 padding: 22px;
@@ -1835,7 +1835,7 @@
 
         body.desktop .topbar,
         body.desktop .footer,
-        body.desktop .marketing {
+        body.desktop main > .marketing {
             display: none !important;
         }
 

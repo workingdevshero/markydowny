@@ -44,8 +44,17 @@ test('the homepage sections around the drop zone are marked as marketing', () =>
 });
 
 test('marketing hides in the desktop app, with a document open and with the file list up', () => {
-    assert.match(html, /body\.desktop \.topbar,\s*body\.desktop \.footer,\s*body\.desktop \.marketing\s*\{\s*display: none !important;/);
-    assert.match(html, /body\.document-open \.marketing,\s*\.container\.file-selector-active \.marketing\s*\{\s*display: none;/);
+    assert.match(html, /body\.desktop \.topbar,\s*body\.desktop \.footer,\s*body\.desktop main > \.marketing\s*\{\s*display: none !important;/);
+    assert.match(html, /body\.document-open main > \.marketing,\s*\.container\.file-selector-active main > \.marketing\s*\{\s*display: none;/);
+});
+
+test('homepage styles apply only to the landing sections, never to rendered markdown', () => {
+    const block = html.match(/\/\* -+ Homepage[\s\S]*?\/\* -+ File selector/)[0];
+    const selectors = [...block.matchAll(/^\s*([^{}\n/][^{}\n]*?)\s*[{,]\s*$/gm)].map(m => m[1].trim());
+    assert.ok(selectors.length > 20);
+    for (const selector of selectors) {
+        assert.match(selector, /main > \./, `${selector} is scoped to <main>'s own children`);
+    }
 });
 
 test('the header has Docs, Download and Open a file, slimmed down while a document is open', () => {
@@ -112,6 +121,7 @@ function stubElement(name, { closest = () => null } = {}) {
 }
 
 function loadApp() {
+    const alerts = [];
     const elements = new Map();
     const element = (id) => {
         if (!elements.has(id)) elements.set(id, stubElement(id));
@@ -135,9 +145,7 @@ function loadApp() {
         addEventListener() {},
         matchMedia: () => ({ matches: false, addEventListener() {} }),
         confirm: () => true,
-        alert: (message) => {
-            throw new Error(`alert: ${message}`);
-        },
+        alert: (message) => alerts.push(message),
         setTimeout,
         clearTimeout,
         console,
@@ -146,7 +154,7 @@ function loadApp() {
     const context = vm.createContext(window);
     vm.runInContext(coreSource, context);
     vm.runInContext(appSource, context);
-    return { body, element };
+    return { body, element, alerts };
 }
 
 function dropEvent(target, dataTransfer) {
@@ -217,4 +225,45 @@ test('Open a file in the header opens the file picker in one click', () => {
     button.dispatch('click', {});
     // No File System Access API here, so the plain file input stands in for the picker.
     assert.equal(element('fileInput').clicked, 1);
+});
+
+test('a drag without files, or onto the editor, isn\'t taken over by the page', () => {
+    const { body } = loadApp();
+    const text = dropEvent(stubElement('p'), { types: ['text/uri-list'] });
+    body.dispatch('dragover', text);
+    assert.ok(!text.prevented, 'a dragged link still navigates when dropped');
+    assert.ok(!body.classList.contains('dragover'));
+    const inEditor = stubElement('cm-line', { closest: (selector) => (selector === '.editor-host' ? {} : null) });
+    const file = dropEvent(inEditor, { types: ['Files'] });
+    body.dispatch('dragover', file);
+    assert.ok(!body.classList.contains('dragover'), 'no page outline for a drop the editor takes');
+});
+
+test('a dropped file is checked and read before unsaved changes are discarded for it', async () => {
+    const { body, alerts } = loadApp();
+    const image = droppedFile('photo.png');
+    image.type = 'image/png';
+    body.dispatch('drop', dropEvent(stubElement('p'), { types: ['Files'], items: [], files: [image] }));
+    await flush();
+    assert.equal(image.reads, 0);
+    assert.equal(alerts.length, 1, 'said why it didn\'t open');
+    const drop = appSource.match(/function handlePageDrop[\s\S]*?\n {4}}\n/)[0];
+    const read = drop.indexOf('prepare()');
+    assert.ok(read >= 0 && read < drop.indexOf('leaveEditor()'), 'read first, discard after');
+});
+
+test('the file input is cleared before it opens, so the same file can be picked again', () => {
+    const { element } = loadApp();
+    const input = element('fileInput');
+    input.value = 'C:\\fakepath\\notes.md';
+    element('openFileButton').dispatch('click', {});
+    assert.equal(input.value, '');
+    assert.equal(input.clicked, 1);
+});
+
+test('opening a file from outside the list closes a file list that was up', () => {
+    for (const reader of ['readFiles', 'readFileHandle', 'readFolder']) {
+        const body = appSource.match(new RegExp(`async function ${reader}[\\s\\S]*?\\n {4}}\\n`))[0];
+        assert.match(body, /closeFileSelector\(\)/, `${reader} closes the list`);
+    }
 });
