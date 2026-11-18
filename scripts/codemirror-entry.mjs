@@ -7,6 +7,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, drawSelection, dropCurs
 import { defaultKeymap, history, historyKeymap, undoDepth } from '@codemirror/commands';
 import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 
 // Colours come from the page's own variables, so the editor follows prefers-color-scheme
@@ -34,6 +35,79 @@ const theme = EditorView.theme({
     '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
         backgroundColor: 'var(--accent-soft)',
         outline: '1px solid color-mix(in srgb, var(--accent) 40%, transparent)',
+    },
+    // Find and replace. '&.cm-editor' outweighs the light/dark defaults of CodeMirror's base
+    // theme ('.cm-light .cm-panels' and so on), which would otherwise paint it grey on white.
+    '&.cm-editor .cm-panels': {
+        backgroundColor: 'var(--surface)',
+        color: 'var(--text)',
+        fontFamily: 'var(--font-sans)',
+    },
+    '&.cm-editor .cm-panels-bottom': {
+        borderTop: '1px solid var(--border)',
+        boxShadow: '0 -8px 24px color-mix(in srgb, var(--text) 6%, transparent)',
+    },
+    '&.cm-editor .cm-panels-top': { borderBottom: '1px solid var(--border)' },
+    '.cm-panel.cm-search': {
+        padding: '10px 36px 10px 0',
+        fontSize: '0.9rem',
+        lineHeight: '1.4',
+    },
+    '.cm-panel.cm-search label': {
+        fontSize: '0.85rem',
+        color: 'var(--text-muted)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+    },
+    '.cm-panel.cm-search input[type=checkbox]': { accentColor: 'var(--accent)', margin: '0' },
+    '&.cm-editor .cm-textfield': {
+        font: 'inherit',
+        fontSize: '0.9rem',
+        color: 'var(--text)',
+        backgroundColor: 'var(--surface-2)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '5px 10px',
+        minWidth: '12em',
+        '&:focus': {
+            outline: 'none',
+            borderColor: 'var(--accent)',
+            boxShadow: '0 0 0 3px var(--accent-soft)',
+        },
+    },
+    '&.cm-editor .cm-button': {
+        font: 'inherit',
+        fontSize: '0.85rem',
+        fontWeight: '600',
+        color: 'var(--text-muted)',
+        backgroundColor: 'transparent',
+        backgroundImage: 'none',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '5px 12px',
+        cursor: 'pointer',
+        '&:hover': { color: 'var(--text)', backgroundColor: 'var(--surface-2)' },
+        '&:active': { backgroundImage: 'none', backgroundColor: 'var(--accent-soft)' },
+    },
+    '.cm-panel.cm-search [name=close]': {
+        top: '8px',
+        right: '6px',
+        width: '28px',
+        height: '28px',
+        borderRadius: '8px',
+        fontSize: '20px',
+        lineHeight: '1',
+        color: 'var(--text-muted)',
+        cursor: 'pointer',
+        '&:hover': { color: 'var(--text)', backgroundColor: 'var(--surface-2)' },
+    },
+    '&.cm-editor .cm-searchMatch': {
+        backgroundColor: 'color-mix(in srgb, var(--coral) 28%, transparent)',
+        borderRadius: '2px',
+    },
+    '&.cm-editor .cm-searchMatch-selected, &.cm-editor .cm-searchMatch-selected *': {
+        backgroundColor: 'color-mix(in srgb, var(--coral) 60%, transparent)',
     },
 });
 
@@ -68,15 +142,16 @@ const richHighlight = HighlightStyle.define([
 ]);
 
 /**
- * An editor for `doc` in `parent`. options: { lineSeparator, onChange(update), onUpdate(update),
- * topInset(), mode, isMac, resolveImage(src), openLink(href), renderInline(markdown) }:
- * lineSeparator is kept for every line break, so the text reads back with the file's own line
- * endings; onChange runs after each change to the text, onUpdate after anything that can change
- * the formatting at the cursor (the text, the selection, or more of the document parsed);
- * topInset is how much of the window's top is covered (sticky bars), which scrolling the cursor
- * into view stays clear of. mode is 'rich' or 'markdown' (setMode switches it); the rest is for
- * Rich mode: resolveImage gives an image's URL (or a promise of it), openLink opens a link
- * ⌘-clicked (Ctrl-clicked off a Mac), renderInline renders a table cell's markdown as HTML.
+ * An editor for `doc` in `parent`. options: { lineSeparator, onChange(update), onSelect(update),
+ * onUpdate(update), topInset(), mode, isMac, resolveImage(src), openLink(href),
+ * renderInline(markdown) }: lineSeparator is kept for every line break, so the text reads back
+ * with the file's own line endings; onChange runs after each change to the text, onSelect after
+ * each change to the selection alone, onUpdate after anything that can change the formatting at
+ * the cursor (the text, the selection, or more of the document parsed); topInset is how much of
+ * the window's top is covered (sticky bars), which scrolling the cursor into view stays clear of.
+ * mode is 'rich' or 'markdown' (setMode switches it); the rest is for Rich mode: resolveImage
+ * gives an image's URL (or a promise of it), openLink opens a link ⌘-clicked (Ctrl-clicked off a
+ * Mac), renderInline renders a table cell's markdown as HTML.
  */
 export function createEditor(parent, doc, options = {}) {
     return new EditorView({ state: createState(doc, options), parent });
@@ -84,7 +159,7 @@ export function createEditor(parent, doc, options = {}) {
 
 /** The editor's state for `doc`, with the options createEditor takes (no view needed). */
 export function createState(doc, options = {}) {
-    const { lineSeparator = '\n', onChange = () => {}, onUpdate = () => {}, topInset = () => 0, mode = 'markdown' } = options;
+    const { lineSeparator = '\n', onChange = () => {}, onSelect = () => {}, onUpdate = () => {}, topInset = () => 0, mode = 'markdown' } = options;
     return EditorState.create({
         doc,
         extensions: [
@@ -98,12 +173,14 @@ export function createState(doc, options = {}) {
             EditorView.lineWrapping,
             markdown({ base: markdownLanguage }),
             modeCompartment.of(modeExtension(mode, options)),
-            keymap.of([...defaultKeymap, ...historyKeymap]),
+            search(),
+            keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]),
             theme,
             EditorView.contentAttributes.of({ 'aria-label': 'Markdown source', spellcheck: 'true' }),
             EditorView.scrollMargins.of(() => ({ top: topInset() })),
             EditorView.updateListener.of(update => {
                 if (update.docChanged) onChange(update);
+                else if (update.selectionSet) onSelect(update);
                 if (update.docChanged || update.selectionSet || syntaxTree(update.state) !== syntaxTree(update.startState)) {
                     onUpdate(update);
                 }
@@ -776,4 +853,4 @@ function richMode(options) {
     ];
 }
 
-export { EditorView, Transaction, undoDepth };
+export { EditorView, Transaction, openSearchPanel, undoDepth };

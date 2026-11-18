@@ -33,6 +33,7 @@
     const followButton = $('followButton');
     const followLabel = $('followLabel');
     const liveStatus = $('liveStatus');
+    const wordCount = $('wordCount');
     const watchFolderButton = $('watchFolderButton');
     const editButton = $('editButton');
     const editLabel = $('editLabel');
@@ -72,6 +73,8 @@
         codeBlock: 'Code block',
     };
     const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+    // The word count waits for a pause in typing, so a large document stays responsive.
+    const WORD_COUNT_DELAY_MS = 200;
 
     // Web folder drops: relative path (e.g. "docs/img/a.png") -> File
     const folderFiles = new Map();
@@ -111,8 +114,9 @@
     // The file selector's "Open all as tabs" action (desktop only), or null.
     let openAllAction = null;
     // While editing: { view, cm, separator, state (core.editReducer), saving (the save being
-    // written, a promise, or null) }.
+    // written, a promise, or null), words ({ doc, total }: the last document counted) }.
     let editing = null;
+    let wordCountTimer = null;
     let codeMirrorLoad = null;
     let toolbarReady = false;
     // The editor's view: 'rich' (the markup styled, its markers shown on the cursor's lines) or
@@ -1334,7 +1338,10 @@
         return Boolean(editing && editing.state.dirty);
     }
 
-    /** ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves while editing. */
+    /**
+     * ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves and ⌘F / Ctrl+F opens find and replace
+     * while editing. While viewing, ⌘F is left to the browser's own find.
+     */
     function onEditShortcut(e) {
         const action = core.editorShortcut(e, IS_MAC);
         // ⌘/ before the formatting shortcuts: where / is Shift+7 it's also ⌘⇧7 (numbered list).
@@ -1359,6 +1366,10 @@
             e.preventDefault();
             e.stopPropagation();
             setEditorMode(editorMode === 'rich' ? 'markdown' : 'rich');
+        } else if (action === 'find') {
+            if (!editing) return;
+            e.preventDefault();
+            editing.cm.openSearchPanel(editing.view);
         } else if (editing) {
             e.preventDefault();
             saveDocument();
@@ -1430,12 +1441,13 @@
             const raws = rendered ? rendered.blocks.map(block => block.raw) : [];
             const anchor = rendered && markdownContent.style.display !== 'none' ? captureAnchor() : null;
             const separator = core.lineSeparator(text);
-            const session = { cm, separator, view: null, state: null, saving: null };
+            const session = { cm, separator, view: null, state: null, saving: null, words: null };
             session.state = core.editReducer(null, { type: 'open', content: text }).state;
             editorHost.replaceChildren();
             session.view = cm.createEditor(editorHost, text, editorOptions(session));
             editing = session;
             setUpToolbar();
+            renderWordCount();
 
             markdownContent.style.display = 'none';
             editorHost.hidden = false;
@@ -1513,7 +1525,12 @@
         return {
             lineSeparator: session.separator,
             onChange: () => {
-                if (editing === session) dispatchEdit({ type: 'edit', text: editorText() });
+                if (editing !== session) return;
+                dispatchEdit({ type: 'edit', text: editorText() });
+                scheduleWordCount();
+            },
+            onSelect: () => {
+                if (editing === session) scheduleWordCount();
             },
             onUpdate: () => {
                 if (editing === session) renderToolbar();
@@ -1678,12 +1695,40 @@
         editing.view.focus();
     }
 
+    function scheduleWordCount() {
+        clearTimeout(wordCountTimer);
+        wordCountTimer = setTimeout(renderWordCount, WORD_COUNT_DELAY_MS);
+    }
+
+    /** "1,204 words", or "37 of 1,204 words" while text is selected. */
+    function renderWordCount() {
+        clearTimeout(wordCountTimer);
+        wordCountTimer = null;
+        if (!editing) {
+            wordCount.hidden = true;
+            return;
+        }
+        const session = editing;
+        const state = session.view.state;
+        // The document is counted again only when it changed, not for every new selection.
+        if (!session.words || session.words.doc !== state.doc) {
+            session.words = { doc: state.doc, total: core.countWords(state.sliceDoc()) };
+        }
+        const ranges = state.selection.ranges.filter(range => !range.empty);
+        const selected = ranges.length
+            ? core.countWords(ranges.map(range => state.sliceDoc(range.from, range.to)).join('\n'))
+            : null;
+        wordCount.textContent = core.formatWordCount(session.words.total, selected);
+        wordCount.hidden = false;
+    }
+
     /** Removes the editor (and its unsaved changes, if any) without asking. */
     function closeEditor() {
         if (!editing) return;
         const session = editing;
         editing = null;
         closeMenus();
+        renderWordCount();
         session.view.destroy();
         editorHost.replaceChildren();
         editorHost.hidden = true;
@@ -1719,6 +1764,7 @@
             view.destroy();
             session.separator = core.lineSeparator(text);
             session.view = session.cm.createEditor(editorHost, text, editorOptions(session));
+            scheduleWordCount();
             const pos = Math.min(docPosition(text, offset, session.separator), session.view.state.doc.length);
             session.view.dispatch({ selection: { anchor: pos } });
             return;

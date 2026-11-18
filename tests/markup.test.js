@@ -144,9 +144,38 @@ test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
     assert.match(bundle, /^var MarkyCodeMirror=/);
     const window = {};
     new Function('window', 'self', `${bundle}\nwindow.MarkyCodeMirror = MarkyCodeMirror;`)(window, window);
-    for (const name of ['createEditor', 'createState', 'formatState', 'EditorView', 'Transaction']) {
+    for (const name of ['createEditor', 'createState', 'formatState', 'EditorView', 'Transaction', 'openSearchPanel']) {
         assert.ok(window.MarkyCodeMirror[name], `MarkyCodeMirror.${name}`);
     }
+});
+
+test('find and replace is in the editor bundle, so it loads on first edit and not before', () => {
+    const entry = fs.readFileSync(path.join(root, 'scripts', 'codemirror-entry.mjs'), 'utf8');
+    assert.match(entry, /from '@codemirror\/search'/);
+    assert.match(entry, /search\(\)/);
+    assert.match(entry, /keymap\.of\(\[\.\.\.searchKeymap/);
+    const bundle = fs.readFileSync(path.join(root, 'js', 'vendor', 'codemirror.js'), 'utf8');
+    // The search panel's own strings, as @codemirror/search builds it.
+    assert.match(bundle, /cm-search/);
+    assert.match(bundle, /"replace all"/);
+    // Nothing else loads it: the page names only the lazily loaded bundle (see above).
+    assert.doesNotMatch(html, /codemirror|cm-search/i);
+    assert.doesNotMatch(app, /<script[^>]*search/i);
+});
+
+test('⌘F opens find and replace only while editing; viewing keeps the browser\'s find', () => {
+    const handler = app.match(/function onEditShortcut[\s\S]*?\n {4}}\n/)[0];
+    assert.match(handler, /action === 'find'\) \{\s*if \(!editing\) return;\s*e\.preventDefault\(\);\s*editing\.cm\.openSearchPanel\(editing\.view\);/);
+});
+
+test('the word count sits in the top bar, shown only while editing and not on phones', () => {
+    const topbar = html.match(/<header class="topbar">([\s\S]*?)<\/header>/);
+    assert.match(topbar[1], /<span[^>]*id="wordCount"[^>]*\shidden[\s>]/);
+    assert.match(html, /body\.editing \.word-count:not\(\[hidden\]\)/);
+    assert.match(html, /@media \(max-width: 700px\)[\s\S]*?\.word-count \{\s*display: none !important;/);
+    // Counted with core.countWords, after a pause in typing.
+    assert.match(app, /function scheduleWordCount\(\) \{\s*clearTimeout\(wordCountTimer\);\s*wordCountTimer = setTimeout\(renderWordCount, WORD_COUNT_DELAY_MS\);/);
+    assert.match(app, /core\.countWords\(state\.sliceDoc\(\)\)/);
 });
 
 test('unsaved changes are guarded: closing the window, the browser tab, Open another, drops and the file list', () => {
