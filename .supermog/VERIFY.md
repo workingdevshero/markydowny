@@ -112,7 +112,7 @@ about 2.4 s, so look within that). Then:
 
 A pencil button (*Edit*, ⌘E on a Mac, Ctrl+E elsewhere) sits in the top bar next to fullscreen
 while a document is open. It swaps the rendered view for a CodeMirror editor showing the
-markdown, with the same width and fonts, and reads *Done*; *Done* renders the result and scrolls
+markdown (styled in Rich mode unless Markdown was chosen last; see below), with the same width and fonts, and reads *Done*; *Done* renders the result and scrolls
 near where the cursor was. *Save* (⌘S / Ctrl+S) and *Revert* appear while editing. Unsaved
 changes put a dot before the title in the top bar and the page title ("• live.md - Markydowny").
 
@@ -162,6 +162,39 @@ CodeMirror, on first edit, never before.
 - **Phone width.** Strikethrough, Inline code, Numbered list and Task list move into a *More
   formatting* (⋯) menu, and the toolbar fits without scrolling sideways.
 
+### Rich mode and the Rich | Markdown switch
+
+While editing, a two-option switch (*Rich* | *Markdown*, `#modeSwitch`, `role="radiogroup"`)
+sits next to the pencil. ⌘/ (Ctrl+/ elsewhere) flips it. Rich is the default; the last choice is
+kept in `localStorage` under `markydowny.editorMode`. Both are the same CodeMirror document:
+Rich adds the class `cm-rich` to `.cm-editor` and draws the markup over it, Markdown shows the
+plain source.
+
+- **Looks like the rendered view.** Open a file with headings, bold/italic/strikethrough/inline
+  code, links, a bulleted list with a nested item, a task list, a numbered list, a quote, a fenced
+  code block with a language, a `---` rule, a table and an image (`![Marky](marky.png)`), then
+  press *Edit*. Headings are at heading sizes, bullets are `•` (`◦` nested), tasks are
+  checkboxes, the code block is a grey box with its language as a small label, the rule is a
+  line, the table is a table and the image shows under its (muted) markdown. Take a screenshot in
+  light and in dark.
+- **Markers on the cursor line.** Every line except the ones holding the cursor or a selection
+  hides its markers (`#`, `**`, `_`, `~~`, backticks, `[` and `](url)`, `>`, `- [ ]`, fences).
+  Put the cursor on a line (click it, or place a selection with `browser_evaluate` as in the
+  toolbar section): that line alone shows its markdown, e.g. `A line with **bold**` while the
+  next line reads `Another line with bold`. A table shows as markdown (monospace, pipes and all)
+  while the cursor is in it, and as a table otherwise.
+- **Typing.** Type `**bold**` on a new line: once the cursor moves to another line it reads
+  *bold*, in bold, with no asterisks.
+- **Task boxes.** Clicking a checkbox toggles it without moving the cursor; saving changes only
+  `[ ]` to `[x]` (or back) in the file.
+- **Links.** A plain click places the cursor. ⌘-click (Ctrl-click off a Mac) opens the link as
+  the rendered view would: external links in a new tab, `#anchors` move the cursor to that
+  heading.
+- **Switching.** Switching mid-edit keeps the text, the cursor and selection, and the line at
+  the top of the window; undo (Ctrl+Z) after a switch undoes the edit made before it. The
+  formatting toolbar behaves the same in both.
+- **Phone width.** Only the current view's label shows in the switch; pressing it switches.
+
 The desktop app saves through `write_document` (atomic, permission-keeping, refused when the file
 changed since the editor read it) and asks before closing a window with unsaved changes; that
 side can't run here, and its Rust is covered by `cargo test`.
@@ -206,6 +239,19 @@ What differs from the browser:
 
 macOS-only behaviour (tabs, the Dock, opening files from Finder) can't be seen on Linux. On a
 Linux round, say so rather than reporting it missing.
+
+## Docs
+
+The docs live at `/docs/`: static pages rendered from `docs/*.md` by `scripts/build-docs.mjs`
+and committed, so the same server serves them. When a change touches `docs/`:
+
+- Open `http://localhost:$PORT/docs/` and use the side navigation to reach every page. Each one
+  highlights itself in the navigation and has its own title in the tab.
+- The header's logo and **Open a file** go back to the app at `/`, **Docs** to `/docs/`, and
+  **Download** to the Install page. The homepage's footer links to the docs.
+- Check light and dark, and one look at a phone width (about 390px): the page list becomes a row
+  that scrolls sideways above the page, and tables scroll rather than overflow.
+- Headings show a `#` anchor on hover; links between pages land on the right section.
 
 ## Known quirks
 

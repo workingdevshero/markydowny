@@ -1,0 +1,32 @@
+{
+  "name": "markychecky",
+  "version": "0.1.0",
+  "description": "A live board of what every Claude Code session is doing: each session's task list in its own section of one markdown file, opened in Markydowny so you can watch your agents check things off.",
+  "author": {
+    "name": "Working Devs Hero"
+  },
+  "homepage": "https://markydowny.com",
+  "repository": "https://github.com/workingdevshero/markydowny",
+  "license": "MIT",
+  "keywords": ["tasks", "todo", "markdown", "live reload", "markydowny"],
+  "userConfig": {
+    "file": {
+      "type": "string",
+      "title": "Board file",
+      "description": "The markdown file every session writes its section to. ~ is your home folder.",
+      "default": "~/markychecky.md"
+    },
+    "open": {
+      "type": "boolean",
+      "title": "Open in Markydowny",
+      "description": "Open the board in Markydowny, in the background, the first time a session writes to it (macOS, when Markydowny is installed).",
+      "default": true
+    },
+    "idle_hours": {
+      "type": "string",
+      "title": "Keep ended sessions (hours)",
+      "description": "How long a session's section stays on the board after the session ends.",
+      "default": "24"
+    }
+  }
+}

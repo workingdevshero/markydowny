@@ -1,0 +1,5 @@
+# GitHub Pages builds the site with Jekyll, which would render every markdown file it finds.
+# The docs' sources are rendered by scripts/build-docs.mjs into docs/**/index.html instead;
+# left in, docs/index.md would be rendered over the committed docs/index.html.
+exclude:
+  - docs/*.md

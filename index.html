@@ -525,8 +525,10 @@
             margin-left: -1.5em;
         }
 
-        /* marked renders task boxes disabled, which browsers grey out, so they are drawn here. */
-        .markdown-content input[type="checkbox"] {
+        /* marked renders task boxes disabled, which browsers grey out, so they are drawn here
+           (and in Rich mode). */
+        .markdown-content input[type="checkbox"],
+        .editor-host .cm-rich-task {
             appearance: none;
             -webkit-appearance: none;
             display: inline-grid;
@@ -540,12 +542,14 @@
             background: var(--surface);
         }
 
-        .markdown-content input[type="checkbox"]:checked {
+        .markdown-content input[type="checkbox"]:checked,
+        .editor-host .cm-rich-task:checked {
             background: var(--accent);
             border-color: var(--accent);
         }
 
-        .markdown-content input[type="checkbox"]:checked::before {
+        .markdown-content input[type="checkbox"]:checked::before,
+        .editor-host .cm-rich-task:checked::before {
             content: "";
             width: 0.6em;
             height: 0.6em;
@@ -557,7 +561,8 @@
             color: var(--text-muted);
         }
 
-        .markdown-content a {
+        .markdown-content a,
+        .editor-host .cm-rich-link {
             color: var(--accent);
             text-decoration: underline;
             text-decoration-thickness: 1px;
@@ -573,7 +578,8 @@
             font-weight: 650;
         }
 
-        .markdown-content code {
+        .markdown-content code,
+        .editor-host .cm-rich-code {
             font-family: var(--font-mono);
             font-size: 0.875em;
             background: var(--code-bg);
@@ -610,7 +616,8 @@
             margin-bottom: 0;
         }
 
-        .markdown-content table {
+        .markdown-content table,
+        .editor-host .cm-rich-table table {
             display: block;
             width: max-content;
             max-width: 100%;
@@ -623,27 +630,34 @@
         }
 
         .markdown-content th,
-        .markdown-content td {
+        .markdown-content td,
+        .cm-rich-table th,
+        .cm-rich-table td {
             padding: 8px 14px;
             border-bottom: 1px solid var(--border);
         }
 
         .markdown-content th + th,
-        .markdown-content td + td {
+        .markdown-content td + td,
+        .cm-rich-table th + th,
+        .cm-rich-table td + td {
             border-left: 1px solid var(--border);
         }
 
-        .markdown-content tr:last-child td {
+        .markdown-content tr:last-child td,
+        .cm-rich-table tr:last-child td {
             border-bottom: 0;
         }
 
-        .markdown-content th {
+        .markdown-content th,
+        .cm-rich-table th {
             background: var(--surface-2);
             font-weight: 650;
             text-align: left;
         }
 
-        .markdown-content tbody tr:nth-child(even) {
+        .markdown-content tbody tr:nth-child(even),
+        .cm-rich-table tbody tr:nth-child(even) {
             background: color-mix(in srgb, var(--surface-2) 50%, transparent);
         }
 
@@ -816,6 +830,202 @@
         body.editing .follow-button,
         body.editing .live-status {
             display: none !important;
+        }
+
+        /* ---------- Rich mode: the editor styled like the rendered view ---------- */
+
+        /* Lines take padding, never margins: the editor measures their boxes. */
+        .editor-host .cm-rich .cm-line.cm-rich-h1,
+        .editor-host .cm-rich .cm-line.cm-rich-h2,
+        .editor-host .cm-rich .cm-line.cm-rich-h3,
+        .editor-host .cm-rich .cm-line.cm-rich-h4,
+        .editor-host .cm-rich .cm-line.cm-rich-h5,
+        .editor-host .cm-rich .cm-line.cm-rich-h6 {
+            font-weight: 700;
+            line-height: 1.25;
+            letter-spacing: -0.02em;
+            padding: 0.9em 0 0.3em;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-h1 {
+            font-size: 2.25rem;
+            letter-spacing: -0.03em;
+            padding-top: 0.2em;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-h2 {
+            font-size: 1.5rem;
+            padding-bottom: 0.35em;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-h3 { font-size: 1.2rem; }
+        .editor-host .cm-rich .cm-line.cm-rich-h4 { font-size: 1.05rem; }
+        .editor-host .cm-rich .cm-line.cm-rich-h5,
+        .editor-host .cm-rich .cm-line.cm-rich-h6 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+        }
+
+        /* A setext heading's underline, hidden off the cursor: a sliver of a line. */
+        .editor-host .cm-rich .cm-line.cm-rich-setext-underline {
+            font-size: 0.3em;
+            line-height: 1;
+        }
+
+        .editor-host .cm-rich-strong {
+            font-weight: 650;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-quote {
+            border-left: 3px solid var(--coral);
+            background: color-mix(in srgb, var(--coral) 7%, transparent);
+            padding: 0 18px;
+            color: var(--text-muted);
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-codeblock {
+            font-family: var(--font-mono);
+            font-size: 0.9em;
+            line-height: 1.55;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-width: 0 1px;
+            padding: 0 20px;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-codeblock-first {
+            border-top-width: 1px;
+            border-radius: 12px 12px 0 0;
+            padding-top: 12px;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-codeblock-last {
+            border-bottom-width: 1px;
+            border-radius: 0 0 12px 12px;
+            padding-bottom: 12px;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-codeblock-first.cm-rich-codeblock-last {
+            border-radius: 12px;
+        }
+
+        /* The closing fence, hidden off the cursor: just the block's bottom padding. */
+        .editor-host .cm-rich .cm-line.cm-rich-codeblock-last.cm-rich-fence-hidden {
+            font-size: 0.3em;
+            line-height: 1;
+        }
+
+        .editor-host .cm-rich-code-label {
+            font-family: var(--font-sans);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+
+        .editor-host .cm-rich .cm-line.cm-rich-table-source {
+            font-family: var(--font-mono);
+            font-size: 0.9em;
+        }
+
+        .editor-host .cm-rich-bullet,
+        .editor-host .cm-rich-list-mark {
+            color: var(--text-muted);
+        }
+
+        .editor-host .cm-rich-bullet {
+            display: inline-block;
+            min-width: 0.6em;
+        }
+
+        .editor-host .cm-rich-task {
+            cursor: pointer;
+        }
+
+        .editor-host .cm-rich-task-done {
+            color: var(--text-muted);
+        }
+
+        .editor-host .cm-rich-image-source {
+            color: var(--text-muted);
+            font-size: 0.85em;
+        }
+
+        .editor-host .cm-rich-image-wrap {
+            display: block;
+            padding: 0.6em 0 0.9em;
+        }
+
+        .editor-host .cm-rich-image-wrap[hidden] {
+            display: none;
+        }
+
+        .editor-host .cm-rich-image {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            max-height: 480px;
+            margin: 0 auto;
+            border-radius: 12px;
+        }
+
+        .editor-host .cm-rich-hr {
+            display: inline-block;
+            width: 100%;
+            height: 1.7em;
+            vertical-align: top;
+            background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat;
+        }
+
+        .editor-host .cm-rich-table {
+            padding: 0.3em 0 0.8em;
+            cursor: text;
+        }
+
+        /* While editing the top bar holds more controls: they take the room they need, and the
+           title the rest. */
+        body.editing .topbar {
+            grid-template-columns: auto minmax(0, 1fr) auto;
+        }
+
+        .topbar-actions .btn {
+            white-space: nowrap;
+        }
+
+        /* Rich | Markdown, beside the pencil while editing. */
+        .mode-switch {
+            display: inline-flex;
+            padding: 2px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+        }
+
+        .mode-switch[hidden] {
+            display: none;
+        }
+
+        .mode-option {
+            padding: 5px 10px;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text-muted);
+            font: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .mode-option:hover {
+            color: var(--text);
+        }
+
+        .mode-option[aria-checked="true"] {
+            color: var(--accent);
+            background: var(--accent-soft);
         }
 
         /* ---------- Formatting toolbar (while editing) ---------- */
@@ -1321,6 +1531,15 @@
                 display: none !important;
             }
 
+            /* Only the current view shows; pressing it switches to the other. */
+            .mode-option[aria-checked="false"] {
+                display: none;
+            }
+
+            .mode-option {
+                padding: 5px 8px;
+            }
+
             .markdown-content h1 {
                 font-size: 1.8rem;
             }
@@ -1448,6 +1667,10 @@
                 </button>
                 <button class="btn btn-ghost revert-button" id="revertButton" type="button" title="Discard unsaved changes" hidden>Revert</button>
                 <button class="btn btn-primary save-button" id="saveButton" type="button" hidden>Save</button>
+                <div class="mode-switch" id="modeSwitch" role="radiogroup" aria-label="Editor view" hidden>
+                    <button class="mode-option" type="button" role="radio" aria-checked="true" data-mode="rich">Rich</button>
+                    <button class="mode-option" type="button" role="radio" aria-checked="false" tabindex="-1" data-mode="markdown">Markdown</button>
+                </div>
                 <button class="btn btn-ghost edit-button" id="editButton" type="button" aria-pressed="false" hidden>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
                     <span id="editLabel">Edit</span>
@@ -1548,7 +1771,7 @@
 
         <footer class="footer">
             <div class="footer-credit">
-                Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+                <a href="docs/">Docs</a> · Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
             </div>
             <div class="footer-links">
                 <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
