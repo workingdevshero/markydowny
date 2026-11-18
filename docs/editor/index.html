@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/editor.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Editor · Markydowny docs</title>
+    <meta name="description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, and handle changes made on disk while you edit.">
+    <link rel="canonical" href="https://markydowny.com/docs/editor/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/editor/">
+    <meta property="og:title" content="Editor · Markydowny docs">
+    <meta property="og:description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, and handle changes made on disk while you edit.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a href="/docs/" aria-current="true">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/" aria-current="page">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="editor">Editor</h1>
+<p>Markydowny is a viewer first, with an editor for the moment you spot a typo. The editor shows the markdown source; saving writes it back to the file.</p>
+<h2 id="edit-and-done"><a class="heading-anchor" href="#edit-and-done" aria-label="Link to this section">#</a>Edit and Done</h2>
+<p>Click <strong>Edit</strong> in the header, or press <kbd>⌘E</kbd> (<kbd>Ctrl+E</kbd> on Windows and Linux), to switch from the rendered document to its source. The editor opens at the part of the document you were reading.</p>
+<p>Click <strong>Done</strong>, or press <kbd>⌘E</kbd> again, to go back to the rendered view, near where your cursor was. If you have unsaved changes, Markydowny asks before discarding them.</p>
+<h2 id="save"><a class="heading-anchor" href="#save" aria-label="Link to this section">#</a>Save</h2>
+<p>Press <kbd>⌘S</kbd> (<kbd>Ctrl+S</kbd>) or click <strong>Save</strong>. Save is only enabled while there&#39;s something to save.</p>
+<p>Where the file goes depends on how you opened it:</p>
+<table>
+<thead>
+<tr>
+<th>Opened in</th>
+<th>Save</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>The Mac app</td>
+<td>Writes the file in place</td>
+</tr>
+<tr>
+<td>Chrome, Edge and other Chromium browsers, with <strong>Choose File</strong> or by dropping the file</td>
+<td>Writes the file in place, after the browser asks once for permission</td>
+</tr>
+<tr>
+<td>Safari, Firefox, or any file from a dropped folder</td>
+<td><strong>Download</strong> saves a copy under the same name, usually to your Downloads folder</td>
+</tr>
+</tbody></table>
+<p>When saving in place isn&#39;t possible the button reads <strong>Download</strong> instead of <strong>Save</strong>, so you know before you click.</p>
+<h2 id="only-your-edits-change"><a class="heading-anchor" href="#only-your-edits-change" aria-label="Link to this section">#</a>Only your edits change</h2>
+<p>Saving changes only the text you edited. Everything else in the file, down to the byte, stays as it was:</p>
+<ul>
+<li>line endings, Windows (<code>\r\n</code>) or Unix (<code>\n</code>), are kept as the file has them,</li>
+<li>nothing is reformatted: list markers, indentation, trailing spaces and blank lines are untouched, and</li>
+<li>the file&#39;s permissions are kept.</li>
+</ul>
+<p>That keeps diffs small and means saving never fights a formatter or another tool. In the Mac app, the new text is written to a temporary file and moved over the original, so a crash mid-save never leaves half a file.</p>
+<h2 id="revert"><a class="heading-anchor" href="#revert" aria-label="Link to this section">#</a>Revert</h2>
+<p><strong>Revert</strong> throws away your unsaved changes and puts the editor back to the last saved text.</p>
+<h2 id="unsaved-changes"><a class="heading-anchor" href="#unsaved-changes" aria-label="Link to this section">#</a>Unsaved changes</h2>
+<p>While you have unsaved changes, the document&#39;s title starts with a dot (•). Markydowny asks before anything would throw them away: <strong>Done</strong>, <strong>Open another</strong>, dropping another file, or closing the window or tab.</p>
+<h2 id="changed-on-disk"><a class="heading-anchor" href="#changed-on-disk" aria-label="Link to this section">#</a>Changed on disk</h2>
+<p>Markydowny keeps watching the file while you edit (in the app, and in Chromium browsers; see <a href="/docs/live-reload/#browser-support">Live reload</a>).</p>
+<ul>
+<li><strong>With no unsaved changes</strong>, a change on disk is applied to the editor as it happens. Your cursor stays where it is.</li>
+<li><strong>With unsaved changes</strong>, a banner says <em>This file changed on disk</em> and offers:<ul>
+<li><strong>Reload</strong>: discard your changes and load the file as it is now.</li>
+<li><strong>Keep mine</strong>: carry on editing. The next save overwrites the file with your version.</li>
+</ul>
+</li>
+</ul>
+<p>Saving checks the file first, too. If it changed since you started editing, the save stops and the banner appears instead, so a change made elsewhere is never overwritten without your say.</p>
+<h2 id="rich-mode"><a class="heading-anchor" href="#rich-mode" aria-label="Link to this section">#</a>Rich mode</h2>
+<blockquote>
+<p><strong>Coming soon.</strong> Rich mode will let you edit the rendered document directly, with a switch between Rich and Markdown. This section will describe it once it ships.</p>
+</blockquote>
+<p><img src="/docs/media/rich-mode-placeholder.svg" alt="Placeholder: Rich mode"></p>
+<h2 id="formatting-toolbar"><a class="heading-anchor" href="#formatting-toolbar" aria-label="Link to this section">#</a>Formatting toolbar</h2>
+<blockquote>
+<p><strong>Coming soon.</strong> A toolbar and shortcuts for bold, italics, headings, lists, links and code. This section will describe them once they ship.</p>
+</blockquote>
+<p><img src="/docs/media/toolbar-placeholder.svg" alt="Placeholder: formatting toolbar"></p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

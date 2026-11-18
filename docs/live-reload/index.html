@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/live-reload.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Live reload &amp; Follow · Markydowny docs</title>
+    <meta name="description" content="Markydowny re-renders a markdown file when it changes on disk, highlights what changed, and with Follow keeps the latest change in view.">
+    <link rel="canonical" href="https://markydowny.com/docs/live-reload/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/live-reload/">
+    <meta property="og:title" content="Live reload &amp; Follow · Markydowny docs">
+    <meta property="og:description" content="Markydowny re-renders a markdown file when it changes on disk, highlights what changed, and with Follow keeps the latest change in view.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a href="/docs/" aria-current="true">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/" aria-current="page">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="live-reload-follow">Live reload &amp; Follow</h1>
+<p>Leave a document open while something else edits it (another editor, a script, an AI agent) and Markydowny re-renders it as it changes, highlights what changed, and can keep the latest change in view.</p>
+<h2 id="what-reloads"><a class="heading-anchor" href="#what-reloads" aria-label="Link to this section">#</a>What reloads</h2>
+<ul>
+<li><strong>In the Mac app</strong>, every open document. The window checks the file and re-renders it within about a second of a change, keeping your scroll position.</li>
+<li><strong>On the web</strong>, a file opened with <strong>Choose File</strong> or dropped on the page, in a browser that supports it (see <a href="#browser-support">Browser support</a>).</li>
+<li>A folder dropped on the web page is read once. In the app, a folder you choose to watch follows every change inside it: see <a href="/docs/claude-code/#watch-this-folder">Watch this folder</a>.</li>
+</ul>
+<p>While a document is live, the header shows <strong>Follow</strong> and, after the first change, when it last updated (<em>Updated just now</em>, <em>Updated 2 min ago</em>). Hover over it for the exact time.</p>
+<p>On the web, a tab in the background stops checking, and catches up as soon as you switch back to it.</p>
+<h2 id="change-highlights"><a class="heading-anchor" href="#change-highlights" aria-label="Link to this section">#</a>Change highlights</h2>
+<p>After a reload, the blocks that changed (a paragraph, a list item, a code block, a table) light up and fade over a couple of seconds. Where something was removed, a thin line marks the spot.</p>
+<p>If your system asks for reduced motion, the highlight doesn&#39;t fade: it stays still for a few seconds and then disappears.</p>
+<h2 id="follow-and-resume"><a class="heading-anchor" href="#follow-and-resume" aria-label="Link to this section">#</a>Follow and Resume</h2>
+<p><strong>Follow</strong> keeps the latest change in view: each time the file changes, the page scrolls to the first block that changed.</p>
+<ul>
+<li>Click <strong>Follow</strong> to turn it on; the button then reads <strong>Following</strong>. Click it again to turn it off.</li>
+<li>Scroll yourself, with the mouse, trackpad, scroll bar or keys, and Follow pauses so it doesn&#39;t pull the page away from what you&#39;re reading. The button reads <strong>Resume</strong>.</li>
+<li>Click <strong>Resume</strong> to jump to the latest change and carry on following.</li>
+</ul>
+<p>Follow is on by default, and Markydowny remembers whether you left it on or off.</p>
+<h2 id="when-the-file-goes-missing"><a class="heading-anchor" href="#when-the-file-goes-missing" aria-label="Link to this section">#</a>When the file goes missing</h2>
+<p>If the file is deleted or moved while it&#39;s open, Markydowny keeps showing the last version and says <em>This file was deleted or moved</em>. Many editors and agents save by replacing the file, so it often comes straight back: when it does, the notice goes away and the document reloads.</p>
+<h2 id="browser-support"><a class="heading-anchor" href="#browser-support" aria-label="Link to this section">#</a>Browser support</h2>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Live reload</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Mac app</td>
+<td>Always</td>
+</tr>
+<tr>
+<td>Chrome, Edge, Brave, Arc, Opera and other Chromium browsers</td>
+<td>Files opened with <strong>Choose File</strong> or dropped on the page</td>
+</tr>
+<tr>
+<td>Safari</td>
+<td>Reads the file once</td>
+</tr>
+<tr>
+<td>Firefox</td>
+<td>Reads the file once</td>
+</tr>
+</tbody></table>
+<p>Live reload on the web needs the File System Access API, which only Chromium browsers have. Safari and Firefox show the file as it was when you opened it: open it again to see changes.</p>
+<p>Some Chromium versions also tell the page the moment a file changes; the rest check about once a second. Either way you don&#39;t need to do anything.</p>
+<h2 id="see-also"><a class="heading-anchor" href="#see-also" aria-label="Link to this section">#</a>See also</h2>
+<ul>
+<li><a href="/docs/claude-code/">Watching Claude Code</a>: leave a doc open while an agent edits it.</li>
+<li><a href="/docs/editor/#changed-on-disk">Editor</a>: what happens when the file changes while you&#39;re editing it.</li>
+</ul>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

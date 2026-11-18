@@ -9,5 +9,5 @@ verify:
   notes: .supermog/VERIFY.md
   # Only what the browser renders. The desktop app (src-tauri/**), tests and build scripts never
   # change the website, so a PR touching only those isn't verified in a browser.
-  paths: ["index.html", "js/**", "*.svg", "*.png", "favicon.ico"]
+  paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico"]
   evidence: both

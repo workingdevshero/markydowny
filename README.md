@@ -4,6 +4,8 @@
 
 A simple, beautiful markdown viewer — on the web at [markydowny.com](https://markydowny.com), and as a native macOS app that opens `.md` files when you double-click them.
 
+📖 **Docs:** [markydowny.com/docs](https://markydowny.com/docs/), one page per feature (sources in [`docs/`](docs/)).
+
 ## Features
 
 - 📤 **Drag & Drop**: Simply drag your markdown files or folders into the drop zone
@@ -98,6 +100,7 @@ To make it the default for markdown files: in Finder, select any `.md` file → 
 npm run dev                   # launch the app
 npm run dev -- -- README.md   # launch with a file
 npm test                      # JS + Rust tests
+npm run docs                  # re-render docs/ after editing a docs/*.md (tests fail on stale HTML)
 ```
 
 Requirements: Node 18+, Rust (the version is pinned in `rust-toolchain.toml`, so rustup installs it automatically), and Xcode command line tools.
@@ -137,6 +140,8 @@ js/vendor/marked.umd.js         Vendored markdown parser (refresh with `npm run 
 js/vendor/codemirror.js         Vendored editor, bundled from scripts/codemirror-entry.mjs by `npm run vendor`; loaded on first edit
 src-tauri/                      Desktop shell: file associations, window routing, file access, crash reporting
 scripts/build-frontend.mjs      Copies the web app into dist/ for the desktop build
+docs/*.md                       Docs sources; `npm run docs` renders each into docs/<page>/index.html (committed)
+scripts/build-docs.mjs          Renders the docs with the vendored marked and one page template
 tests/                          JS unit tests (node --test)
 ```
 

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/privacy.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Privacy · Markydowny docs</title>
+    <meta name="description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or network requests.">
+    <link rel="canonical" href="https://markydowny.com/docs/privacy/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/privacy/">
+    <meta property="og:title" content="Privacy · Markydowny docs">
+    <meta property="og:description" content="Markydowny never uploads your files. Documents are read on your device, and there are no analytics, accounts or network requests.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a href="/docs/" aria-current="true">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/" aria-current="page">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="privacy">Privacy</h1>
+<p><strong>Your files never leave your device.</strong> Markydowny has no server to send them to.</p>
+<h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
+<ul>
+<li>The page reads the files you choose or drop <strong>in your browser</strong>. Nothing is uploaded: there&#39;s no backend at all, just static files served by GitHub Pages.</li>
+<li>There are <strong>no analytics</strong>, no cookies, no tracking pixels, no web fonts and no third-party scripts. Once the page has loaded it makes no network requests of its own, so it works offline.</li>
+<li>The one exception is a document&#39;s own content: an image in your markdown with a web address (<code>![](https://…)</code>) is loaded from that address, as in any markdown viewer.</li>
+<li>Live reload and saving use your browser&#39;s File System Access API. The browser asks you before the page can write a file, and the permission only covers the file you opened.</li>
+<li>The page remembers one setting on your device: whether <a href="/docs/live-reload/#follow-and-resume">Follow</a> is on.</li>
+</ul>
+<p>GitHub Pages, which hosts the site, keeps standard web server logs (such as your IP address) when you load the page. That&#39;s the only party involved.</p>
+<h2 id="in-the-mac-app"><a class="heading-anchor" href="#in-the-mac-app" aria-label="Link to this section">#</a>In the Mac app</h2>
+<ul>
+<li>The app reads and writes files <strong>on your Mac</strong> and nowhere else. Apart from crash reports (below), it makes no network requests of its own: no analytics, no update checks, no accounts. As on the web, images a document links to by web address are loaded from there.</li>
+<li>A window may only write the document it shows, and only when you save.</li>
+<li>Scripts embedded in a markdown file never run: the app has a strict Content Security Policy.</li>
+<li>Links to websites open in your browser, not in the app. A link to any other kind of local file is shown in Finder rather than opened, so a document can&#39;t trick a click into running a program.</li>
+</ul>
+<h3 id="crash-reports"><a class="heading-anchor" href="#crash-reports" aria-label="Link to this section">#</a>Crash reports</h3>
+<p>Builds of the app can include crash reporting through <a href="https://www.bugsplat.com">BugSplat</a>, so crashes can be found and fixed. When the app crashes, a dialog appears before a report is sent; the report holds a minidump (the state of the app at the moment it crashed), not your documents. JavaScript errors in a window are reported too.</p>
+<p>Builds made from source without <code>BUGSPLAT_DATABASE</code> set have crash reporting turned off.</p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

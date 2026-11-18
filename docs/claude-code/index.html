@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/claude-code.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Watching Claude Code · Markydowny docs</title>
+    <meta name="description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.">
+    <link rel="canonical" href="https://markydowny.com/docs/claude-code/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/claude-code/">
+    <meta property="og:title" content="Watching Claude Code · Markydowny docs">
+    <meta property="og:description" content="Watch Claude Code or any other AI agent edit your markdown in Markydowny, follow a whole folder, and open every file it edits automatically with a PostToolUse hook.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a href="/docs/" aria-current="true">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/" aria-current="page">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="watching-claude-code">Watching Claude Code</h1>
+<p>Markydowny is a good place to watch an AI agent like <a href="https://claude.com/claude-code">Claude Code</a> write documentation, plans and notes: it re-renders each edit as it lands, highlights it, and keeps it in view. Everything here works with any tool that writes files; Claude Code just has a hook that makes it automatic.</p>
+<h2 id="leave-the-document-open"><a class="heading-anchor" href="#leave-the-document-open" aria-label="Link to this section">#</a>Leave the document open</h2>
+<p>The simple route needs no setup:</p>
+<ol>
+<li>Open the file in Markydowny: the Mac app, or <a href="https://markydowny.com">markydowny.com</a> in a Chromium browser.</li>
+<li>Ask the agent to edit it.</li>
+</ol>
+<p>Each edit re-renders within a second, the changed blocks light up, and with <a href="/docs/live-reload/#follow-and-resume">Follow</a> on (the default) the page scrolls to the latest change. Scroll away to read something and Follow pauses; click <strong>Resume</strong> to catch up.</p>
+<h2 id="watch-this-folder"><a class="heading-anchor" href="#watch-this-folder" aria-label="Link to this section">#</a>Watch this folder</h2>
+<p><em>Mac app.</em> When the agent works across many files, follow the folder instead of one file:</p>
+<ol>
+<li>Drop the project folder on a Markydowny window, or run <code>open -a Markydowny path/to/repo</code>.</li>
+<li>Choose <strong>Watch this folder</strong> in the list of markdown files.</li>
+</ol>
+<p>The window shows the most recently changed markdown file and switches to whichever one changes next, so you always see what the agent is writing. Hidden folders, <code>node_modules</code> and <code>target</code> are ignored.</p>
+<p>To stay on one file, pick it from the list; <strong>Watch this folder</strong> turns following back on.</p>
+<h2 id="open-every-file-the-agent-edits"><a class="heading-anchor" href="#open-every-file-the-agent-edits" aria-label="Link to this section">#</a>Open every file the agent edits</h2>
+<p>To have each markdown file Claude Code edits open in Markydowny by itself, add a <code>PostToolUse</code> hook. Put it in <code>.claude/settings.json</code> in your project, or in <code>~/.claude/settings.json</code> for every project:</p>
+<pre><code class="language-json">{
+  &quot;hooks&quot;: {
+    &quot;PostToolUse&quot;: [
+      {
+        &quot;matcher&quot;: &quot;Edit|Write|MultiEdit&quot;,
+        &quot;hooks&quot;: [
+          {
+            &quot;type&quot;: &quot;command&quot;,
+            &quot;command&quot;: &quot;f=$(jq -r &#39;.tool_input.file_path // empty&#39;); case \&quot;$(printf &#39;%s&#39; \&quot;$f\&quot; | tr &#39;[:upper:]&#39; &#39;[:lower:]&#39;)\&quot; in *.md|*.markdown|*.mdown|*.mkd|*.mkdn) open -g -a Markydowny \&quot;$f\&quot; ;; esac; true&quot;
+          }
+        ]
+      }
+    ]
+  }
+}
+</code></pre>
+<p>After every <code>Edit</code>, <code>Write</code> or <code>MultiEdit</code>, Claude Code runs the command with the tool call as JSON on its standard input. The command:</p>
+<ol>
+<li>reads the edited file&#39;s path, <code>tool_input.file_path</code>, with <a href="https://jqlang.org"><code>jq</code></a>,</li>
+<li>keeps markdown files only (<code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, <code>.mkd</code>, <code>.mkdn</code>, in any case), and</li>
+<li>opens them with <code>open -g -a Markydowny</code>.</li>
+</ol>
+<p>The trailing <code>true</code> means the hook never reports a failure back to Claude, even for files it skips.</p>
+<p>It needs <code>jq</code>: recent versions of macOS include it, or install it with <code>brew install jq</code>.</p>
+<h3 id="why-open-g"><a class="heading-anchor" href="#why-open-g" aria-label="Link to this section">#</a>Why <code>open -g</code></h3>
+<p><code>-g</code> opens the file <em>in the background</em>: Markydowny shows it, but your terminal stays in front, so you can keep typing to Claude.</p>
+<ul>
+<li>The first edit to a file opens it, in a new tab if Markydowny already has a window open.</li>
+<li>Later edits to the same file re-open a file that&#39;s already showing. Markydowny keeps its one tab, live-reloads it, and doesn&#39;t take focus.</li>
+</ul>
+<p>Without <code>-g</code>, every edit would bring Markydowny to the front.</p>
+<h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
+<p>Without the Mac app, open the file on <a href="https://markydowny.com">markydowny.com</a> in Chrome, Edge or another Chromium browser with <strong>Choose File</strong>, or by dropping it on the page, and leave the tab open. Live reload and Follow work the same way; the folder watch and the hook need the app. See <a href="/docs/live-reload/#browser-support">Browser support</a>.</p>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Generated from docs/install.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
+    <title>Install · Markydowny docs</title>
+    <meta name="description" content="Install Markydowny for macOS, make it the default app for markdown files, or use it on the web with nothing to install. Linux and app store builds are coming.">
+    <link rel="canonical" href="https://markydowny.com/docs/install/">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://markydowny.com/docs/install/">
+    <meta property="og:title" content="Install · Markydowny docs">
+    <meta property="og:description" content="Install Markydowny for macOS, make it the default app for markdown files, or use it on the web with nothing to install. Linux and app store builds are coming.">
+    <meta property="og:image" content="https://markydowny.com/og-image.png">
+    <meta property="og:site_name" content="Markydowny">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/marky.png">
+    <link rel="stylesheet" href="/docs/docs.css">
+</head>
+<body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <img src="/marky.png" alt="" class="brand-mark" />
+            <span>Markydowny</span>
+        </a>
+        <nav class="topbar-nav" aria-label="Site">
+            <a href="/docs/" aria-current="true">Docs</a>
+            <a href="/docs/install/">Download</a>
+            <a class="btn btn-primary" href="/">Open a file</a>
+        </nav>
+    </header>
+    <div class="docs-layout">
+        <nav class="docs-nav" aria-label="Documentation">
+            <ul>
+                <li><a href="/docs/">Getting started</a></li>
+                <li><a href="/docs/live-reload/">Live reload &amp; Follow</a></li>
+                <li><a href="/docs/claude-code/">Watching Claude Code</a></li>
+                <li><a href="/docs/editor/">Editor</a></li>
+                <li><a href="/docs/tabs/">Tabs &amp; windows</a></li>
+                <li><a href="/docs/install/" aria-current="page">Install</a></li>
+                <li><a href="/docs/shortcuts/">Keyboard shortcuts</a></li>
+                <li><a href="/docs/privacy/">Privacy</a></li>
+                <li><a href="/docs/faq/">FAQ</a></li>
+            </ul>
+        </nav>
+        <main class="docs-content" id="content">
+<h1 id="install">Install</h1>
+<h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
+<p>Nothing to install: open <a href="https://markydowny.com">markydowny.com</a> in any modern browser. Once it has loaded it works offline. For live reload and saving in place, use Chrome, Edge or another Chromium browser (see <a href="/docs/live-reload/#browser-support">Browser support</a>).</p>
+<h2 id="mac-app"><a class="heading-anchor" href="#mac-app" aria-label="Link to this section">#</a>Mac app</h2>
+<blockquote>
+<p><strong>Downloads are coming.</strong> Signed, notarized builds of the Mac app will be downloadable from this page. Until then, build it from source; it takes a few minutes.</p>
+</blockquote>
+<h3 id="build-from-source"><a class="heading-anchor" href="#build-from-source" aria-label="Link to this section">#</a>Build from source</h3>
+<p>You need macOS 12 or later, <a href="https://nodejs.org">Node</a> 18 or later, the Xcode command line tools (<code>xcode-select --install</code>), and CMake and Ninja (<code>brew install cmake ninja</code>). Rust installs itself through <a href="https://rustup.rs">rustup</a> at the version the project pins.</p>
+<pre><code class="language-bash">git clone https://github.com/workingdevshero/markydowny.git
+cd markydowny
+npm install
+npm run build
+</code></pre>
+<p>Then drag <code>src-tauri/target/release/bundle/macos/Markydowny.app</code> into your Applications folder. A <code>.dmg</code> is built next to it too.</p>
+<h3 id="make-it-the-default-for-markdown"><a class="heading-anchor" href="#make-it-the-default-for-markdown" aria-label="Link to this section">#</a>Make it the default for markdown</h3>
+<ol>
+<li>In Finder, select any <code>.md</code> file.</li>
+<li>Choose <strong>File &gt; Get Info</strong> (<kbd>⌘I</kbd>).</li>
+<li>Under <strong>Open with</strong>, choose <strong>Markydowny</strong>, then click <strong>Change All…</strong>.</li>
+</ol>
+<p>Repeat for <code>.markdown</code> (and <code>.mdown</code>, <code>.mkd</code> or <code>.mkdn</code>) if you use them.</p>
+<h2 id="linux"><a class="heading-anchor" href="#linux" aria-label="Link to this section">#</a>Linux</h2>
+<blockquote>
+<p><strong>Coming soon.</strong> Packaged Linux builds will be listed here.</p>
+</blockquote>
+<p>The app already builds on Linux from source, for testing: run <code>scripts/build-desktop.sh</code> in a clone of the repository. It needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04) and installs what it needs on Debian and Ubuntu. Documents open in separate windows rather than tabs.</p>
+<h2 id="app-stores"><a class="heading-anchor" href="#app-stores" aria-label="Link to this section">#</a>App stores</h2>
+<blockquote>
+<p><strong>Coming soon.</strong> Markydowny isn&#39;t in the Mac App Store or Microsoft Store yet. The store editions need sandboxing, which limits folder watching and the <a href="/docs/claude-code/#open-every-file-the-agent-edits">Claude Code hook</a>, so they&#39;re a separate effort.</p>
+</blockquote>
+        </main>
+    </div>
+    <footer class="footer">
+        <div class="footer-credit">
+            Made by <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer">Working Devs Hero</a>
+        </div>
+        <div class="footer-links">
+                <a href="https://workingdevshero.com" target="_blank" rel="noopener noreferrer" title="Website">
+                    <img src="/web.svg" alt="Website" class="footer-icon" />
+                </a>
+                <a href="https://discord.gg/UxNXrBukjZ" target="_blank" rel="noopener noreferrer" title="Discord">
+                    <img src="/discord.svg" alt="Discord" class="footer-icon" />
+                </a>
+                <a href="https://github.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="GitHub">
+                    <img src="/github.svg" alt="GitHub" class="footer-icon" />
+                </a>
+                <a href="https://x.com/workingdevshero" target="_blank" rel="noopener noreferrer" title="X">
+                    <img src="/x.svg" alt="X" class="footer-icon" />
+                </a>
+        </div>
+    </footer>
+</body>
+</html>
