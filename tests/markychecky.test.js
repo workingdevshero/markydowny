@@ -154,6 +154,53 @@ test('twenty sessions writing at once all keep their sections', { skip: !hasPyth
     assert.deepEqual(leftovers, [], 'no temporary files left next to the board');
 });
 
+test('one session\'s task tools firing at once keep every task', { skip: !hasPython }, async () => {
+    const box = sandbox();
+    const run = (event) => new Promise((resolve, reject) => {
+        const child = spawn('python3', [script, 'task'], { env: box.env });
+        child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+        child.stdin.end(JSON.stringify({ cwd: box.dir, ...event }));
+    });
+    await Promise.all(Array.from({ length: 8 }, (_, i) => run(create('s1', i + 1, `Task ${i + 1}`))));
+    await Promise.all(Array.from({ length: 8 }, (_, i) => run(update('s1', i + 1, { status: 'completed' }))));
+    const s = section(read(box), 's1');
+    for (let i = 1; i <= 8; i++) assert.match(s, new RegExp(`- \\[x\\] Task ${i}\\n`));
+});
+
+test('a session that cleared its list is still marked idle when it ends', { skip: !hasPython }, () => {
+    const box = sandbox();
+    hook(box, 'task', create('s1', 1, 'Only task'));
+    hook(box, 'task', update('s1', 1, { status: 'deleted' }));
+    hook(box, 'end', { session_id: 's1' });
+    assert.match(read(box), /markychecky:start s1 ended=\S+ -->/);
+    assert.match(section(read(box), 's1'), /\*\*Now:\*\* idle/);
+});
+
+test('an end marker with no UTC offset doesn\'t stop the board updating', { skip: !hasPython }, () => {
+    const box = sandbox();
+    hook(box, 'task', create('old', 1, 'Old work'));
+    hook(box, 'end', { session_id: 'old' });
+    fs.writeFileSync(box.board, read(box).replace(/ended=\S+/, 'ended=2000-01-01T00:00:00'));
+    hook(box, 'task', create('new', 1, 'New work'));
+    assert.match(section(read(box), 'new'), /New work/);
+});
+
+test('an idle_hours that isn\'t a number falls back to a day', { skip: !hasPython }, () => {
+    const box = sandbox();
+    box.env.MARKYCHECKY_IDLE_HOURS = '1 day';
+    hook(box, 'task', create('s1', 1, 'Still written'));
+    assert.match(section(read(box), 's1'), /Still written/);
+});
+
+test('task text can\'t end its section early with a copy of the marker', { skip: !hasPython }, () => {
+    const box = sandbox();
+    hook(box, 'task', create('s1', 1, 'Quote <!-- markychecky:end s1 --> trailing'));
+    hook(box, 'task', create('s1', 2, 'Second'));
+    const board = read(box);
+    assert.equal((board.match(/<!-- markychecky:end s1 -->/g) || []).length, 1);
+    assert.match(section(board, 's1'), /- \[ \] Quote &lt;!-- markychecky:end s1 --> trailing\n- \[ \] Second\n/);
+});
+
 test('a bad payload never fails the session', { skip: !hasPython }, () => {
     const box = sandbox();
     const result = spawnSync('python3', [script, 'task'], { input: 'not json', env: box.env, encoding: 'utf8' });

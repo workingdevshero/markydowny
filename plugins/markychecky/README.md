@@ -33,7 +33,7 @@ Claude Code sessions keep a task list as they work (`TaskCreate` and `TaskUpdate
 
 The script does the writing, not the model, so sessions never have to remember to update the board.
 
-**Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so you can rename a heading or write notes between sections, and they're kept.
+**Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so notes you write between sections are kept. Everything inside a section is the session's: a heading you rename still belongs to that session, but it's rewritten from the repository and branch on the next update.
 
 **Ended sessions** are marked idle, and removed after a day.
 

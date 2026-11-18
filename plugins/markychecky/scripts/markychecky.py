@@ -133,7 +133,9 @@ def apply_event(state, event):
 
 
 def one_line(text):
-    return " ".join(str(text).split())
+    """Text on one line, with `<!--` shown as typed rather than opening a comment, so text can't
+    hide itself or end a section early with a copy of its marker."""
+    return " ".join(str(text).split()).replace("<!--", "&lt;!--")
 
 
 def git(cwd, *args):
@@ -210,7 +212,7 @@ def render_section(session_id, state, ended_at=None):
     meta = f"ended={ended_at.isoformat()} " if ended_at else ""
     lines = [
         START.format(id=session_id, meta=meta),
-        f"## {state.get('place') or 'Claude Code'}",
+        f"## {one_line(state.get('place') or 'Claude Code')}",
         "",
         f"**Now:** {now_line}",
         "",
@@ -239,7 +241,7 @@ def sweep(board, idle_hours, keep):
             try:
                 if dt.datetime.fromisoformat(ended.group(1)) < cutoff:
                     return ""
-            except ValueError:
+            except (ValueError, TypeError):  # unreadable, or no UTC offset: leave it
                 pass
         return match.group(0)
 
@@ -296,6 +298,14 @@ def write_board(path, update):
         return created
 
 
+def log(message):
+    try:
+        with open(os.path.join(data_dir(), "markychecky.log"), "a", encoding="utf-8") as f:
+            f.write(f"{now().isoformat()} {sys.argv[1:]} {message}\n")
+    except OSError:
+        pass
+
+
 def open_in_markydowny(path):
     if sys.platform != "darwin" or setting("OPEN", "true").lower() not in ("1", "true", "yes"):
         return
@@ -312,41 +322,48 @@ def main(argv):
     if not session_id:
         return
     board_path = setting("FILE", "~/markychecky.md")
-    idle_hours = float(setting("IDLE_HOURS", "24"))
+    try:
+        idle_hours = float(setting("IDLE_HOURS", "24"))
+    except ValueError:
+        log(f"idle_hours is not a number of hours: {setting('IDLE_HOURS', '')!r}; using 24")
+        idle_hours = 24.0
     state_path = os.path.join(data_dir(), "sessions", f"{session_id}.json")
-    state = load_state(state_path)
+    if command not in ("task", "end"):
+        return
+    # git runs before the lock is taken, so sessions don't queue behind each other's git.
+    where = (place(event.get("cwd")), github_repo(event.get("cwd"))) if command == "task" else None
+    first = []
 
-    if command == "task":
-        if not apply_event(state, event):
-            return
-        state["place"] = place(event.get("cwd"))
-        state["repo"] = github_repo(event.get("cwd"))
-        state.pop("ended", None)
-        save_state(state_path, state)
-        first = not state.get("opened")
-        section = render_section(session_id, state)
-        write_board(board_path, lambda b: sweep(replace_section(b, session_id, section), idle_hours, session_id))
-        if first:
-            state["opened"] = True
-            save_state(state_path, state)
-            open_in_markydowny(board_path)
-    elif command == "end":
-        if not state.get("tasks"):
-            return  # never wrote a section
-        ended = now()
-        state["ended"] = ended.isoformat()
+    def update(board):
+        # Under the board's lock: hooks for one session run at once when several task tools fire
+        # in a turn, and each must fold its event into the state the last one saved.
+        state = load_state(state_path)
+        if command == "task":
+            if not apply_event(state, event):
+                return board
+            state["place"], state["repo"] = where
+            state.pop("ended", None)
+            ended = None
+        else:
+            if not state.get("wrote"):
+                return board  # never wrote a section
+            ended = now()
+            state["ended"] = ended.isoformat()
+        if not state.get("wrote"):
+            state["wrote"] = True
+            first.append(True)
         save_state(state_path, state)
         section = render_section(session_id, state, ended_at=ended)
-        write_board(board_path, lambda b: sweep(replace_section(b, session_id, section), idle_hours, session_id))
+        return sweep(replace_section(board, session_id, section), idle_hours, session_id)
+
+    write_board(board_path, update)
+    if first:
+        open_in_markydowny(board_path)
 
 
 if __name__ == "__main__":
     try:
         main(sys.argv)
     except Exception as error:  # never fail the session over the board
-        try:
-            with open(os.path.join(data_dir(), "markychecky.log"), "a", encoding="utf-8") as log:
-                log.write(f"{now().isoformat()} {sys.argv[1:]} {error!r}\n")
-        except OSError:
-            pass
+        log(repr(error))
     sys.exit(0)
