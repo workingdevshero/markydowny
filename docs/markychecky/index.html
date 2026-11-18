@@ -135,8 +135,8 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 - markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
 - web: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
 </code></pre>
-<p>markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. To have your sessions use it, add this line to <code>~/.claude/CLAUDE.md</code>:</p>
-<pre><code>Put questions for me, and work that&#39;s parked or waiting on someone else, in the &quot;Waiting on you&quot; section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, and remove your lines once they&#39;re resolved.
+<p>markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. Its own updates take a lock that a session&#39;s edits don&#39;t, though, so an edit made in the same instant as an update can be lost; the line below has sessions check theirs landed. To have your sessions use it, add this line to <code>~/.claude/CLAUDE.md</code>:</p>
+<pre><code>Put questions for me, and work that&#39;s parked or waiting on someone else, in the &quot;Waiting on you&quot; section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, read the file again just before each edit, check your line is there afterwards, and remove your lines once they&#39;re resolved.
 </code></pre>
 <h2 id="settings"><a class="heading-anchor" href="#settings" aria-label="Link to this section">#</a>Settings</h2>
 <p>Change these with <code>claude plugin configure markychecky</code>, or in <code>/plugin</code> &gt; <strong>Installed</strong> &gt; markychecky &gt; <strong>Configure options</strong>:</p>

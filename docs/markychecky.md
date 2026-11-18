@@ -132,10 +132,10 @@ A session's task list holds the steps of what it's doing now. Questions for you,
 - web: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
 ```
 
-markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. To have your sessions use it, add this line to `~/.claude/CLAUDE.md`:
+markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. Its own updates take a lock that a session's edits don't, though, so an edit made in the same instant as an update can be lost; the line below has sessions check theirs landed. To have your sessions use it, add this line to `~/.claude/CLAUDE.md`:
 
 ```
-Put questions for me, and work that's parked or waiting on someone else, in the "Waiting on you" section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, and remove your lines once they're resolved.
+Put questions for me, and work that's parked or waiting on someone else, in the "Waiting on you" section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, read the file again just before each edit, check your line is there afterwards, and remove your lines once they're resolved.
 ```
 
 ## Settings

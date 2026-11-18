@@ -252,6 +252,15 @@ test('a reference in parentheses links, but existing links and anchors are left 
     assert.match(s, /see \[#9\]\(https:\/\/x\) and \[top\]\(#12\)/);
 });
 
+test('a reference inside a link\'s text or a code span is left alone', { skip: !hasPython }, () => {
+    const box = sandbox();
+    spawnSync('git', ['init', '-q', box.dir]);
+    spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+    hook(box, 'task', create('s1', 1, 'Ship [Open Recent (#36)](https://github.com/acme/widgets/pull/36), [fix (widgets#19)](https://example.com) and `fixes (#40)`'));
+    const s = section(read(box), 's1');
+    assert.match(s, /Ship \[Open Recent \(#36\)\]\(https:\/\/github\.com\/acme\/widgets\/pull\/36\), \[fix \(widgets#19\)\]\(https:\/\/example\.com\) and `fixes \(#40\)`/);
+});
+
 test('references that can\'t be linked for sure stay plain text', { skip: !hasPython }, () => {
     const box = sandbox(); // not a git repo: no GitHub remote
     hook(box, 'task', create('s1', 1, 'See #7 and somerepo#8, issue#3, C# and [#9](https://x)'));

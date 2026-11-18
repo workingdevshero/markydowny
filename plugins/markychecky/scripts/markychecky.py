@@ -157,10 +157,12 @@ def github_repo(cwd):
 
 # `owner/repo#12`, `#12` (the session's repo) or `repo#12` when it names the session's own repo.
 # Anything else, such as another owner's `repo#12`, stays text rather than becoming a wrong link.
-# Not inside an existing link's text (`[#9]`) or target (`](#12)`), and not part of a word.
-# A plain parenthesis is fine: "Open Recent (#36)" links.
+# Not inside an existing link's text (`[#9]`, `[Open Recent (#36)](url)`) or target (`](#12)`),
+# not in a code span, and not part of a word. A plain parenthesis is fine: "Open Recent (#36)" links.
 REF_RE = re.compile(
-    r"(?<![\w/\[#-])(?<!\]\()(?:(?P<owner>[\w.-]+)/)?(?P<repo>[\w.-]+)?#(?P<num>\d+)\b(?![\]\w])"
+    r"(?P<skip>(?P<ticks>`+).*?(?<!`)(?P=ticks)(?!`)"
+    r"|!?\[(?:[^\[\]]|\[[^\[\]]*\])*\](?:\((?:[^()]|\([^()]*\))*\)|\[[^\]]*\]))"
+    r"|(?<![\w/\[#-])(?<!\]\()(?:(?P<owner>[\w.-]+)/)?(?P<repo>[\w.-]+)?#(?P<num>\d+)\b(?![\]\w])"
 )
 
 
@@ -170,6 +172,8 @@ def link_refs(text, repo):
     default_owner, _, default_name = repo.partition("/")
 
     def link(match):
+        if match.group("skip"):
+            return match.group(0)
         owner, name, num = match.group("owner"), match.group("repo"), match.group("num")
         if owner and name:
             target = f"{owner}/{name}"
