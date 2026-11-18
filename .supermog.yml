@@ -2,8 +2,8 @@
 #
 # The website is a static page at the repository root (GitHub Pages serves main from /), so
 # verification serves the checkout over HTTP and drives it in a real browser. The desktop app is
-# built and driven on a Linux desktop (`desktop` below); its Rust is also covered by CI
-# (.github/workflows/ci.yml), which is supermog's check gate.
+# built and driven on a desktop of the round's own, Linux or macOS (`desktop` below); its Rust is
+# also covered by CI (.github/workflows/ci.yml), which is supermog's check gate.
 verify:
   # In a dot-directory so GitHub Pages' Jekyll build doesn't publish it as a page.
   notes: .supermog/VERIFY.md
@@ -11,13 +11,20 @@ verify:
   # CI change neither.
   paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico", "src-tauri/**", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
   evidence: both
-  # The desktop app, built from the pull request and driven on a Linux desktop of the round's own.
-  # `build` prints the built binary's path as its last line. The Dockerfile is the toolchain, so a
-  # round only compiles. `paths` keeps website-only pull requests off the desktop.
-  #
-  # No `macos` yet: a macOS round needs a Mac running supermog's desktop bridge. Until one does,
-  # what the app does only on macOS (native tabs, the menu bar) is not verified by a round.
+  # The desktop app, built from the pull request and driven on a desktop of the round's own. A
+  # round drives one platform. `build` prints the built artifact's path as its last line: the
+  # .app on macOS, the binary on Linux.
   desktop:
+    # macOS VMs are scarce, so `paths` names only what a Mac alone can show: native tabs. Every
+    # other desktop pull request goes to Linux. To see anything else on a Mac (the menu bar, the
+    # Dock, Finder), ask for a macOS round by name in a comment on the pull request. The build is
+    # from scratch in a fresh VM each time, Rust, Node and CMake included: about three minutes.
+    macos:
+      bundleId: com.workingdevshero.markydowny
+      build: scripts/build-desktop.sh
+      paths: ["src-tauri/src/tabs.rs"]
+    # The Dockerfile is the toolchain, so a round only compiles. `paths` keeps website-only pull
+    # requests off the desktop.
     linux:
       build: scripts/build-desktop.sh
       dockerfile: .supermog/desktop-linux.Dockerfile
