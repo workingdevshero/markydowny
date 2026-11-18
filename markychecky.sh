@@ -41,13 +41,26 @@ version_at_least() {
     return 0
 }
 
+# Whether python3 is there and runs. On a Mac, /usr/bin/python3 is there even without the Xcode
+# Command Line Tools, as a stub that asks macOS to install them when it runs, so for that one ask
+# xcode-select whether they're installed instead of running it.
+python_works() {
+    local python
+    python=$(command -v python3 2>/dev/null) || return 1
+    if [ "$(uname -s)" = "Darwin" ] && [ "$python" = "/usr/bin/python3" ]; then
+        xcode-select -p >/dev/null 2>&1
+    else
+        "$python" -c 'import sys' >/dev/null 2>&1
+    fi
+}
+
 check_requirements() {
     local missing=0
     if ! command -v claude >/dev/null 2>&1; then
         say "markychecky needs Claude Code (the claude command). Install it: https://docs.claude.com/en/docs/claude-code/setup"
         missing=1
     fi
-    if ! command -v python3 >/dev/null 2>&1; then
+    if ! python_works; then
         if [ "$(uname -s)" = "Darwin" ]; then
             say "markychecky needs python3, which comes with the Xcode Command Line Tools. Install them with: xcode-select --install"
         else
@@ -83,26 +96,50 @@ install_plugin() {
 
 # Adds "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1" to the env block of ~/.claude/settings.json, keeping
 # every other setting, the way the docs page's snippet does. A file that already has it is left
-# untouched.
+# untouched. The new file is written beside the old one and moved into place, so it's never left
+# half-written, and if something else changed the file meanwhile, it's read again and redone.
 turn_on_task_list() {
     python3 - <<'EOF' || fail "Couldn't turn on the task list in ~/.claude/settings.json."
-import json, os, sys
+import json, os, shutil, sys, tempfile
 path = os.path.expanduser("~/.claude/settings.json")
-try:
-    settings = json.load(open(path)) if os.path.exists(path) else {}
-except ValueError as error:
-    sys.exit(f"~/.claude/settings.json isn't valid JSON ({error}). Fix it, then run this again.")
-if not isinstance(settings, dict) or not isinstance(settings.get("env", {}), dict):
-    sys.exit("~/.claude/settings.json doesn't hold the settings object it should. Fix it, then run this again.")
-if settings.get("env", {}).get("CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1":
-    print("The task list is already on in ~/.claude/settings.json.")
+
+def read():
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return f.read()
+
+for attempt in range(5):
+    text = read()
+    try:
+        settings = json.loads(text) if text is not None else {}
+    except ValueError as error:
+        sys.exit(f"~/.claude/settings.json isn't valid JSON ({error}). Fix it, then run this again.")
+    if not isinstance(settings, dict) or not isinstance(settings.get("env", {}), dict):
+        sys.exit("~/.claude/settings.json doesn't hold the settings object it should. Fix it, then run this again.")
+    if settings.get("env", {}).get("CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1":
+        print("The task list is already on in ~/.claude/settings.json.")
+        sys.exit(0)
+    settings.setdefault("env", {})["CLAUDE_CODE_ENABLE_TODO_TOOLS"] = "1"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".settings.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+        if text is not None:
+            shutil.copymode(path, temp)
+        if read() != text:
+            os.unlink(temp)
+            continue
+        os.replace(temp, path)
+    except BaseException:
+        if os.path.exists(temp):
+            os.unlink(temp)
+        raise
+    print("Turned on the task list: CLAUDE_CODE_ENABLE_TODO_TOOLS is 1 in ~/.claude/settings.json.")
     sys.exit(0)
-settings.setdefault("env", {})["CLAUDE_CODE_ENABLE_TODO_TOOLS"] = "1"
-os.makedirs(os.path.dirname(path), exist_ok=True)
-with open(path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-print("Turned on the task list: CLAUDE_CODE_ENABLE_TODO_TOOLS is 1 in ~/.claude/settings.json.")
+sys.exit("~/.claude/settings.json kept changing while this ran. Run this again.")
 EOF
 }
 
@@ -127,11 +164,20 @@ offer_app() {
         [Nn]*) say "Skipped. Markydowny is at https://markydowny.com/docs/install/ when you want it." ;;
         *)
             local dmg="$HOME/Downloads/Markydowny-mac.dmg"
+            local partial="$dmg.download"
             say "Downloading Markydowny to $dmg."
-            if curl -fL --progress-bar -o "$dmg" "$DMG_URL"; then
-                open "$dmg"
-                say "Drag Markydowny to Applications in the window that opened."
+            mkdir -p "$HOME/Downloads"
+            if curl -fL --progress-bar -o "$partial" "$DMG_URL" && mv -f "$partial" "$dmg"; then
+                # curl doesn't mark what it downloads the way a browser does. Mark it, so Gatekeeper
+                # checks the disk image as a download.
+                xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");markychecky.sh;" "$dmg" 2>/dev/null || true
+                if open "$dmg"; then
+                    say "Drag Markydowny to Applications in the window that opened."
+                else
+                    say "Couldn't open $dmg. Open it from Finder, then drag Markydowny to Applications."
+                fi
             else
+                rm -f "$partial"
                 say "Couldn't download Markydowny. Get it from https://markydowny.com/docs/install/."
             fi
             ;;

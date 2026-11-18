@@ -142,6 +142,52 @@ test('on a Mac, a missing python3 points at the Xcode Command Line Tools', () =>
     assert.match(run.stdout, /xcode-select --install/);
 });
 
+// Apple's /usr/bin/python3 is a stub until the Command Line Tools are installed. These run on a
+// /usr/bin/python3 that works, with uname saying Darwin, so only xcode-select decides.
+const hasSystemPython = fs.existsSync('/usr/bin/python3');
+
+/** A PATH where python3 is /usr/bin/python3, uname says Darwin and xcode-select exits with `status`. */
+function macPath(box, status) {
+    const tools = pathWithoutPython(box, { uname: 'echo Darwin', 'xcode-select': `exit ${status}` });
+    return `${tools}:/usr/bin`;
+}
+
+test('on a Mac, the /usr/bin/python3 stub without the Command Line Tools counts as missing, and isn\'t run', { skip: !hasSystemPython }, () => {
+    const box = sandbox();
+    const run = install(box, { path: macPath(box, 2) });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stdout, /xcode-select --install/);
+    assert.deepEqual(box.pluginCalls(), []);
+    assert.ok(!fs.existsSync(box.settings));
+});
+
+test('on a Mac with the Command Line Tools, /usr/bin/python3 is used', { skip: !hasSystemPython }, () => {
+    const box = sandbox();
+    const run = install(box, { path: macPath(box, 0), args: ['--no-app'] });
+    assert.equal(run.status, 0, run.stderr + run.stdout);
+    assert.deepEqual(JSON.parse(fs.readFileSync(box.settings, 'utf8')), { env: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
+});
+
+test('a python3 that doesn\'t run counts as missing', () => {
+    const box = sandbox();
+    const run = install(box, { path: pathWithoutPython(box, { python3: 'exit 1' }) });
+    assert.notEqual(run.status, 0);
+    assert.match(run.stdout, /markychecky needs python3/);
+    assert.deepEqual(box.pluginCalls(), []);
+});
+
+test('settings.json keeps its permissions and leaves no temporary file beside it', { skip: !hasPython }, () => {
+    const box = sandbox();
+    fs.mkdirSync(path.dirname(box.settings));
+    fs.writeFileSync(box.settings, '{"model": "opus"}');
+    fs.chmodSync(box.settings, 0o600);
+    const run = install(box);
+    assert.equal(run.status, 0, run.stderr + run.stdout);
+    assert.equal(fs.statSync(box.settings).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(path.dirname(box.settings)), ['settings.json']);
+    assert.deepEqual(JSON.parse(fs.readFileSync(box.settings, 'utf8')), { model: 'opus', env: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
+});
+
 test('a missing claude stops the installer too', () => {
     const box = sandbox();
     const tools = pathWithoutPython(box);
@@ -155,6 +201,7 @@ test('on a Mac without a terminal, it never offers or downloads Markydowny', { s
     const box = sandbox();
     const curlLog = path.join(box.dir, 'curl.log');
     script(path.join(box.bin, 'uname'), 'echo Darwin');
+    script(path.join(box.bin, 'xcode-select'), 'exit 0');
     script(path.join(box.bin, 'curl'), `echo "$*" >> "${curlLog}"`);
     script(path.join(box.bin, 'open'), `echo "$*" >> "${curlLog}"`);
     const run = install(box);
@@ -213,6 +260,17 @@ test('the SessionStart hook says python3 is missing, and still exits 0', () => {
     const run = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }, tools);
     assert.equal(run.status, 0);
     assert.match(JSON.parse(run.stdout).systemMessage, /needs python3/);
+});
+
+test('on a Mac, the SessionStart hook says python3 is missing when /usr/bin/python3 is the stub', { skip: !hasSystemPython }, () => {
+    const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'markychecky-tools-'));
+    script(path.join(tools, 'uname'), 'echo Darwin');
+    script(path.join(tools, 'xcode-select'), 'exit 2');
+    const run = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }, `${tools}:/usr/bin`);
+    assert.equal(run.status, 0);
+    const { systemMessage } = JSON.parse(run.stdout);
+    assert.match(systemMessage, /needs python3/);
+    assert.match(systemMessage, /xcode-select --install/);
 });
 
 test('the markychecky page, the plugin README and the README all show the same one-line command', () => {

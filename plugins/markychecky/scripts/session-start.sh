@@ -8,9 +8,21 @@
 
 cat >/dev/null 2>&1 # the hook's JSON, unused
 
+# Whether python3 is there and runs. On a Mac, /usr/bin/python3 is there even without the Xcode
+# Command Line Tools, as a stub that asks macOS to install them when it runs, so for that one ask
+# xcode-select whether they're installed instead of running it.
+python_works() {
+    python=$(command -v python3 2>/dev/null) || return 1
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && [ "$python" = "/usr/bin/python3" ]; then
+        xcode-select -p >/dev/null 2>&1
+    else
+        "$python" -c 'import sys' >/dev/null 2>&1
+    fi
+}
+
 FIX="Run: curl -fsSL https://markydowny.com/markychecky.sh | bash"
 
-if ! command -v python3 >/dev/null 2>&1; then
+if ! python_works; then
     problem="markychecky can't update the board: it needs python3, which isn't installed."
     if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
         FIX="Install it with: xcode-select --install"

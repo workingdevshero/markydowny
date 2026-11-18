@@ -76,7 +76,7 @@
 ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac or on Linux
 python3 --version  # or Python 3
 </code></pre>
-<p>The hook runs on Markydowny when it&#39;s installed (<a href="https://markydowny.com/docs/install/">install it</a>), and falls back to <code>python3</code> when it isn&#39;t. On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>); most Linux systems have it already. With neither, the plugin tells you once and does nothing.</p>
+<p>The hook runs on Markydowny when it&#39;s installed (<a href="https://markydowny.com/docs/install/">install it</a>), and falls back to <code>python3</code> when it isn&#39;t. On a Mac, <code>python3</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>); most Linux systems have it already. With neither, the board doesn&#39;t update, and each new session says so as it starts.</p>
 <h4 id="2-install-the-plugin"><a class="heading-anchor" href="#2-install-the-plugin" aria-label="Link to this section">#</a>2. Install the plugin</h4>
 <p>In a terminal:</p>
 <pre><code class="language-bash">claude plugin install markychecky --marketplace workingdevshero/markydowny

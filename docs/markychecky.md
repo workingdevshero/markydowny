@@ -51,7 +51,7 @@ ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac
 python3 --version  # or Python 3
 ```
 
-The hook runs on Markydowny when it's installed ([install it](https://markydowny.com/docs/install/)), and falls back to `python3` when it isn't. On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`); most Linux systems have it already. With neither, the plugin tells you once and does nothing.
+The hook runs on Markydowny when it's installed ([install it](https://markydowny.com/docs/install/)), and falls back to `python3` when it isn't. On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`); most Linux systems have it already. With neither, the board doesn't update, and each new session says so as it starts.
 
 #### 2. Install the plugin
 

@@ -298,7 +298,7 @@ test('the hooks run the script on task-tool updates and at session end', () => {
     assert.match(post.hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" task/);
     assert.match(hooks.SessionEnd[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" end/);
     // Not after compacting: that's the same session, which has been told already.
-    assert.deepEqual(hooks.SessionStart[0].matcher.split('|').sort(), ['clear', 'resume', 'startup']);
+    assert.deepEqual(hooks.SessionStart[0].matcher.split('|').sort(), ['clear', 'fork', 'resume', 'startup']);
     assert.match(hooks.SessionStart[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/session-start\.sh"/);
     // The launcher always exits 0; even so, a hook never fails the session.
     for (const h of [post.hooks[0], hooks.SessionEnd[0].hooks[0], hooks.SessionStart[0].hooks[0]]) assert.match(h.command, /\|\| true$/);

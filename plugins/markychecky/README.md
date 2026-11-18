@@ -50,7 +50,7 @@ If something's still missing, such as the task list or `python3`, a new session 
 
 3. **Start your sessions.** New sessions write to the board. A session that's already running picks it up when you restart it with `claude --resume`.
 
-It needs Markydowny (or Python 3). The hook runs on [Markydowny](https://markydowny.com/docs/install/) when it's installed, and falls back to `python3`, which comes with the Xcode Command Line Tools on a Mac and with most Linux systems, when it isn't. With neither, it tells you once and does nothing.
+It needs Markydowny (or Python 3). The hook runs on [Markydowny](https://markydowny.com/docs/install/) when it's installed, and falls back to `python3`, which comes with the Xcode Command Line Tools on a Mac and with most Linux systems, when it isn't. With neither, the board doesn't update, and each new session says so as it starts.
 
 ## How it works
 
