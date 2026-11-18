@@ -39,6 +39,16 @@ Saving changes only the text you edited. Everything else in the file, down to th
 
 That keeps diffs small and means saving never fights a formatter or another tool. In the Mac app, the new text is written to a temporary file and moved over the original, so a crash mid-save never leaves half a file.
 
+## Find and replace
+
+Press <kbd>⌘F</kbd> (<kbd>Ctrl+F</kbd>) while editing to open find and replace at the bottom of the editor. It searches the markdown source, with options for case, whole words and regular expressions, and replaces one match at a time or all of them. Press <kbd>Esc</kbd> to close it. Undo takes back a replacement like any other edit.
+
+While you're reading rather than editing, <kbd>⌘F</kbd> is the browser's own find.
+
+## Word count
+
+While editing, the header shows how many words the document has, and how many are selected (*37 of 1,204 words*). It counts the words a reader sees: link text, image alt text and code count, while markup, link URLs, HTML tags and comments don't. Chinese and Japanese characters count one word each. The count isn't shown on narrow windows.
+
 ## Revert
 
 **Revert** throws away your unsaved changes and puts the editor back to the last saved text.
