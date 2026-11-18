@@ -2,9 +2,10 @@ name: Tag release
 
 # A commit on main that changes the version in package.json, src-tauri/Cargo.toml and
 # src-tauri/tauri.conf.json is tagged v<version>, and release.yml is started on that tag, so
-# merging a version bump is all a release takes. When v<version> already exists, as a tag or a
-# release (one pushed by hand, say), nothing happens. workflow_dispatch on main does the same for
-# the commit main is at.
+# merging a version bump is all a release takes. When v<version> already has a release, or is a
+# tag on another commit (one pushed by hand, say), nothing happens. A tag on this commit with no
+# release yet is a run whose dispatch failed, so release.yml is started again. workflow_dispatch on
+# main does the same for the commit main is at.
 on:
   push:
     branches: [main]
@@ -17,8 +18,11 @@ on:
 # Nothing by default; only the tag job can write.
 permissions: {}
 
+# One group per commit: GitHub keeps only one pending run in a group, so a shared group would
+# cancel a waiting bump when the next one arrives. Two commits racing to create the same tag can't
+# both succeed; the loser fails on the create.
 concurrency:
-  group: tag-release
+  group: tag-release-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -48,14 +52,22 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           tag="v$VERSION"
-          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
-            --jq ".[] | select(.ref == \"refs/tags/$tag\") | .ref")
           released=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
             --jq ".[] | select(.tag_name == \"$tag\") | .tag_name")
-          if [[ -n "$tagged" || -n "$released" ]]; then
-            echo "$tag already exists, as a tag or a release, so nothing was tagged or released." >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$released" ]]; then
+            echo "$tag already has a release, so nothing was tagged or released." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
+            --jq ".[] | select(.ref == \"refs/tags/$tag\") | .object.sha")
+          if [[ -n "$tagged" && "$tagged" != "$GITHUB_SHA" ]]; then
+            echo "$tag already tags $tagged, not $GITHUB_SHA, so nothing was tagged or released." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A tag already on this commit is left from a run whose dispatch failed; re-running
+          # release.yml on it updates any draft it made rather than adding a second release.
+          if [[ -z "$tagged" ]]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          fi
           gh workflow run release.yml --ref "$tag"
           echo "Tagged $GITHUB_SHA as $tag and started the release workflow on it." >> "$GITHUB_STEP_SUMMARY"

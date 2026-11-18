@@ -53,11 +53,18 @@ test('the version comes from check-release-version.mjs, which fails when the fil
     assert.ok(job.indexOf('check-release-version') < job.indexOf('- name: Tag the commit'));
 });
 
+test('runs are grouped per commit, so a waiting bump is never cancelled by the next one', () => {
+    // GitHub keeps one pending run per group, whatever cancel-in-progress says.
+    assert.match(workflow, /^concurrency:\n {2}group: tag-release-\$\{\{ github\.sha \}\}\n {2}cancel-in-progress: false\n/m);
+});
+
 /**
  * Runs the tag step with a fake `gh` on the PATH. `existing` is what the fake reports already
- * exists: a `tag`, a `release` (by tag name) or neither. Returns the gh calls and the summary.
+ * exists: a `tag` (with the commit `tagSha` it points at, abc123 by default), a `release` (by tag
+ * name) or neither. `dispatchFails` makes `gh workflow run` fail. Returns the gh calls and the
+ * summary.
  */
-function runTagStep({ version = '1.2.0', existing = {} } = {}) {
+function runTagStep({ version = '1.2.0', existing = {}, dispatchFails = false } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'markydowny-tag-release-'));
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
@@ -65,8 +72,9 @@ function runTagStep({ version = '1.2.0', existing = {} } = {}) {
     fs.writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GH_LOG"
 case "$*" in
-  "api repos/$GITHUB_REPOSITORY/git/matching-refs/tags/"*) [[ -n "$FAKE_TAG" ]] && echo "refs/tags/$FAKE_TAG" ;;
+  "api repos/$GITHUB_REPOSITORY/git/matching-refs/tags/"*) [[ -n "$FAKE_TAG" ]] && echo "$FAKE_TAG_SHA" ;;
   "api repos/$GITHUB_REPOSITORY/releases "*) [[ -n "$FAKE_RELEASE" ]] && echo "$FAKE_RELEASE" ;;
+  "workflow run "*) [[ -n "$FAKE_DISPATCH_FAILS" ]] && exit 1 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -83,6 +91,8 @@ exit 0
             GITHUB_SHA: 'abc123',
             VERSION: version,
             FAKE_TAG: existing.tag ?? '',
+            FAKE_TAG_SHA: existing.tagSha ?? 'abc123',
+            FAKE_DISPATCH_FAILS: dispatchFails ? '1' : '',
             FAKE_RELEASE: existing.release ?? '',
         },
     });
@@ -106,19 +116,35 @@ test('a prerelease version is tagged as one', () => {
     assert.ok(r.calls.includes('workflow run release.yml --ref v1.2.0-beta.1'));
 });
 
-for (const [what, existing] of [['a tag', { tag: 'v1.2.0' }], ['a release', { release: 'v1.2.0' }]]) {
+for (const [what, existing, summary] of [
+    ['a tag on another commit', { tag: 'v1.2.0', tagSha: 'def456' }, /v1\.2\.0 already tags def456, not abc123/],
+    ['a release', { release: 'v1.2.0' }, /v1\.2\.0 already has a release/],
+    ['a release and a tag on this commit', { tag: 'v1.2.0', release: 'v1.2.0' }, /v1\.2\.0 already has a release/],
+]) {
     test(`nothing is tagged or released when v<version> exists as ${what}`, () => {
         const r = runTagStep({ version: '1.2.0', existing });
         assert.equal(r.status, 0, r.stderr);
         assert.ok(!r.calls.some(c => c.includes('git/refs ') || c.startsWith('workflow run')), r.calls.join('\n'));
-        assert.match(r.summary, /v1\.2\.0 already exists/);
+        assert.match(r.summary, summary);
     });
 }
+
+test('a failed dispatch fails the step, and a re-run dispatches on the tag it left', () => {
+    const failed = runTagStep({ version: '1.2.0', dispatchFails: true });
+    assert.notEqual(failed.status, 0);
+    assert.ok(failed.calls.some(c => c.includes('git/refs -f ref=refs/tags/v1.2.0')), failed.calls.join('\n'));
+    assert.doesNotMatch(failed.summary, /Tagged/);
+    // The re-run finds the tag on this commit and no release, so it starts release.yml again.
+    const rerun = runTagStep({ version: '1.2.0', existing: { tag: 'v1.2.0', tagSha: 'abc123' } });
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.ok(!rerun.calls.some(c => c.includes('git/refs ')), 'the tag is not created twice');
+    assert.ok(rerun.calls.includes('workflow run release.yml --ref v1.2.0'), rerun.calls.join('\n'));
+});
 
 test('the existence checks match the tag exactly, not a longer tag it prefixes', () => {
     const script = stepScript('Tag the commit and start the release');
     // matching-refs/tags/v1.2.0 also lists v1.2.0-beta.1, so the ref is compared in full.
-    assert.match(script, /select\(\.ref == \\"refs\/tags\/\$tag\\"\)/);
+    assert.match(script, /select\(\.ref == \\"refs\/tags\/\$tag\\"\) \| \.object\.sha/);
     assert.match(script, /select\(\.tag_name == \\"\$tag\\"\)/);
     // Drafts are listed too, and a failing API call fails the step rather than reading as "none".
     assert.match(script, /releases" --paginate/);
