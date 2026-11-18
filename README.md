@@ -151,10 +151,12 @@ Releases are built by [`.github/workflows/release.yml`](.github/workflows/releas
    (`v1.2.0-beta.1`) makes a prerelease, whose `.deb` is versioned `1.2.0~beta.1` so the release upgrades it.
 3. The workflow checks the tag against the three files (`node scripts/check-release-version.mjs v1.2.0` does
    the same by hand), builds a universal `.dmg` for macOS and a `.deb` and `.AppImage` for Linux on x86_64
-   and arm64, and attaches them, with `SHA256SUMS.txt`, to a **draft** release.
-4. Check the draft on the [releases page](https://github.com/workingdevshero/markydowny/releases), then publish it.
+   and arm64, and attaches them, with `SHA256SUMS.txt`, to a release, which it publishes once every file is
+   attached. It shows up on the [releases page](https://github.com/workingdevshero/markydowny/releases) about
+   20 minutes after the tag is pushed.
 
-Re-running the workflow for a tag replaces the draft's files and notes. Builds have crash reporting on, and upload
+If a run fails part way, its release stays a draft; re-running the workflow for the tag replaces the draft's
+files and notes, then publishes it. A tag whose release is already published isn't rebuilt. Builds have crash reporting on, and upload
 their symbols, when the `BUGSPLAT_DATABASE`, `SYMBOL_UPLOAD_CLIENT_ID` and `SYMBOL_UPLOAD_CLIENT_SECRET`
 repository secrets are set; the run summary says when they aren't. The Mac build is signed with the
 Developer ID and notarized when the `APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`,

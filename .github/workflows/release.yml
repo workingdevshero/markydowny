@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a version tag (v1.2.0, or v1.2.0-beta.1 for a prerelease) builds the desktop app for
-# macOS and Linux and attaches it to a draft release, to be looked over and published by hand.
+# macOS and Linux, attaches it to a release and publishes the release once every file is there.
 # Pull requests that change the release build, and workflow_dispatch on any branch, run the same
 # builds as a dry run: everything except the release job.
 on:
@@ -333,6 +333,18 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      # The Linux jobs upload from two folders, bundle/deb and bundle/appimage, and the download
+      # keeps them as subfolders. Everything goes on the release side by side, so move every file
+      # to the top; a name clash leaves a file behind in its folder and fails here.
+      - name: Gather the files
+        working-directory: artifacts
+        run: |
+          find . -mindepth 2 -type f -exec mv -n {} . \;
+          find . -mindepth 1 -type d -empty -delete
+          if [[ -n "$(find . -mindepth 1 -type d)" ]]; then
+            echo "::error::Two release files have the same name:"; find . -mindepth 2 -type f; exit 1
+          fi
+          ls -l
       - name: Checksums
         working-directory: artifacts
         run: |
@@ -366,9 +378,11 @@ jobs:
 
           `SHA256SUMS.txt` has a checksum for every file (`sha256sum -c SHA256SUMS.txt --ignore-missing`).
           NOTES
-      # Re-running a tag replaces the draft's files and notes rather than making a second
-      # release, so the notes say whether the .dmg now attached is notarized. A release that's
-      # already published is left alone.
+      # The release starts as a draft so every file is attached before anyone can see it, then the
+      # next step publishes it. Re-running a tag whose release is still a draft (a run that failed
+      # part way) replaces its files and notes rather than making a second release, so the notes
+      # say whether the .dmg now attached is notarized. A release that's already published is left
+      # alone.
       - name: Create or update the draft release
         run: |
           draft=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
@@ -390,3 +404,12 @@ jobs:
               --notes-file notes.md --title "Markydowny $VERSION" "${prerelease[@]}"
             echo "Created a draft release for $TAG." >> "$GITHUB_STEP_SUMMARY"
           fi
+      # Publish once every file is attached. A prerelease (a tag with a hyphen) stays a prerelease
+      # and never becomes "latest".
+      - name: Publish the release
+        run: |
+          latest=(--latest)
+          [[ "$PRERELEASE" == "true" ]] && latest=(--latest=false)
+          gh release edit "$TAG" --draft=false "${latest[@]}"
+          url=$(gh release view "$TAG" --json url --jq .url)
+          echo "Published $TAG: $url" >> "$GITHUB_STEP_SUMMARY"
