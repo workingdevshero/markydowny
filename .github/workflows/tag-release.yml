@@ -1,0 +1,61 @@
+name: Tag release
+
+# A commit on main that changes the version in package.json, src-tauri/Cargo.toml and
+# src-tauri/tauri.conf.json is tagged v<version>, and release.yml is started on that tag, so
+# merging a version bump is all a release takes. When v<version> already exists, as a tag or a
+# release (one pushed by hand, say), nothing happens. workflow_dispatch on main does the same for
+# the commit main is at.
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - src-tauri/Cargo.toml
+      - src-tauri/tauri.conf.json
+  workflow_dispatch:
+
+# Nothing by default; only the tag job can write.
+permissions: {}
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    # A dispatch on another branch never tags.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # contents to create the tag, actions to start release.yml on it.
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Fails, naming the file, when the three files disagree.
+      - id: version
+        run: node scripts/check-release-version.mjs
+      # A tag made with the workflow's token doesn't trigger release.yml's push event, so the
+      # release is started with workflow_dispatch on the tag, which does.
+      - name: Tag the commit and start the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
+            --jq ".[] | select(.ref == \"refs/tags/$tag\") | .ref")
+          released=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$tag\") | .tag_name")
+          if [[ -n "$tagged" || -n "$released" ]]; then
+            echo "$tag already exists, as a tag or a release, so nothing was tagged or released." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" > /dev/null
+          gh workflow run release.yml --ref "$tag"
+          echo "Tagged $GITHUB_SHA as $tag and started the release workflow on it." >> "$GITHUB_STEP_SUMMARY"

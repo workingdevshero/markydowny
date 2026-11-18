@@ -148,17 +148,21 @@ the [`bugsplat`](https://crates.io/crates/bugsplat) and
 
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml):
 
-1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, and merge that.
-2. Tag the commit and push the tag: `git tag v1.2.0 && git push origin v1.2.0`. A tag with a hyphen
-   (`v1.2.0-beta.1`) makes a prerelease, whose `.deb` is versioned `1.2.0~beta.1` so the release upgrades it.
+1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` in a pull request.
+2. Merge it. [`.github/workflows/tag-release.yml`](.github/workflows/tag-release.yml) tags the merged commit
+   `v1.2.0` and starts the release workflow on that tag. If `v1.2.0` already exists, as a tag or a release, it
+   does nothing. A version with a hyphen (`1.2.0-beta.1`) makes a prerelease, whose `.deb` is versioned
+   `1.2.0~beta.1` so the release upgrades it.
 3. The workflow checks the tag against the three files (`node scripts/check-release-version.mjs v1.2.0` does
    the same by hand), builds a universal `.dmg` for macOS and a `.deb` and `.AppImage` for Linux on x86_64
    and arm64, and attaches them, with `SHA256SUMS.txt`, to a release, which it publishes once every file is
    attached. It shows up on the [releases page](https://github.com/workingdevshero/markydowny/releases) about
    20 minutes after the tag is pushed.
 
-If a run fails part way, its release stays a draft; re-running the workflow for the tag replaces the draft's
-files and notes, then publishes it. A tag whose release is already published isn't rebuilt. Builds have crash reporting on, and upload
+Pushing a tag by hand still works: `git tag v1.2.0 && git push origin v1.2.0` on a commit with the version
+already bumped releases it. tag-release.yml skips a version whose tag already exists, so the two never release
+it twice. If a run fails part way, its release stays a draft; re-running the workflow for the tag replaces the
+draft's files and notes, then publishes it. A tag whose release is already published isn't rebuilt. Builds have crash reporting on, and upload
 their symbols, when the `BUGSPLAT_DATABASE`, `SYMBOL_UPLOAD_CLIENT_ID` and `SYMBOL_UPLOAD_CLIENT_SECRET`
 repository secrets are set; the run summary says when they aren't. The Mac build is signed with the
 Developer ID and notarized when the `APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_TEAM_ID`,

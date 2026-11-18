@@ -2,8 +2,10 @@ name: Release
 
 # Pushing a version tag (v1.2.0, or v1.2.0-beta.1 for a prerelease) builds the desktop app for
 # macOS and Linux, attaches it to a release and publishes the release once every file is there.
-# Pull requests that change the release build, and workflow_dispatch on any branch, run the same
-# builds as a dry run: everything except the release job.
+# workflow_dispatch on a tag releases it too: tag-release.yml starts it that way when a version
+# bump merges, since a tag it creates doesn't trigger the push. Pull requests that change the
+# release build, and workflow_dispatch on any branch, run the same builds as a dry run:
+# everything except the release job.
 on:
   push:
     tags: ["v*"]
@@ -315,8 +317,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    # Only for a pushed tag: dry runs stop after the builds.
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    # Only for a tag, pushed or dispatched on: dry runs stop after the builds.
+    if: github.ref_type == 'tag'
     needs: [version, mac, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 15
