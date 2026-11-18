@@ -28,3 +28,7 @@ verify:
 # .github/workflows/**; every workflow change still goes through review and CI like any other.
 access:
   workflows: true
+
+# Merge a pull request once its round ends verified (`supermog/verified: success`, with CI green).
+# Without this, supermog verifies and stops, and someone merges by hand. Off by default.
+merge: auto
