@@ -16,7 +16,7 @@ function dryRun(...args) {
     if (typeof args[0] === 'object') targetDir = args.shift().targetDir;
     const result = spawnSync('bash', [script, '--dry-run', ...args], {
         encoding: 'utf8',
-        env: { ...process.env, SIGNING_IDENTITY: '', ARCH: '', NOTARY_PROFILE: '', CARGO_TARGET_DIR: targetDir },
+        env: { ...process.env, SIGNING_IDENTITY: '', ARCH: '', NOTARY_PROFILE: '', NOTARY_KEYCHAIN: '', CARGO_TARGET_DIR: targetDir },
     });
     const lines = result.stdout.trim().split('\n');
     const steps = lines.filter(l => l.startsWith('step: ')).map(l => l.slice('step: '.length));

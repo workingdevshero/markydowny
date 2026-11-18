@@ -7,7 +7,8 @@ fn main() {
 
 /// Copies BugSplatMonitor and BugSplatReporter (built by bugsplat-sys, exported by
 /// tauri-plugin-bugsplat) to bugsplat-helpers/, where tauri.conf.json's bundle.macOS.files
-/// picks them up into Markydowny.app/Contents/Helpers.
+/// picks them up into Markydowny.app/Contents/Helpers, and bundle.linux's deb and appimage files
+/// put them next to the executable in /usr/bin.
 fn stage_bugsplat_helpers() {
     let dest = PathBuf::from("bugsplat-helpers");
     for key in ["MONITOR", "REPORTER"] {

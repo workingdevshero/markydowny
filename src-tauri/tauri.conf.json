@@ -71,6 +71,20 @@
         "Helpers/BugSplatMonitor": "bugsplat-helpers/BugSplatMonitor",
         "Helpers/BugSplatReporter.app": "bugsplat-helpers/BugSplatReporter.app"
       }
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/bin/BugSplatMonitor": "bugsplat-helpers/BugSplatMonitor",
+          "/usr/bin/BugSplatReporter": "bugsplat-helpers/BugSplatReporter"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/bin/BugSplatMonitor": "bugsplat-helpers/BugSplatMonitor",
+          "/usr/bin/BugSplatReporter": "bugsplat-helpers/BugSplatReporter"
+        }
+      }
     }
   }
 }
