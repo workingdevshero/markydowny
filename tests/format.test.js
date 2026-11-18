@@ -567,3 +567,16 @@ test('a picked path with spaces or parentheses still reads as one link', () => {
     assert.equal(format.linkDestination('dir/plain-name_1.png'), 'dir/plain-name_1.png');
     assert.equal(format.linkDestination('a<b>\\c.png'), 'a%3Cb%3E%5Cc.png');
 });
+
+test('a picked name with ?, #, [ or ] is still an image of that file', () => {
+    const core = require('../js/core.js');
+    for (const path of ['shot#2.png', 'q?.png', 'dir/#a.png', 'foo bar/#x.png', 'a]b.png', 'a[b.png', 'x\\]y.png']) {
+        const out = format.insertImage({ text: '', selection: { anchor: 0, head: 0 } }, { path });
+        const image = marked.lexer(out.text)[0].tokens[0];
+        assert.equal(image.type, 'image', out.text);
+        assert.equal(image.tokens.map(token => token.text).join(''), path.split('/').pop().replace(/\.png$/, ''), out.text);
+        assert.equal(core.resolveRelativePath('/docs', image.href), `/docs/${path}`, out.text);
+        // The selection is the alt text, as written.
+        assert.equal(out.text.slice(out.selection.anchor, out.selection.head), out.text.slice(2, out.text.indexOf('](')));
+    }
+});

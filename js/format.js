@@ -1003,12 +1003,13 @@
 
     /**
      * A path as a link destination: characters that would end it or be read as markup
-     * (spaces, parentheses, angle brackets, backslashes) and '%' are percent-encoded, which is
-     * how the page and other viewers read them back.
+     * (spaces, parentheses, brackets, angle brackets, backslashes), '?' and '#' (which would
+     * start a query or fragment) and '%' are percent-encoded, which is how the page and other
+     * viewers read them back.
      */
     function linkDestination(path) {
         // encodeURIComponent leaves parentheses as they are.
-        return String(path).replace(/[%\s()<>\\]/gu, ch => (ch === '(' ? '%28' : ch === ')' ? '%29' : encodeURIComponent(ch)));
+        return String(path).replace(/[%\s()[\]<>\\?#]/gu, ch => (ch === '(' ? '%28' : ch === ')' ? '%29' : encodeURIComponent(ch)));
     }
 
     /**
@@ -1027,7 +1028,8 @@
         const picked = typeof options.path === 'string' && options.path !== '';
         const fromSelection = alt.trim() !== '';
         if (!fromSelection) {
-            alt = picked ? String(options.path).split('/').pop().replace(/\.[^.]+$/, '') : 'alt';
+            // A file's name, with what would end the alt text (or read as a link inside it) escaped.
+            alt = picked ? String(options.path).split('/').pop().replace(/\.[^.]+$/, '').replace(/[\\[\]]/gu, '\\$&') : 'alt';
         }
         const destination = picked ? linkDestination(options.path) : 'path';
         const image = `![${alt}](${destination})`;

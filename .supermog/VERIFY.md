@@ -287,7 +287,7 @@ What differs from the browser:
   images. A picked image is linked by its path from the document (`![name](img/shot.png)`, the
   name selected) and shows in Rich mode. One from outside the document's folder asks first:
   *Copy* puts a copy next to the document (numbered, `shot-1.png`, if another file has the name)
-  and links that; *Link Where It Is* links it with `../`.
+  and links that; *Link Where It Is* links it with `../`; *Cancel* (or Escape) inserts nothing.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
 - **Links** open in the default browser, not in the app.

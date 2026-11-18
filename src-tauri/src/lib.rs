@@ -32,7 +32,9 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, Manager, RunEvent, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_dialog::{
+    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+};
 
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
@@ -415,7 +417,9 @@ fn choose_image(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let copy = app
+    const COPY: &str = "Copy";
+    const LINK: &str = "Link Where It Is";
+    let choice = app
         .dialog()
         .message(format!(
             "{name} isn't in the document's folder. Copy it next to the document, so the link \
@@ -423,13 +427,21 @@ fn choose_image(
         ))
         .title("Insert image")
         .kind(MessageDialogKind::Info)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Copy".to_string(),
-            "Link Where It Is".to_string(),
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            COPY.to_string(),
+            LINK.to_string(),
+            "Cancel".to_string(),
         ))
-        .blocking_show();
-    if !copy {
-        return Ok(Some(image.to_string_lossy().into_owned()));
+        .blocking_show_with_result();
+    // Cancel, Escape or closing the dialog inserts nothing.
+    match choice {
+        MessageDialogResult::Yes => {}
+        MessageDialogResult::Custom(label) if label == COPY => {}
+        MessageDialogResult::No => return Ok(Some(image.to_string_lossy().into_owned())),
+        MessageDialogResult::Custom(label) if label == LINK => {
+            return Ok(Some(image.to_string_lossy().into_owned()))
+        }
+        _ => return Ok(None),
     }
     let copied = images::copy_into(&image, &dir).map_err(|e| format!("Can't copy {name}: {e}"))?;
     let copied = copied.canonicalize().unwrap_or(copied);

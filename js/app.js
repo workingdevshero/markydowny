@@ -2473,6 +2473,15 @@
         state.blocks = placeBlocks(splitPreview, state.blocks, built, diff);
         state.linksKey = built.linksKey;
         syncSplit('editor');
+        // Images change the height of the blocks below them as they load: step again then.
+        const resync = () => {
+            if (split === state && seq === state.seq) syncSplit('editor');
+        };
+        for (const img of splitPreview.querySelectorAll('img')) {
+            if (img.complete) continue;
+            img.addEventListener('load', resync, { once: true });
+            img.addEventListener('error', resync, { once: true });
+        }
     }
 
     /** A pane scrolled: the other follows on the next frame (once, however many events came). */
@@ -2512,14 +2521,18 @@
         previewTops.push(splitPreview.scrollHeight);
         // The editor scrolls with the page: its top is the first line under the toolbar.
         const editorY = editorTopInset() - view.documentTop;
+        // Targets are clamped to how far each pane can scroll, so one already at its end isn't
+        // scrolled again (which would leave an expected scroll that never comes).
         if (source === 'editor') {
-            const y = Math.max(0, Math.round(core.mapScrollPosition(editorTops, previewTops, editorY)));
+            const max = splitPreview.scrollHeight - splitPreview.clientHeight;
+            const y = Math.max(0, Math.min(max, Math.round(core.mapScrollPosition(editorTops, previewTops, editorY))));
             if (Math.abs(splitPreview.scrollTop - y) <= 1) return;
             splitPreview.scrollTop = y;
             split.expectPreview = splitPreview.scrollTop;
         } else {
             const y = core.mapScrollPosition(previewTops, editorTops, splitPreview.scrollTop);
-            const target = Math.max(0, Math.round(window.scrollY + y - editorY));
+            const max = document.documentElement.scrollHeight - window.innerHeight;
+            const target = Math.max(0, Math.min(max, Math.round(window.scrollY + y - editorY)));
             if (Math.abs(window.scrollY - target) <= 1) return;
             window.scrollTo(0, target);
             split.expectWindow = window.scrollY;
