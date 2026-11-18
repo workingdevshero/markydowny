@@ -135,7 +135,7 @@ test('only the release job can write, and it runs only for a pushed tag, after e
     assert.match(release, /^ {4}needs: \[version, mac, linux\]$/m);
 });
 
-test('the release job creates a draft, with checksums, and re-runs replace its files', () => {
+test('the release job attaches everything to a draft, with checksums, and re-runs replace its files', () => {
     const release = jobs().release;
     assert.match(release, /gh release create "\$TAG" artifacts\/\* --draft /);
     assert.match(release, /sha256sum -- \* > SHA256SUMS\.txt/);
@@ -143,7 +143,20 @@ test('the release job creates a draft, with checksums, and re-runs replace its f
     // A re-run's notes follow its build (notarized or not), not the first run's.
     assert.match(release, /gh release edit "\$TAG" --notes-file full-notes\.md/);
     assert.match(release, /glibc 2\.38/);
-    assert.ok(!/gh release (edit|create)[^\n]*--draft=false/.test(workflow), 'nothing publishes the release');
+});
+
+test('the release job publishes the release once every file is attached', () => {
+    const release = jobs().release;
+    const create = release.indexOf('name: Create or update the draft release');
+    const publish = release.indexOf('name: Publish the release');
+    assert.ok(create > 0 && publish > create, 'publishing is its own step, after the files are attached');
+    const step = release.slice(publish);
+    assert.match(step, /gh release edit "\$TAG" --draft=false "\$\{latest\[@\]\}"/);
+    // A prerelease isn't marked latest; a release is.
+    assert.match(step, /latest=\(--latest\)/);
+    assert.match(step, /\[\[ "\$PRERELEASE" == "true" \]\] && latest=\(--latest=false\)/);
+    // Only the tag push publishes: a pull request's dry run never reaches the release job.
+    assert.match(release, /^ {4}if: github\.event_name == 'push' && github\.ref_type == 'tag'$/m);
 });
 
 test('the builds are the ones the release promises', () => {
