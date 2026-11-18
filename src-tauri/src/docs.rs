@@ -588,9 +588,15 @@ mod tests {
 
         let found = collect_markdown_files(&[root.clone(), loose.clone(), not_md]);
         let displays: Vec<&str> = found.iter().map(|(_, d)| d.as_str()).collect();
+        // With the platform's separator: docs\README.md on Windows.
+        let sep = std::path::MAIN_SEPARATOR;
         assert_eq!(
             displays,
-            vec!["docs/README.md", "docs/guide/intro.markdown", "loose.md"]
+            vec![
+                format!("docs{sep}README.md"),
+                format!("docs{sep}guide{sep}intro.markdown"),
+                "loose.md".to_string()
+            ]
         );
         assert_eq!(found[2].0, loose);
     }

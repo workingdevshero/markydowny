@@ -7,7 +7,7 @@
 //! doesn't expose.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::docs::{DocumentRouter, Placement};
 
@@ -248,12 +248,17 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// The folders `path` is in, outermost first: no root, but a Windows drive (`C:`) or share.
 fn parent_components(path: &Path) -> Vec<String> {
     path.parent()
         .map(|p| {
-            p.iter()
+            p.components()
+                .filter_map(|c| match c {
+                    Component::Prefix(prefix) => Some(prefix.as_os_str()),
+                    Component::Normal(name) => Some(name),
+                    _ => None,
+                })
                 .map(|c| c.to_string_lossy().into_owned())
-                .filter(|c| c != "/")
                 .collect()
         })
         .unwrap_or_default()
@@ -843,6 +848,18 @@ mod tests {
         assert_eq!(
             titles(&[("main", "/p/README.md"), ("doc-1", "/p/README.md")]),
             expect(&[("doc-1", "README.md"), ("main", "README.md")])
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_labelled_by_folder_and_drive() {
+        assert_eq!(
+            titles(&[
+                ("main", r"C:\Users\me\README.md"),
+                ("doc-1", r"D:\README.md"),
+            ]),
+            expect(&[("doc-1", "README.md — D:"), ("main", "README.md — me")])
         );
     }
 
