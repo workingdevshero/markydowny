@@ -90,8 +90,11 @@ else
     if [[ -n "$glibc" ]] && [[ "$(printf '%s\n%s\n' "$MIN_GLIBC" "$glibc" | sort -V | head -1)" != "$MIN_GLIBC" ]]; then
         fail "glibc $glibc is too old: BugSplat's Crashpad needs $MIN_GLIBC or newer (Debian 13, Ubuntu 24.04)"
     fi
-    if ! { command -v clang >/dev/null && command -v cmake >/dev/null && command -v ninja >/dev/null &&
-        command -v pkg-config >/dev/null &&
+    # cc is rustc's linker (build-essential; Debian's clang package doesn't provide it), and curl
+    # and xz fetch and unpack Rust and Node.
+    if ! { command -v cc >/dev/null && command -v clang >/dev/null && command -v cmake >/dev/null &&
+        command -v ninja >/dev/null && command -v pkg-config >/dev/null &&
+        command -v curl >/dev/null && command -v xz >/dev/null &&
         pkg-config --exists webkit2gtk-4.1 gtk+-3.0; }; then
         if command -v apt-get >/dev/null && { [[ $(id -u) -eq 0 ]] || sudo -n true 2>/dev/null; }; then
             sudo=""
@@ -104,7 +107,10 @@ else
             fail "build dependencies are missing. Install: ${LINUX_PACKAGES[*]}"
         fi
     fi
-    export CC="${CC:-clang}" CXX="${CXX:-clang++}"
+    # Keep an inherited CC/CXX only when it's a Clang (say clang-18): GCC can't build Crashpad.
+    [[ "${CC:-}" == *clang* ]] || CC=clang
+    [[ "${CXX:-}" == *clang* ]] || CXX=clang++
+    export CC CXX
 fi
 
 # --- Rust -----------------------------------------------------------------------------------
@@ -149,7 +155,8 @@ fi
 
 cd "$root"
 log "Installing npm dependencies..."
-npm ci --no-audit --no-fund >&2
+# --include=dev: the Tauri CLI is a devDependency, which NODE_ENV=production would otherwise omit.
+npm ci --include=dev --no-audit --no-fund >&2
 if [[ "$os" == "Darwin" ]]; then
     npx tauri build --debug --bundles app >&2
 else

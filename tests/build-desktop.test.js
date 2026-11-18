@@ -11,16 +11,17 @@ function run(...args) {
     return spawnSync('bash', [script, ...args], { encoding: 'utf8' });
 }
 
-test('build-desktop.sh --print-path names the artifact for this OS without building', () => {
+const expectedArtifact = {
+    darwin: 'src-tauri/target/debug/bundle/macos/Markydowny.app',
+    linux: 'src-tauri/target/debug/markydowny',
+}[process.platform];
+
+test('build-desktop.sh --print-path names the artifact for this OS without building', {
+    skip: !expectedArtifact && 'Windows is not a desktop target',
+}, () => {
     const result = run('--print-path');
     assert.equal(result.status, 0, result.stderr);
-    const printed = result.stdout.trim();
-    const expected = {
-        darwin: 'src-tauri/target/debug/bundle/macos/Markydowny.app',
-        linux: 'src-tauri/target/debug/markydowny',
-    }[process.platform];
-    if (!expected) return; // Windows isn't a desktop target.
-    assert.equal(printed, path.join(root, expected));
+    assert.equal(result.stdout.trim(), path.join(root, expectedArtifact));
 });
 
 test('build-desktop.sh refuses arguments it does not know', () => {
