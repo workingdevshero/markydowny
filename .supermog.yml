@@ -11,3 +11,9 @@ verify:
   # change the website, so a PR touching only those isn't verified in a browser.
   paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico"]
   evidence: both
+
+# supermog builds and maintains this repo's GitHub Actions workflows too (the release workflow,
+# #33), so its jobs need `workflows: write`. It's off by default because most jobs never touch
+# .github/workflows/**; every workflow change still goes through review and CI like any other.
+access:
+  workflows: true
