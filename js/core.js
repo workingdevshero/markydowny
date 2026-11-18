@@ -74,8 +74,13 @@
         return stack;
     }
 
-    /** True for URLs with a scheme (https:, data:, blob:, mailto:, ...) or protocol-relative URLs. */
+    /**
+     * True for URLs with a scheme (https:, data:, blob:, mailto:, ...) or protocol-relative URLs.
+     * A Windows drive path (D:\\a.png, or D:%5Ca.png as an inserted image writes it) is a file,
+     * not a `d:` URL.
+     */
     function isExternalUrl(url) {
+        if (/^[a-z]:(?:[\\/]|%5c)/i.test(url)) return false;
         return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
     }
 
@@ -98,7 +103,8 @@
      * the result is used as a file path rather than a URL.
      *
      * A Windows `baseDir` (C:\\docs\\) gives a Windows path back: `/` and `\` both separate
-     * segments, and a target starting with either is from the root of the drive or share.
+     * segments, a target starting with either is from the root of the drive or share, and a
+     * target that is itself a Windows path (D:\\a.png, \\\\server\\share\\a.png) is used as it is.
      *
      * Returns null if the path climbs above the root of `baseDir`.
      */
@@ -110,12 +116,17 @@
             // Leave malformed escapes as-is.
         }
 
-        const root = windowsRoot(baseDir);
-        if (root) {
+        const baseRoot = windowsRoot(baseDir);
+        if (baseRoot) {
+            const targetRoot = windowsRoot(target);
+            if (targetRoot) {
+                const stack = normalizeSegments(target.substring(targetRoot.length).split(/[\\/]/));
+                return stack && targetRoot + stack.join('\\');
+            }
             const isAbsolute = /^[\\/]/.test(target);
-            const dir = isAbsolute ? [] : String(baseDir).substring(root.length).split(/[\\/]/);
+            const dir = isAbsolute ? [] : String(baseDir).substring(baseRoot.length).split(/[\\/]/);
             const stack = normalizeSegments(dir.concat(target.split(/[\\/]/)));
-            return stack && root + stack.join('\\');
+            return stack && baseRoot + stack.join('\\');
         }
 
         const isAbsolute = target.startsWith('/');

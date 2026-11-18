@@ -1029,7 +1029,9 @@
         const fromSelection = alt.trim() !== '';
         if (!fromSelection) {
             // A file's name, with what would end the alt text (or read as a link inside it) escaped.
-            alt = picked ? String(options.path).split('/').pop().replace(/\.[^.]+$/, '').replace(/[\\[\]]/gu, '\\$&') : 'alt';
+            // A picked file on another Windows drive or share keeps its absolute path, split on `\` too.
+            const separators = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(options.path) ? /[\\/]/ : '/';
+            alt = picked ? String(options.path).split(separators).pop().replace(/\.[^.]+$/, '').replace(/[\\[\]]/gu, '\\$&') : 'alt';
         }
         const destination = picked ? linkDestination(options.path) : 'path';
         const image = `![${alt}](${destination})`;

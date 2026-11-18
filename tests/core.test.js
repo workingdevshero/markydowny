@@ -58,6 +58,11 @@ test('isExternalUrl detects schemes and protocol-relative URLs', () => {
     for (const url of ['img.png', './img.png', '../img.png', '/abs/img.png']) {
         assert.ok(!core.isExternalUrl(url), url);
     }
+    // A Windows drive path is a file, not a `d:` URL, as written or as an inserted image encodes it.
+    for (const url of ['D:\\a.png', 'd:/a.png', 'D:%5Ca.png', 'D:%5cpics%5Ca.png', '\\\\server\\share\\a.png']) {
+        assert.ok(!core.isExternalUrl(url), url);
+        assert.equal(core.classifyLink(url), 'relative', url);
+    }
 });
 
 test('classifyLink sorts hrefs into anchor, external, and relative', () => {
@@ -201,6 +206,19 @@ test('resolveRelativePath and relativePath work against a Windows document folde
     assert.equal(core.resolveRelativePath(dir, '../../../../a.png'), null);
     assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '../a.md'), '\\\\server\\share\\a.md');
     assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '../../a.md'), null);
+    // A target that is itself a Windows path is used as it is, not resolved under the document's root.
+    assert.equal(core.resolveRelativePath(dir, '\\\\server\\share\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '\\\\server\\share\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath('\\\\other\\x\\docs\\', '\\\\server\\share\\b\\..\\a.md'), '\\\\server\\share\\a.md');
+    assert.equal(core.resolveRelativePath(dir, 'D:\\a.png'), 'D:\\a.png');
+    assert.equal(core.resolveRelativePath(dir, 'D:%5Cpics%5Ca%20b.png'), 'D:\\pics\\a b.png');
+    assert.equal(core.resolveRelativePath(dir, 'd:/pics/./a.png'), 'd:\\pics\\a.png');
+    assert.equal(core.resolveRelativePath(dir, 'D:\\..\\a.png'), null);
+    // A single separator is still the root of the document's own drive or share.
+    assert.equal(core.resolveRelativePath(dir, '\\a.png'), 'C:\\a.png');
+    assert.equal(core.resolveRelativePath('\\\\server\\share\\docs\\', '\\a.png'), '\\\\server\\share\\a.png');
+    // POSIX documents are unchanged: there a drive-like name is just a relative name.
+    assert.equal(core.resolveRelativePath('/a/docs/', 'D:/x.png'), '/a/docs/D:/x.png');
 
     assert.equal(core.relativePath(dir, 'C:\\Users\\me\\notes\\img\\a.png'), 'img/a.png');
     assert.equal(core.relativePath(dir, 'C:\\Users\\me\\pics\\a.png'), '../pics/a.png');
