@@ -19,6 +19,7 @@
     const backButton = $('backButton');
     const fileInput = $('fileInput');
     const uploadButton = $('uploadButton');
+    const openFileButton = $('openFileButton');
     const fullscreenButton = $('fullscreenButton');
     const docTitle = $('docTitle');
     const fileSelector = $('fileSelector');
@@ -134,13 +135,17 @@
     // Wiring
     // ------------------------------------------------------------------
 
+    // A file or folder dropped anywhere on the page opens, not just one on the drop zone.
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, preventDefaults, false);
         document.body.addEventListener(eventName, preventDefaults, false);
     });
-    ['dragenter', 'dragover'].forEach(eventName => dropZone.addEventListener(eventName, highlight, false));
-    ['dragleave', 'drop'].forEach(eventName => dropZone.addEventListener(eventName, unhighlight, false));
-    dropZone.addEventListener('drop', handleDrop, false);
+    ['dragenter', 'dragover'].forEach(eventName => document.body.addEventListener(eventName, highlight, false));
+    document.body.addEventListener('dragleave', (e) => {
+        // Moving between the page's own elements isn't leaving it.
+        if (!e.relatedTarget || !document.body.contains(e.relatedTarget)) unhighlight();
+    }, false);
+    document.body.addEventListener('drop', unhighlight, false);
+    document.body.addEventListener('drop', handlePageDrop, false);
 
     fileInput.addEventListener('change', (e) => handleFiles(e.target.files), false);
     dropZone.addEventListener('click', chooseFile);
@@ -153,6 +158,17 @@
     uploadButton.addEventListener('click', (e) => {
         e.stopPropagation();
         chooseFile();
+    });
+    openFileButton.addEventListener('click', () => {
+        // Straight to the picker while the click still counts as the user's, unless there are
+        // unsaved changes to ask about first.
+        if (!hasUnsavedChanges() && !(editing && editing.saving)) {
+            chooseFile();
+            return;
+        }
+        leaveEditor().then(left => {
+            if (left) chooseFile();
+        });
     });
     cancelSelectorButton.addEventListener('click', () => {
         leaveEditor().then(left => {
@@ -242,10 +258,12 @@
 
     function highlight() {
         dropZone.classList.add('dragover');
+        document.body.classList.add('dragover');
     }
 
     function unhighlight() {
         dropZone.classList.remove('dragover');
+        document.body.classList.remove('dragover');
     }
 
     function chooseFile() {
@@ -561,31 +579,42 @@
     // Web file / folder input
     // ------------------------------------------------------------------
 
-    function handleDrop(e) {
-        const items = e.dataTransfer.items;
-        const files = Array.from(e.dataTransfer.files || []);
-        // Everything from the DataTransfer has to be taken now: it's emptied once this
+    /** A drop anywhere on the page (the desktop app gets its drops natively, as paths). */
+    function handlePageDrop(e) {
+        if (isDesktop || !e.dataTransfer) return;
+        // Dragged text or a link isn't a document, and mustn't ask about unsaved changes.
+        if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
+        // Dropped into the editor: CodeMirror's to handle.
+        if (e.target && e.target.closest && e.target.closest('.editor-host')) return;
+        const open = takeDrop(e.dataTransfer);
+        leaveEditor().then(left => {
+            if (left) open();
+        });
+    }
+
+    /** Takes what was dropped and returns a function that opens it. */
+    function takeDrop(dataTransfer) {
+        const items = dataTransfer.items;
+        const files = Array.from(dataTransfer.files || []);
+        // Everything from the DataTransfer has to be taken now: it's emptied once the drop
         // handler returns, so the handle is requested before any await.
         const item = items && items.length > 0 ? items[0] : null;
         const handlePromise = item && item.kind === 'file' && webWatch.dropHandles
-            ? item.getAsFileSystemHandle()
+            ? item.getAsFileSystemHandle().catch(() => null)
             : null;
         if (item && item.webkitGetAsEntry) {
             const entry = item.webkitGetAsEntry();
             if (entry && entry.isDirectory) {
                 // Folders are read once, as before.
-                handleFolder(entry);
-                return;
+                return () => handleFolder(entry);
             }
         }
         if (handlePromise) {
-            handlePromise.then(
-                handle => (handle && handle.kind === 'file' ? openFileHandle(handle) : handleFiles(files)),
-                () => handleFiles(files)
+            return () => handlePromise.then(
+                handle => (handle && handle.kind === 'file' ? openFileHandle(handle) : handleFiles(files))
             );
-            return;
         }
-        handleFiles(files);
+        return () => handleFiles(files);
     }
 
     function handleFiles(files) {
