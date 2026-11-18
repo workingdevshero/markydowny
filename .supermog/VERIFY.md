@@ -143,6 +143,47 @@ The desktop app saves through `write_document` (atomic, permission-keeping, refu
 changed since the editor read it) and asks before closing a window with unsaved changes; that
 side can't run here, and its Rust is covered by `cargo test`.
 
+## The desktop app
+
+Only for a round that has `desktop_*` tools. Otherwise skip this section: the browser pass
+above is the whole job.
+
+The round has already built the app with `scripts/build-desktop.sh`: `Markydowny.app` on macOS
+(bundle id `com.workingdevshero.markydowny`), the `markydowny` binary on Linux. It's a debug
+build with no `BUGSPLAT_DATABASE`, so crash reporting is off and a **Crash Test** menu exists.
+Don't use that menu: it crashes the app on purpose.
+
+The app is the same page as the website, in a native window, with real file paths. *Choose
+File* and File > Open... (⌘O) show the system's Open panel. You have no shell on that machine, so
+use files that are already there: the pull request's checkout is, since the round built it. The
+build's last line is the app's path inside that checkout (`<checkout>/src-tauri/target/...`), so
+`<checkout>/README.md` and `<checkout>/.supermog/VERIFY.md` exist, and the checkout folder itself
+is a folder of markdown files to drop or watch. In the macOS Open panel, ⌘⇧G takes a typed path.
+
+To change a file on disk while the app shows it, edit it in another app and save: on macOS,
+`desktop_launch` with `com.apple.TextEdit`, open the same file there (⌘O, ⌘⇧G), type, ⌘S.
+Saving from Markydowny's own editor counts too, but it must not come back as a reload.
+
+What differs from the browser:
+
+- **Opening files.** Each document gets its own window. On macOS, windows are native tabs: open
+  two files and you get one window with two tabs; ⌘T opens a tab showing the drop zone, and
+  Window > Merge All Windows gathers windows into one. A file that's already open isn't opened
+  again; its tab comes forward. Two tabs with the same file name get their folder added to the
+  title ("README.md — docs").
+- **Live reload.** Every open document reloads when its file changes on disk, highlighting the
+  changed blocks, with *Follow* as on the web. Dragging a folder with several markdown files
+  from a Finder window onto the app (`desktop_drag`) offers *Watch this folder* (show whichever
+  file changes) and, on macOS, *Open all N as tabs*.
+- **Editing.** The pencil (⌘E) and *Save* (⌘S) as in the browser, but saving always writes the
+  file in place. Closing a window with unsaved changes asks first.
+- **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
+  Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
+- **Links** open in the default browser, not in the app.
+
+macOS-only behaviour (tabs, the Dock, opening files from Finder) can't be seen on Linux. On a
+Linux round, say so rather than reporting it missing.
+
 ## Known quirks
 
 - The same `index.html` and `js/` are bundled into the macOS app (`scripts/build-frontend.mjs`

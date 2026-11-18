@@ -25,7 +25,7 @@ use std::sync::Mutex;
 
 use docs::{DocumentRouter, Placement};
 use serde::Serialize;
-use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, Manager, RunEvent, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
@@ -725,15 +725,32 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItemBuilder::with_id(OPEN_MENU_ID, "Open…")
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
+    let mut has_file_menu = false;
     for item in menu.items()? {
         if let MenuItemKind::Submenu(submenu) = item {
             if submenu.text()? == "File" {
                 submenu.prepend(&new_tab)?;
                 submenu.insert(&open, 1)?;
                 submenu.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+                has_file_menu = true;
                 break;
             }
         }
+    }
+    // Tauri's default menu has no File menu on Linux, so Open… (Ctrl+O) gets one of its own
+    // there. No New Tab: tabs are native macOS tabs.
+    if !has_file_menu {
+        let file = Submenu::with_items(
+            app,
+            "File",
+            true,
+            &[
+                &open,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::close_window(app, None)?,
+            ],
+        )?;
+        menu.insert(&file, 0)?;
     }
     let crash_menu_flag = std::env::var_os(crash_reporting::CRASH_MENU_ENV).is_some();
     if crash_reporting::crash_menu_enabled(cfg!(debug_assertions), crash_menu_flag) {
@@ -834,6 +851,9 @@ pub fn run() {
         .expect("error while building Markydowny");
 
     app.run(|app, event| {
+        // Every arm that uses `app` is macOS-only.
+        #[cfg(not(target_os = "macos"))]
+        let _ = app;
         match event {
             // Finder double-click, "Open With", or dropping files on the Dock icon.
             // On a cold launch this arrives before setup has created the main
