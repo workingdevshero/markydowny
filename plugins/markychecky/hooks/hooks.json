@@ -1,6 +1,18 @@
 {
   "description": "Mirrors each session's task list to its own section of the markychecky board",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "TaskCreate|TaskUpdate|TodoWrite",

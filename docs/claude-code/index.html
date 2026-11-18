@@ -98,9 +98,9 @@
 <p>Without <code>-g</code>, every later edit would bring Markydowny to the front too.</p>
 <h2 id="watch-every-session-markychecky"><a class="heading-anchor" href="#watch-every-session-markychecky" aria-label="Link to this section">#</a>Watch every session: markychecky</h2>
 <p>When you have several Claude Code sessions going at once, the <a href="/docs/markychecky/">markychecky</a> plugin keeps one live board of what each of them is doing: a markdown file with a section per session, holding what it&#39;s working on now and its checklist, ticked off as it goes. Open the board in Markydowny and watch it update.</p>
-<pre><code class="language-bash">claude plugin install markychecky --marketplace workingdevshero/markydowny
+<pre><code class="language-bash">curl -fsSL https://markydowny.com/markychecky.sh | bash
 </code></pre>
-<p>Then turn on the task list it reads, which some setups leave off, by adding <code>&quot;env&quot;: { &quot;CLAUDE_CODE_ENABLE_TODO_TOOLS&quot;: &quot;1&quot; }</code> to <code>~/.claude/settings.json</code>, and restart your sessions. The <a href="/docs/markychecky/">markychecky</a> page has the full setup, step by step, with a check for each step.</p>
+<p>That installs the plugin and turns on the task list it reads, which some setups leave off, by adding <code>&quot;env&quot;: { &quot;CLAUDE_CODE_ENABLE_TODO_TOOLS&quot;: &quot;1&quot; }</code> to <code>~/.claude/settings.json</code>. Then restart your sessions. To do it by hand instead, run <code>claude plugin install markychecky --marketplace workingdevshero/markydowny</code> and add that setting yourself. The <a href="/docs/markychecky/">markychecky</a> page has the full setup, step by step, with a check for each step.</p>
 <h2 id="on-the-web"><a class="heading-anchor" href="#on-the-web" aria-label="Link to this section">#</a>On the web</h2>
 <p>Without the Mac app, open the file on <a href="https://markydowny.com">markydowny.com</a> in Chrome, Edge or another Chromium browser with <strong>Choose File</strong>, or by dropping it on the page, and leave the tab open. Live reload and Follow work the same way; the folder watch and the hook need the app. See <a href="/docs/live-reload/#browser-support">Browser support</a>.</p>
         </main>

@@ -16,6 +16,18 @@ A live board of what every Claude Code session is doing. Each session gets its o
 
 ## Install
 
+In a terminal:
+
+```
+curl -fsSL https://markydowny.com/markychecky.sh | bash
+```
+
+That checks for `claude` and `python3`, installs the plugin (or updates it), turns on the task list in `~/.claude/settings.json` and, on a Mac, offers to download Markydowny. Running it again changes nothing that's already set up. Then restart any session that was already open (`claude --resume`). The script is [`markychecky.sh`](../../markychecky.sh) in this repository.
+
+If something's still missing, such as the task list or `python3`, a new session says so when it starts. markychecky never changes your settings itself.
+
+### Or step by step
+
 1. **Install the plugin.** In a terminal:
 
    ```
@@ -81,5 +93,5 @@ Problems are logged to `markychecky.log` in the plugin's data folder. A hook nev
 
 ## Notes
 
-- No section for a session? It probably has no task tools: see step 2 of [Install](#install). Headless runs (`claude -p`) need the same setting.
+- No section for a session? It probably has no task tools: see step 2 of [Or step by step](#or-step-by-step). Headless runs (`claude -p`) need the same setting.
 - The board is plain markdown, so any viewer works. Markydowny is the one that reloads it live.

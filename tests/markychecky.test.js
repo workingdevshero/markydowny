@@ -297,8 +297,11 @@ test('the hooks run the script on task-tool updates and at session end', () => {
     assert.deepEqual(post.matcher.split('|').sort(), ['TaskCreate', 'TaskUpdate', 'TodoWrite']);
     assert.match(post.hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" task/);
     assert.match(hooks.SessionEnd[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" end/);
+    // Not after compacting: that's the same session, which has been told already.
+    assert.deepEqual(hooks.SessionStart[0].matcher.split('|').sort(), ['clear', 'resume', 'startup']);
+    assert.match(hooks.SessionStart[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/session-start\.sh"/);
     // The launcher always exits 0; even so, a hook never fails the session.
-    for (const h of [post.hooks[0], hooks.SessionEnd[0].hooks[0]]) assert.match(h.command, /\|\| true$/);
+    for (const h of [post.hooks[0], hooks.SessionEnd[0].hooks[0], hooks.SessionStart[0].hooks[0]]) assert.match(h.command, /\|\| true$/);
 });
 
 test('the marketplace lists the plugin, and the versions agree', () => {
@@ -332,7 +335,7 @@ test('every place markychecky is documented says how to turn on the task list', 
 
 test('the markychecky page has every setup step an agent needs, each with a check', { skip: !hasPython }, () => {
     const page = fs.readFileSync(path.join(root, 'docs', 'markychecky.md'), 'utf8');
-    for (const step of ['### 1. Check what you need', '### 2. Install the plugin', '### 3. Turn on the task list', '### 4. Start your sessions', '### 5. Watch the board']) {
+    for (const step of ['#### 1. Check what you need', '#### 2. Install the plugin', '#### 3. Turn on the task list', '#### 4. Start your sessions', '#### 5. Watch the board']) {
         assert.ok(page.includes(step), `missing "${step}"`);
     }
     // Steps 2 to 4 each end with a way to check them.
