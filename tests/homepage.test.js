@@ -23,7 +23,7 @@ test('the homepage sections around the drop zone are marked as marketing', () =>
 
     const features = main.match(/<div class="features marketing" id="features">([\s\S]*?)\n {12}<\/div>\n/);
     assert.ok(features, 'feature sections, marked as marketing');
-    const titles = [...features[1].matchAll(/<section class="feature"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>/g)].map(m => m[1]);
+    const titles = [...features[1].matchAll(/<section class="feature\b[^"]*"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>/g)].map(m => m[1]);
     assert.equal(titles.length, 5, 'live reload, Claude Code, the editor, tabs and privacy');
     for (const link of ['/docs/live-reload/', '/docs/claude-code/', '/docs/editor/', '/docs/tabs/', '/docs/privacy/']) {
         assert.match(features[1], new RegExp(`href="${link}"`), `links to ${link}`);
@@ -36,7 +36,7 @@ test('the homepage sections around the drop zone are marked as marketing', () =>
 
     // Every section in <main> other than the file list is marketing.
     for (const [tag] of main.matchAll(/<section class="[^"]*"/g)) {
-        if (tag.includes('file-selector') || tag.includes('class="feature"')) continue;
+        if (tag.includes('file-selector') || /class="feature\b/.test(tag)) continue;
         assert.match(tag, /\bmarketing\b/, `${tag} is marketing`);
     }
     // The drop zone itself isn't: the desktop app opens straight to it.
@@ -266,4 +266,27 @@ test('opening a file from outside the list closes a file list that was up', () =
         const body = appSource.match(new RegExp(`async function ${reader}[\\s\\S]*?\\n {4}}\\n`))[0];
         assert.match(body, /closeFileSelector\(\)/, `${reader} closes the list`);
     }
+});
+
+test('the homepage shows the product: screenshot rows, the markychecky spotlight and a 1.0 badge', () => {
+    const features = main.match(/<div class="features marketing" id="features">([\s\S]*?)\n {12}<\/div>\n/)[1];
+    const rows = [...features.matchAll(/<section class="feature feature-row"[\s\S]*?<\/section>/g)].map(m => m[0]);
+    assert.equal(rows.length, 3, 'live reload, the editor and tabs each get a screenshot row');
+    for (const row of rows) {
+        const img = row.match(/<img src="\/media\/home\/([\w-]+\.webp)" alt="([^"]+)" width="1200" height="900" loading="lazy"/);
+        assert.ok(img, 'a lazy screenshot with its size and a description');
+        assert.ok(fs.statSync(path.join(root, 'media', 'home', img[1])).size > 0, `media/home/${img[1]} is committed`);
+    }
+    assert.equal([...features.matchAll(/<section class="feature feature-card"/g)].length, 2, 'Claude Code and privacy as cards');
+
+    const spotlight = main.match(/<section class="spotlight marketing"[\s\S]*?<\/section>/);
+    assert.ok(spotlight, 'a markychecky spotlight, marked as marketing');
+    assert.match(spotlight[0], /href="\/docs\/markychecky\/"/);
+    assert.match(spotlight[0], /<video class="spotlight-video" src="\/docs\/media\/markychecky-board\.mp4"[^>]* autoplay muted loop playsinline/);
+    assert.ok(main.indexOf('class="spotlight marketing"') < main.indexOf('class="download-strip marketing"'));
+
+    const hero = main.match(/<div class="hero marketing">[\s\S]*?<\/div>/)[0];
+    assert.match(hero, /<a class="hero-badge" href="\/docs\/install\/">/);
+    // The download band also offers Linux, through the Download page.
+    assert.match(main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/)[0], /href="\/docs\/install\/"/);
 });
