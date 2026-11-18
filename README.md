@@ -14,6 +14,7 @@ A simple, beautiful markdown viewer — on the web at [markydowny.com](https://m
 - 🖼️ **Image Support**: Relative image paths in markdown are automatically resolved from folders
 - ⛶ **Fullscreen Mode**: Expand content for distraction-free reading
 - 🔄 **Live reload in Chrome, Edge and other Chromium browsers**: a file opened with *Choose File* or dropped on the page re-renders when it changes on disk, with the changes highlighted and an optional **Follow** mode (Safari and Firefox read the file once, as before)
+- ✏️ **Edit the markdown**: *Edit* (⌘E) opens the source in an editor; ⌘S saves it in place in the desktop app and in Chromium (for files opened with *Choose File* or dropped), and downloads a copy elsewhere. Changes made on disk while you edit are applied, or offered in a banner if you have unsaved changes
 - 📱 **Responsive Design**: Works great on desktop and mobile
 - ↩️ **Easy Reset**: *Open another* takes you back to the drop zone to load another file
 
@@ -123,6 +124,7 @@ index.html, js/, *.svg, *.png   The web app (served as-is by GitHub Pages from t
 js/core.js                      Pure helpers shared by web + desktop (unit tested)
 js/app.js                       UI; detects Tauri and switches to native file handling
 js/vendor/marked.umd.js         Vendored markdown parser (refresh with `npm run vendor`)
+js/vendor/codemirror.js         Vendored editor, bundled from scripts/codemirror-entry.mjs by `npm run vendor`; loaded on first edit
 src-tauri/                      Desktop shell: file associations, window routing, file access, crash reporting
 scripts/build-frontend.mjs      Copies the web app into dist/ for the desktop build
 tests/                          JS unit tests (node --test)

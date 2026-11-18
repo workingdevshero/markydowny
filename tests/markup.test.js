@@ -85,10 +85,77 @@ test('only the desktop app forwards ⌃Tab to switch tabs', () => {
 });
 
 test('desktop windows report their document path so same-named tabs can be told apart', () => {
-    assert.match(app, /invoke\('set_document_open', \{ open, title: title \|\| null, path: path \|\| null, generation \}\)/);
+    assert.match(app, /invoke\('set_document_open', \{ open, title: title \|\| null, path: path \|\| null, generation, edited \}\)/);
     assert.match(app, /kind: 'desktop', dir: doc\.dir, title, path: doc\.path/);
     // A file from a dropped folder keeps its "folder › file" title, so it sends no path.
-    const show = app.match(/function showMarkdownContent[\s\S]*?\n {4}}\n/)[0];
+    const show = app.match(/function showTitle[\s\S]*?\n {4}}\n/)[0];
     assert.match(show, /currentSource\.kind === 'desktop' && !desktopFolder \? currentSource\.path : null/);
     assert.match(show, /setDocumentOpen\(true, title, path\)/);
+});
+
+test('the pencil button sits in the top bar next to fullscreen, with Save and Revert, all hidden at first', () => {
+    const topbar = html.match(/<header class="topbar">([\s\S]*?)<\/header>/)[1];
+    const button = topbar.match(/<button[^>]*id="editButton"[^>]*>[\s\S]*?<\/button>/);
+    assert.ok(button, 'editButton is not in the top bar');
+    assert.match(button[0], /\shidden[\s>]/);
+    assert.match(button[0], /aria-pressed="false"/);
+    assert.match(button[0], /<span id="editLabel">Edit<\/span>/);
+    // Right before the fullscreen toggle.
+    const after = topbar.slice(topbar.indexOf(button[0]) + button[0].length);
+    assert.match(after, /^\s*<button[^>]*id="fullscreenButton"/);
+    for (const id of ['saveButton', 'revertButton']) {
+        assert.match(topbar, new RegExp(`<button[^>]*id="${id}"[^>]*\\shidden[\\s>]`), `${id} starts hidden`);
+    }
+    // .btn sets display, so hiding needs its own rules.
+    assert.match(html, /\.edit-button\[hidden\],\s*\.save-button\[hidden\],\s*\.revert-button\[hidden\]\s*\{\s*display:\s*none/);
+});
+
+test('the editor and the conflict banner sit outside the rendered markdown', () => {
+    const main = html.match(/<main>([\s\S]*?)<\/main>/)[1];
+    assert.match(main, /<div class="editor-host" id="editorHost" hidden><\/div>/);
+    const banner = main.match(/<div class="edit-banner" id="editBanner"[^>]*>([\s\S]*?)<\/div>/);
+    assert.ok(banner, 'edit banner not found');
+    assert.match(banner[0], /\shidden[\s>]/);
+    assert.match(banner[1], /This file changed on disk/);
+    assert.match(banner[1], /id="bannerReload"[^>]*>Reload</);
+    assert.match(banner[1], /id="bannerKeep"[^>]*>Keep mine</);
+});
+
+test('CodeMirror is loaded only when editing starts, never by the page itself', () => {
+    assert.doesNotMatch(html, /codemirror/i, 'index.html must not load the editor');
+    const mentions = [...app.matchAll(/js\/vendor\/codemirror\.js/g)];
+    assert.equal(mentions.length, 1, 'app.js names the bundle once');
+    const loader = app.match(/function loadCodeMirror[\s\S]*?\n {4}}\n/)[0];
+    assert.match(loader, /script\.src = CODEMIRROR_SRC/);
+    // Only startEditing loads it.
+    const callers = [...app.matchAll(/(?<!function )loadCodeMirror\(\)/g)];
+    assert.equal(callers.length, 1);
+    const start = app.match(/async function startEditing[\s\S]*?\n {4}}\n/)[0];
+    assert.match(start, /await loadCodeMirror\(\)/);
+});
+
+test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
+    const bundle = fs.readFileSync(path.join(root, 'js', 'vendor', 'codemirror.js'), 'utf8');
+    assert.match(bundle, /^var MarkyCodeMirror=/);
+    const window = {};
+    new Function('window', 'self', `${bundle}\nwindow.MarkyCodeMirror = MarkyCodeMirror;`)(window, window);
+    for (const name of ['createEditor', 'EditorView', 'Transaction']) {
+        assert.ok(window.MarkyCodeMirror[name], `MarkyCodeMirror.${name}`);
+    }
+});
+
+test('unsaved changes are guarded: closing the window, the browser tab, Open another, drops and the file list', () => {
+    assert.match(app, /onCloseRequested\(async \(event\) => \{\s*if \(!\(await leaveEditor\(\)\)\) event\.preventDefault\(\);/);
+    assert.match(app, /addEventListener\('beforeunload'/);
+    assert.match(app, /backButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
+    assert.match(app, /leaveEditor\(\)\.then\(left => \{\s*if \(left\) handleDesktopDrop\(paths\);/);
+    // The file list stays up beside the document: picking from it, Cancel and Watch this folder.
+    assert.match(app, /const pick = async \(\) => \{[\s\S]*?if \(!\(await leaveEditor\(\)\)\) return;/);
+    assert.match(app, /cancelSelectorButton\.addEventListener\('click', \(\) => \{\s*leaveEditor\(\)\.then/);
+    assert.match(app, /async function toggleWatchFolder\(\) \{[\s\S]*?if \(editing\) \{\s*await finishEditing\(\);/);
+    // A save being written finishes before anything is discarded.
+    assert.match(app, /async function leaveEditor\(\) \{[\s\S]*?if \(editing && editing\.saving\) await editing\.saving;/);
+    // Closing needs the window's destroy permission once a JS listener takes over.
+    const capability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
+    assert.ok(capability.permissions.includes('core:window:allow-destroy'));
 });
