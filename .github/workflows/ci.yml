@@ -49,6 +49,13 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
         env:
           BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+      # markychecky's tests again, on the app's `markychecky` mode as well as the Python script.
+      - run: cargo build --manifest-path src-tauri/Cargo.toml
+        env:
+          BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+      - run: node --test tests/markychecky.test.js
+        env:
+          MARKYDOWNY_BIN: src-tauri/target/debug/markydowny
 
   windows:
     runs-on: windows-latest

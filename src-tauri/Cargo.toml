@@ -25,6 +25,10 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 bugsplat = "0.1"
 tauri-plugin-bugsplat = "0.1"
 
+# markychecky's hook (markychecky.rs): flock, localtime_r and the passwd database.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # AppKit window tabs (tab mode, adding tabs); same versions tao already uses.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

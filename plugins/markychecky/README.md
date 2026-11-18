@@ -38,7 +38,7 @@ A live board of what every Claude Code session is doing. Each session gets its o
 
 3. **Start your sessions.** New sessions write to the board. A session that's already running picks it up when you restart it with `claude --resume`.
 
-It needs `python3`, which comes with the Xcode Command Line Tools on a Mac and with most Linux systems. Without it, the plugin does nothing.
+It needs Markydowny (or Python 3). The hook runs on [Markydowny](https://markydowny.com/docs/install/) when it's installed, and falls back to `python3`, which comes with the Xcode Command Line Tools on a Mac and with most Linux systems, when it isn't. With neither, it tells you once and does nothing.
 
 ## How it works
 
@@ -49,7 +49,7 @@ Claude Code sessions keep a task list as they work (`TaskCreate` and `TaskUpdate
 - **The checklist** follows, in the order the tasks were made. The task in progress is bold.
 - **Issue and pull request numbers become links.** `#18` links into the session's GitHub repository (its `origin` remote), and `owner/repo#18` links to the repository it names. A bare `repo#18` is linked only when it names the session's own repository; anything else stays plain text rather than becoming a wrong link.
 
-The script does the writing, not the model, so sessions never have to remember to update the board.
+The hook does the writing, not the model, so sessions never have to remember to update the board. It runs on the Markydowny app (`markydowny markychecky task`), or on `scripts/markychecky.py` without it; `scripts/markychecky.sh` picks one, and both write the same board.
 
 **Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so notes you write between sections are kept. Everything inside a section is the session's: a heading you rename still belongs to that session, but it's rewritten from the repository and branch on the next update.
 

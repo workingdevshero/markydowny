@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v python3 >/dev/null 2>&1 && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.py\" task || true",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" task || true",
             "timeout": 10
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v python3 >/dev/null 2>&1 && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.py\" end || true",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" end || true",
             "timeout": 10
           }
         ]

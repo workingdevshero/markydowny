@@ -11,13 +11,17 @@
 //! * live reload: each window watches the document it shows (`watch.rs`);
 //! * saving an edited document, checked and atomic (`save.rs`);
 //! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
-//! * File > Open Recent, kept across launches (`recent.rs`).
+//! * File > Open Recent, kept across launches (`recent.rs`);
+//! * `markydowny markychecky task|end`, markychecky's hook, run before any of the above starts
+//!   (`markychecky.rs`).
 
 #[cfg(test)]
 mod bundled_helpers;
 mod crash_reporting;
 mod docs;
 mod images;
+#[cfg(unix)]
+pub mod markychecky;
 mod recent;
 mod save;
 mod tabs;

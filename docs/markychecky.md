@@ -21,7 +21,7 @@ Running three Claude Code sessions in three repos, you lose track: which one is 
 - **Each session owns its section.** Sessions only ever rewrite their own section, and many sessions writing at once is safe. Anything you write between sections stays.
 - **Clickable.** Issue and pull request numbers like `#18` become links to the session's GitHub repository.
 - **Agents can read it too.** A session can read the board to see what the others are doing before it starts something.
-- **Local and free.** It's a small Python script and a markdown file on your machine. Nothing is sent anywhere.
+- **Local and free.** It's a hook that runs on Markydowny (or Python) and a markdown file on your machine. Nothing is sent anywhere.
 
 ## Set it up
 
@@ -29,12 +29,15 @@ markychecky works in Claude Code in the terminal, in the **Code** tab of the Cla
 
 ### 1. Check what you need
 
+You need Claude Code, and Markydowny (or Python 3) for the plugin's hook to run on:
+
 ```bash
 claude --version   # Claude Code
-python3 --version  # Python 3, which the plugin's hook runs on
+ls /Applications/Markydowny.app || command -v markydowny  # Markydowny, on a Mac or on Linux
+python3 --version  # or Python 3
 ```
 
-On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`). Most Linux systems have it already. Without it, the plugin does nothing.
+The hook runs on Markydowny when it's installed ([install it](https://markydowny.com/docs/install/)), and falls back to `python3` when it isn't. On a Mac, `python3` comes with the Xcode Command Line Tools (`xcode-select --install`); most Linux systems have it already. With neither, the plugin tells you once and does nothing.
 
 ### 2. Install the plugin
 
@@ -149,7 +152,7 @@ Or turn on auto-update: `/plugin` > **Marketplaces** > markydowny > **Enable aut
 
 - **No task list.** The session doesn't have `TaskCreate` and `TaskUpdate`. Check step 3, then restart the session.
 - **Started before the install.** Restart it with `claude --resume`.
-- **No `python3`.** `command -v python3` prints nothing. Install it (step 1).
+- **Neither Markydowny nor Python.** The plugin says so once, the first time a session updates its tasks. Install Markydowny, or Python 3 (step 1). An older Markydowny without the hook built in is skipped.
 - **A cloud session.** Sessions in the cloud, including claude.ai/code in the browser, don't load plugins installed on your computer, so they can't write to its board.
 - **Not Claude Code.** markychecky is a Claude Code plugin. Claude chat on claude.ai and Cowork have their own, separate plugins.
 - **Still nothing?** The plugin logs problems to `~/.claude/plugins/data/markychecky-markydowny/markychecky.log`. A problem never interrupts your session; the board just doesn't update.
