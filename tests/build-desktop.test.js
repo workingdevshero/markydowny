@@ -54,3 +54,24 @@ test('build-desktop.sh is plain ASCII, which macOS bash 3.2 needs', () => {
     const offending = [...source].findIndex(ch => ch.charCodeAt(0) > 127);
     assert.equal(offending, -1, `non-ASCII character at offset ${offending}`);
 });
+
+test("supermog's Linux desktop round runs this script in an image that has the script's packages", () => {
+    const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
+    const linux = config.slice(config.indexOf('    linux:'));
+    assert.match(linux, /^\s+build: scripts\/build-desktop\.sh$/m);
+    const dockerfile = linux.match(/^\s+dockerfile: (\S+)$/m)[1];
+    const image = fs.readFileSync(path.join(root, dockerfile), 'utf8');
+    // Debian 13 or later: BugSplat's Crashpad needs glibc 2.38 (MIN_GLIBC in the script).
+    assert.match(image, /^FROM rust:1-trixie$/m);
+    const packages = fs.readFileSync(script, 'utf8').match(/^LINUX_PACKAGES=\(([^)]*)\)/m)[1].split(/\s+/).filter(Boolean);
+    assert.ok(packages.length > 5);
+    for (const name of packages) assert.match(image, new RegExp(`\\s${name.replace(/[.+]/g, '\\$&')}\\s`), `${name} is missing from ${dockerfile}`);
+});
+
+test('a pull request that changes the desktop app is one a round verifies', () => {
+    const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
+    const lists = [...config.matchAll(/^\s+paths: (\[.*\])$/gm)].map((m) => JSON.parse(m[1]));
+    // verify.paths, then verify.desktop.linux.paths: without src-tauri in the first, no round runs at all.
+    assert.equal(lists.length, 2);
+    for (const list of lists) assert.ok(list.includes('src-tauri/**'));
+});
