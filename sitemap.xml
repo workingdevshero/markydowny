@@ -25,6 +25,12 @@
         <priority>0.6</priority>
     </url>
     <url>
+        <loc>https://markydowny.com/docs/markychecky/</loc>
+        <lastmod>2026-11-18</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.6</priority>
+    </url>
+    <url>
         <loc>https://markydowny.com/docs/editor/</loc>
         <lastmod>2026-11-18</lastmod>
         <changefreq>monthly</changefreq>

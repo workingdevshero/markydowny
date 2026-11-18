@@ -2,6 +2,8 @@
 
 A live board of what every Claude Code session is doing. Each session gets its own section of one markdown file: what it's doing now, and its checklist, ticked off as it works. Open the board in [Markydowny](https://markydowny.com) and it updates in front of you, highlighting each change.
 
+**Setting it up for someone else?** Send them [markydowny.com/docs/markychecky](https://markydowny.com/docs/markychecky/). It has every step, with a check for each, written so their agent can do the setup.
+
 ```markdown
 ## markydowny · feat/release-mac
 

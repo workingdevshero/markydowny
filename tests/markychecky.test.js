@@ -263,14 +263,36 @@ test('every place markychecky is documented says how to turn on the task list', 
     const docs = {
         'plugin README': path.join(plugin, 'README.md'),
         'README': path.join(root, 'README.md'),
-        'docs page': path.join(root, 'docs', 'claude-code.md'),
+        'Watching Claude Code page': path.join(root, 'docs', 'claude-code.md'),
+        'markychecky page': path.join(root, 'docs', 'markychecky.md'),
     };
     for (const [name, file] of Object.entries(docs)) {
         const text = fs.readFileSync(file, 'utf8');
         assert.match(text, /CLAUDE_CODE_ENABLE_TODO_TOOLS/, `${name} doesn't mention CLAUDE_CODE_ENABLE_TODO_TOOLS`);
         assert.match(text, /claude plugin install markychecky --marketplace workingdevshero\/markydowny/, `${name} doesn't give the install command`);
     }
-    // The README links to the docs page's markychecky section by its anchor.
-    const html = fs.readFileSync(path.join(root, 'docs', 'claude-code', 'index.html'), 'utf8');
-    assert.match(html, /id="watch-every-session-markychecky"/);
+    // The markychecky page is published, and the README, the plugin README and the homepage link to it.
+    assert.ok(fs.existsSync(path.join(root, 'docs', 'markychecky', 'index.html')));
+    for (const file of [path.join(root, 'README.md'), path.join(plugin, 'README.md'), path.join(root, 'index.html')]) {
+        assert.match(fs.readFileSync(file, 'utf8'), /markydowny\.com\/docs\/markychecky\/|href="\/docs\/markychecky\/"/, `${file} doesn't link to the markychecky page`);
+    }
+});
+
+test('the markychecky page has every setup step an agent needs, each with a check', { skip: !hasPython }, () => {
+    const page = fs.readFileSync(path.join(root, 'docs', 'markychecky.md'), 'utf8');
+    for (const step of ['### 1. Check what you need', '### 2. Install the plugin', '### 3. Turn on the task list', '### 4. Start your sessions', '### 5. Watch the board']) {
+        assert.ok(page.includes(step), `missing "${step}"`);
+    }
+    // Steps 2 to 4 each end with a way to check them.
+    assert.equal((page.match(/^\*\*Check:\*\*/gm) || []).length, 3);
+    // The settings snippet in the page actually merges the setting into an existing file.
+    const snippet = page.match(/```bash\npython3 - <<'EOF'\n([\s\S]*?)\nEOF\n```/);
+    assert.ok(snippet, 'the settings snippet is missing');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-home-'));
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'opus', env: { FOO: 'bar' } }));
+    const run = spawnSync('python3', ['-'], { input: snippet[1], env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.deepEqual(settings, { model: 'opus', env: { FOO: 'bar', CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' } });
 });
