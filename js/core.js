@@ -752,6 +752,25 @@
         return toStart + fraction * (to[i + 1] - toStart);
     }
 
+    /** A new document's title until it's saved, and the name its first save suggests. */
+    const UNTITLED_TITLE = 'Untitled';
+    const UNTITLED_FILE_NAME = 'Untitled.md';
+
+    /**
+     * How the editor saves `source` (the document on screen):
+     *   'save' writes it in place: the desktop app, or a file handle the page can write.
+     *   'saveAs' asks where first: an untitled document (source.kind 'untitled') in the desktop
+     *     app or where the browser has showSaveFilePicker. After that it's a file like any other.
+     *   'download' downloads a copy (an untitled one as Untitled.md).
+     * env: { isDesktop, savePicker } (whether the browser has showSaveFilePicker).
+     */
+    function saveAction(source, env) {
+        if (source && source.kind === 'untitled') return env.isDesktop || env.savePicker ? 'saveAs' : 'download';
+        if (env.isDesktop) return 'save';
+        const handle = source && source.handle;
+        return handle && typeof handle.createWritable === 'function' ? 'save' : 'download';
+    }
+
     /** How many recent saves are remembered, so their echo from the file watch is recognised. */
     const MAX_WRITTEN = 4;
 
@@ -841,6 +860,9 @@
     }
 
     return {
+        UNTITLED_TITLE,
+        UNTITLED_FILE_NAME,
+        saveAction,
         editorShortcut,
         countWords,
         formatWordCount,

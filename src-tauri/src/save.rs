@@ -10,6 +10,9 @@
 //! * The new content goes to a temporary file in the same folder, which is then renamed over the
 //!   document: a reader (or a crash) sees the old file or the new one, never half of each. The
 //!   document's permissions carry over.
+//! * A new document's first save (`save_new`) writes where the Save panel said. It replaces a
+//!   file only when the panel asked about replacing that file; otherwise it creates the file,
+//!   and refuses if one is there.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -65,6 +68,53 @@ where
             Err(SaveError::Conflict { content: now })
         }
     })
+}
+
+/// Where a new document picked in the Save panel is written: the picked path, with `.md` added
+/// when the name has no extension at all (GTK's panel doesn't add one), and whether it was added.
+pub fn markdown_save_path(picked: &Path) -> (PathBuf, bool) {
+    if picked.extension().is_some() {
+        return (picked.to_path_buf(), false);
+    }
+    let mut name = picked.file_name().unwrap_or_default().to_os_string();
+    name.push(".md");
+    (picked.with_file_name(name), true)
+}
+
+/// Saves a new document as `path`. An existing file there is replaced only when `replace` (the
+/// Save panel asked about replacing that very file); otherwise the file is created, and the
+/// save is refused if something is already there.
+pub fn save_new(path: &Path, content: &str, replace: bool) -> Result<(), SaveError> {
+    let failed = |e: io::Error| SaveError::Failed {
+        message: format!("Can't save {}: {e}", path.display()),
+    };
+    match fs::metadata(path) {
+        Ok(meta) if !meta.is_file() => {
+            return Err(SaveError::Failed {
+                message: format!("{} is not a file", path.display()),
+            })
+        }
+        Ok(_) if replace => return write_atomically(path, content.as_bytes(), || Ok(())),
+        _ => {}
+    }
+    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(SaveError::Refused {
+                message: format!("{} already exists", path.display()),
+            })
+        }
+        Err(e) => return Err(failed(e)),
+    };
+    let written = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all());
+    if let Err(e) = written {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(failed(e));
+    }
+    Ok(())
 }
 
 /// Replaces the file at `path` with `content` through a temporary file in the same folder,
@@ -268,6 +318,68 @@ mod tests {
             "{result:?}"
         );
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_new_document_is_written_where_the_panel_said_and_nowhere_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("Untitled.md");
+
+        save_new(&file, "# New\n\nTyped.\n", false).unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "# New\n\nTyped.\n");
+        assert_eq!(entries(tmp.path()), vec!["Untitled.md"]);
+    }
+
+    #[test]
+    fn a_new_document_replaces_a_file_only_when_the_panel_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("notes.md");
+        fs::write(&file, "old").unwrap();
+
+        // A name the panel didn't ask about (".md" added afterwards) is left alone.
+        let result = save_new(&file, "new", false);
+        assert!(
+            matches!(result, Err(SaveError::Refused { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "old");
+
+        // The reader confirmed "Replace" in the panel.
+        save_new(&file, "new", true).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        assert_eq!(entries(tmp.path()), vec!["notes.md"]);
+    }
+
+    #[test]
+    fn a_new_document_never_replaces_a_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("notes.md");
+        fs::create_dir(&folder).unwrap();
+        let result = save_new(&folder, "new", true);
+        assert!(
+            matches!(result, Err(SaveError::Failed { .. })),
+            "{result:?}"
+        );
+        assert!(folder.is_dir());
+    }
+
+    #[test]
+    fn a_name_without_an_extension_gets_md() {
+        let dir = Path::new("docs");
+        assert_eq!(
+            markdown_save_path(&dir.join("notes")),
+            (dir.join("notes.md"), true)
+        );
+        assert_eq!(
+            markdown_save_path(&dir.join("notes.markdown")),
+            (dir.join("notes.markdown"), false)
+        );
+        // Any extension is the reader's choice.
+        assert_eq!(
+            markdown_save_path(&dir.join("notes.txt")),
+            (dir.join("notes.txt"), false)
+        );
     }
 
     #[test]

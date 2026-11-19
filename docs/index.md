@@ -16,7 +16,8 @@ Markydowny renders markdown files, beautifully. Use it on the web at [markydowny
 Open [markydowny.com](https://markydowny.com) and either:
 
 - drop a `.md`, `.markdown` or `.txt` file onto the page, or
-- click **Choose File** (or press <kbd>Enter</kbd> on the drop zone) and pick one.
+- click **Choose File** (or press <kbd>Enter</kbd> on the drop zone) and pick one, or
+- click **New file** to start an empty document in the [editor](editor.md#new-file).
 
 The document renders straight away: headings, lists, tables, task lists, fenced code and images. **Open another** in the header takes you back to the drop zone, and the fullscreen button (⛶) hides everything but the document.
 
@@ -32,6 +33,8 @@ In Chrome, Edge and other Chromium browsers, a file you choose or drop keeps upd
 - drag files or folders onto a Markydowny window or its Dock icon,
 - use **File > Open…** (<kbd>⌘O</kbd>), or
 - from a terminal: `open -a Markydowny README.md`.
+
+**File > New** (<kbd>⌘N</kbd>) starts a [new file](editor.md#new-file) in the editor.
 
 **File > Open Recent** lists the last ten files and folders you opened, newest first, and keeps them after you quit. **Clear Menu** at its bottom empties it.
 

@@ -14,6 +14,7 @@ description: Every Markydowny keyboard shortcut, on the Mac and on Windows and L
 | Find and replace while editing | <kbd>⌘F</kbd> | <kbd>Ctrl+F</kbd> |
 | Choose a file from the drop zone | <kbd>Enter</kbd> or <kbd>Space</kbd> | <kbd>Enter</kbd> or <kbd>Space</kbd> |
 | Close an enlarged image | <kbd>Esc</kbd> | <kbd>Esc</kbd> |
+| New file (app) | <kbd>⌘N</kbd> | <kbd>Ctrl+N</kbd> |
 | Open a file (app) | <kbd>⌘O</kbd> | <kbd>Ctrl+O</kbd> |
 | New tab (Mac app) | <kbd>⌘T</kbd> | |
 | Next tab (Mac app) | <kbd>⌃Tab</kbd> or <kbd>⌘⇧]</kbd> | |
