@@ -9,7 +9,8 @@
 //! * reading files and folders by path, so relative images resolve;
 //! * scoped access to local images through Tauri's asset protocol;
 //! * live reload: each window watches the document it shows (`watch.rs`);
-//! * saving an edited document, checked and atomic (`save.rs`);
+//! * saving an edited document, checked and atomic, and saving a new one with the Save panel
+//!   (`save.rs`);
 //! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
 //! * File > Open Recent, kept across launches (`recent.rs`);
 //! * `markydowny markychecky task|end`, markychecky's hook, run before any of the above starts
@@ -47,6 +48,9 @@ use tauri_plugin_dialog::{
 
 const MAIN_WINDOW: &str = "main";
 const OPEN_MENU_ID: &str = "open-document";
+const NEW_DOCUMENT_MENU_ID: &str = "new-document";
+/// The name a new document's Save panel suggests.
+const UNTITLED_FILE_NAME: &str = "Untitled.md";
 const NEW_TAB_MENU_ID: &str = "new-tab";
 /// Open Recent entries are this prefix followed by the entry's index in the list.
 const RECENT_MENU_PREFIX: &str = "open-recent:";
@@ -157,12 +161,14 @@ struct MissingPayload {
     path: String,
 }
 
-/// What `take_pending_document` hands a window: a document, or a folder to choose from.
+/// What `take_pending_document` hands a window: a document, a folder to choose from, or a new,
+/// untitled document to start (File > New).
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum Pending {
     Document(Document),
     Folder { folder: String },
+    Untitled { untitled: bool },
 }
 
 /// Result of `watch_folder`.
@@ -191,7 +197,13 @@ fn take_pending_document(
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<Pending>, String> {
-    let pending = state.router.lock().unwrap().take_pending(window.label());
+    let pending = {
+        let mut router = state.router.lock().unwrap();
+        if router.take_untitled(window.label()) {
+            return Ok(Some(Pending::Untitled { untitled: true }));
+        }
+        router.take_pending(window.label())
+    };
     match pending {
         Some(path) if path.is_dir() => Ok(Some(Pending::Folder {
             folder: path.to_string_lossy().into_owned(),
@@ -380,6 +392,45 @@ fn write_document(
         &content,
         read_text,
     )
+}
+
+/// The first save of a new, untitled document: shows the Save panel (markdown files,
+/// `Untitled.md`, starting in the folder of the last opened file) and writes the document where
+/// it says. From then on the calling window shows that file, which goes on File > Open Recent.
+/// Returns the saved document (its path canonical), or `None` when the panel was cancelled.
+#[tauri::command(async)]
+fn save_new_document(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    content: String,
+) -> Result<Option<Document>, save::SaveError> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Markdown", docs::MARKDOWN_EXTENSIONS)
+        .set_file_name(UNTITLED_FILE_NAME);
+    let start = state.recent.lock().unwrap().last_folder();
+    if let Some(dir) = start {
+        dialog = dialog.set_directory(dir);
+    }
+    let Some(picked) = dialog.blocking_save_file() else {
+        return Ok(None);
+    };
+    let picked = picked.into_path().map_err(|e| save::SaveError::Failed {
+        message: e.to_string(),
+    })?;
+    // The panel asked about replacing the name it showed, not one with ".md" added after it.
+    let (path, added) = save::markdown_save_path(&picked);
+    save::save_new(&path, &content, !added)?;
+    let path = dunce::canonicalize(&path).unwrap_or(path);
+    state
+        .router
+        .lock()
+        .unwrap()
+        .set_showing(window.label(), Some(&path));
+    note_recent(&app, vec![path.clone()]);
+    Ok(Some(document_for(&path, content)))
 }
 
 /// Asks whether to throw away unsaved changes (closing the window, leaving the editor).
@@ -794,6 +845,40 @@ fn attach_or_show(app: &AppHandle, window: &WebviewWindow, tab_after: Option<&st
     let _ = window.show();
 }
 
+/// File > New (⌘N): a new, untitled document in the editor. In the front window if it shows
+/// the drop zone, otherwise in a new tab (a new window off macOS).
+fn new_document(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let windows = window_labels(&handle);
+        let front = front_window(&handle);
+        let state = handle.state::<AppState>();
+        let placement = state
+            .router
+            .lock()
+            .unwrap()
+            .route_untitled(&windows, front.as_deref());
+        match placement {
+            Placement::Existing(label) => {
+                let _ = handle.emit_to(label.as_str(), PENDING_EVENT, ());
+                if let Some(window) = handle.get_webview_window(&label) {
+                    bring_forward(&window);
+                }
+            }
+            Placement::New(label) => {
+                match create_document_window(&handle, &label, front.as_deref()) {
+                    Ok(window) => bring_forward(&window),
+                    Err(err) => {
+                        eprintln!("failed to open window {label}: {err}");
+                        state.router.lock().unwrap().forget(&label);
+                    }
+                }
+            }
+            Placement::Showing(_) | Placement::InFolder(_) => {}
+        }
+    });
+}
+
 /// File > New Tab (⌘T) and the tab bar's + button: a tab showing the drop zone.
 fn new_tab(app: &AppHandle) {
     let front = front_window(app);
@@ -923,11 +1008,14 @@ fn open_recent(app: &AppHandle, index: usize) {
         .show(|_| {});
 }
 
-/// The default macOS menu, plus File > New Tab (⌘T), Open… (⌘O) and Open Recent. The
+/// The default macOS menu, plus File > New (⌘N), New Tab (⌘T), Open… (⌘O) and Open Recent. The
 /// Window menu's tab items are added natively, by `tabs::native`. Windows' default menu has a
 /// File menu too, where New Tab opens a window of its own.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
+    let new_document = MenuItemBuilder::with_id(NEW_DOCUMENT_MENU_ID, "New")
+        .accelerator("CmdOrCtrl+N")
+        .build(app)?;
     let new_tab = MenuItemBuilder::with_id(NEW_TAB_MENU_ID, "New Tab")
         .accelerator("CmdOrCtrl+T")
         .build(app)?;
@@ -944,22 +1032,24 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         if let MenuItemKind::Submenu(submenu) = item {
             if submenu.text()? == "File" {
                 submenu.prepend(&new_tab)?;
-                submenu.insert(&open, 1)?;
-                submenu.insert(&recent, 2)?;
-                submenu.insert(&PredefinedMenuItem::separator(app)?, 3)?;
+                submenu.prepend(&new_document)?;
+                submenu.insert(&open, 2)?;
+                submenu.insert(&recent, 3)?;
+                submenu.insert(&PredefinedMenuItem::separator(app)?, 4)?;
                 has_file_menu = true;
                 break;
             }
         }
     }
-    // Tauri's default menu has no File menu on Linux, so Open… (Ctrl+O) and Open Recent get
-    // one of their own there. No New Tab: tabs are native macOS tabs.
+    // Tauri's default menu has no File menu on Linux, so New (Ctrl+N), Open… (Ctrl+O) and Open
+    // Recent get one of their own there. No New Tab: tabs are native macOS tabs.
     if !has_file_menu {
         let file = Submenu::with_items(
             app,
             "File",
             true,
             &[
+                &new_document,
                 &open,
                 &recent,
                 &PredefinedMenuItem::separator(app)?,
@@ -1011,6 +1101,7 @@ pub fn run() {
             watch_document,
             watch_folder,
             write_document,
+            save_new_document,
             confirm_discard,
             choose_image,
             select_tab,
@@ -1029,6 +1120,8 @@ pub fn run() {
                 if id == OPEN_MENU_ID {
                     let preferred = focused_window(app).map(|w| w.label().to_string());
                     open_with_dialog(app, preferred);
+                } else if id == NEW_DOCUMENT_MENU_ID {
+                    new_document(app);
                 } else if id == NEW_TAB_MENU_ID {
                     new_tab(app);
                 } else if let Some(index) = recent {

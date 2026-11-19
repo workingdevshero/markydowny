@@ -362,8 +362,16 @@
             opacity: 0.85;
         }
 
-        .upload-button {
+        .drop-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
             margin-top: 24px;
+        }
+
+        .upload-button,
+        .new-file-button {
             padding: 12px 20px;
             font-size: 0.95rem;
         }
@@ -2327,10 +2335,16 @@
                 <h2 class="drop-title">Drop a markdown file or folder</h2>
                 <p class="drop-text">anywhere on this page, or choose one</p>
                 <p class="drop-subtext">Images, tables, code and task lists just work. Your files never leave your device.</p>
-                <button class="btn btn-primary upload-button" id="uploadButton" type="button">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
-                    Choose File
-                </button>
+                <div class="drop-actions">
+                    <button class="btn btn-primary upload-button" id="uploadButton" type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
+                        Choose File
+                    </button>
+                    <button class="btn btn-ghost new-file-button" id="newFileButton" type="button" title="Start a new, empty markdown file">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg>
+                        New file
+                    </button>
+                </div>
                 <p class="drop-hint">.md · .markdown · .txt</p>
             </div>
 

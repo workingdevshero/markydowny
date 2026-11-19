@@ -15,6 +15,22 @@ Click **Edit** in the header, or press <kbd>⌘E</kbd> (<kbd>Ctrl+E</kbd> on Win
 
 Click **Done**, or press <kbd>⌘E</kbd> again, to go back to the rendered view, near where your cursor was. If you have unsaved changes, Markydowny asks before discarding them.
 
+## New file
+
+To start a document from scratch, click **New file** on the drop zone. In the app, choose **File > New** or press <kbd>⌘N</kbd> (<kbd>Ctrl+N</kbd> on Windows and Linux) too: on a Mac it opens in a new tab, elsewhere in a new window, unless the window in front is showing the drop zone, which then takes it. The document is called *Untitled* and opens straight in the editor.
+
+The first save asks where to put it:
+
+| Where | First save |
+| --- | --- |
+| The app | The Save panel, named `Untitled.md`, in the folder of the last file you opened |
+| Chrome, Edge and other Chromium browsers | The browser's Save dialog, named `Untitled.md` |
+| Safari and Firefox | **Download** saves `Untitled.md`, usually to your Downloads folder |
+
+Cancel and the document stays open and unsaved. Once it's saved it's a file like any other: the title becomes the file's name, later saves write it in place, and it live-reloads. In the app it's also added to **File > Open Recent**. An existing file is only replaced if you say so when the Save panel asks.
+
+Closing an untitled document you've typed in asks first, as for any unsaved changes; one you never typed in closes without asking. You can have several untitled documents open at once.
+
 ## Save
 
 Press <kbd>⌘S</kbd> (<kbd>Ctrl+S</kbd>) or click **Save**. Save is only enabled while there's something to save.

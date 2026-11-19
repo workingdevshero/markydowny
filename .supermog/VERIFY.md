@@ -167,6 +167,36 @@ changes put a dot before the title in the top bar and the page title ("• live.
   their info strings. Link text, alt text and code do. It isn't shown at phone width, where the
   top bar has no room for it.
 
+### New file
+
+The drop zone has a quiet **New file** (`#newFileButton`) beside *Choose File*. It opens an empty
+document titled *Untitled* straight in the editor (no file behind it yet).
+
+- **Website, Chromium.** The first save calls `showSaveFilePicker()`, which a headless round
+  can't drive, so stand it in with an Origin Private File System handle before pressing it:
+  `window.showSaveFilePicker = async (options) => { window.lastSaveOptions = options; return (await navigator.storage.getDirectory()).getFileHandle('new.md', { create: true }); }`.
+  Press *New file*, type, press Ctrl+S (the button reads *Save*). Read the file back
+  (`await (await handle.getFile()).text()` with a handle to `new.md`): exactly what was typed.
+  `lastSaveOptions.suggestedName` is `Untitled.md`. The title becomes `new.md`, the dot clears,
+  and a second Ctrl+S after more typing writes the same file without calling the picker again
+  (count calls in the stand-in). Writing the file from `browser_evaluate` afterwards live-reloads
+  it as in *Live reload*. A stand-in that throws `new DOMException('', 'AbortError')` is a
+  cancel: the document stays *Untitled* and unsaved, with no alert.
+- **Website, without the API.** With `window.showSaveFilePicker` deleted by an init script, the
+  button reads *Download* and saving downloads `Untitled.md`.
+- **Unsaved-changes guard.** Typing in an untitled document makes reloading the tab ask
+  (`beforeunload`); an untitled document never typed in doesn't. *Open another* asks the same way.
+- **Linux app.** File > New (Ctrl+N) is the File menu's first item. From the drop zone it opens
+  the document in that window; from an open document, in a new window titled *Untitled*. Ctrl+S
+  shows the GTK Save dialog, filtered to markdown, named `Untitled.md`, in the folder of the last
+  opened file. Pick a name: the file holds exactly what was typed and nothing else appears in
+  the folder, the window title becomes the file's name, the file is in File > Open Recent, and a
+  second save shows no dialog. A name typed without an extension gets `.md`. Cancelling the
+  dialog keeps the document open and unsaved; closing the window then asks first. Two untitled
+  windows can be open at once.
+- **macOS app.** The same, with ⌘N opening a new tab (above New Tab in the File menu) and the
+  Save panel's own *Replace* prompt the only way an existing file is replaced.
+
 ### Formatting toolbar
 
 While editing, a toolbar sticks under the top bar (`role="toolbar"`, `#formatToolbar`): a block

@@ -150,11 +150,14 @@ test('CodeMirror is loaded only when editing starts, never by the page itself', 
     assert.doesNotMatch(html, /format\.js/, 'index.html must not load the toolbar\'s commands');
     const loadScript = app.match(/function loadScript[\s\S]*?\n {4}}\n/)[0];
     assert.match(loadScript, /script\.src = src/);
-    // Only startEditing loads it.
+    // Only starting to edit loads it: startEditing, and a new document, which opens in the
+    // editor (and loads it first, before anything unsaved is let go).
     const callers = [...app.matchAll(/(?<!function )loadCodeMirror\(\)/g)];
-    assert.equal(callers.length, 1);
+    assert.equal(callers.length, 2);
     const start = app.match(/async function startEditing[\s\S]*?\n {4}}\n/)[0];
     assert.match(start, /await loadCodeMirror\(\)/);
+    const newDocument = app.match(/async function newDocument[\s\S]*?\n {4}}\n/)[0];
+    assert.match(newDocument, /await loadCodeMirror\(\)[\s\S]*await startEditing\(\)/);
 });
 
 test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
@@ -282,4 +285,48 @@ test('desktop images are picked by the app, which offers to copy them next to th
     assert.match(app, /core\.relativePath\(source\.dir, picked\)/);
     const lib = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
     assert.match(lib, /generate_handler!\[[\s\S]*?\bchoose_image,/);
+});
+
+test('the drop zone offers New file beside Choose File, which starts an untitled document in the editor', () => {
+    const zone = html.match(/<div class="drop-zone" id="dropZone"[\s\S]*?<p class="drop-hint">/)[0];
+    const actions = zone.match(/<div class="drop-actions">([\s\S]*?)<\/div>/);
+    assert.ok(actions, 'the drop zone has its actions together');
+    assert.ok(actions[1].indexOf('id="uploadButton"') < actions[1].indexOf('id="newFileButton"'), 'New file comes after Choose File');
+    assert.match(actions[1], /<button class="btn btn-ghost new-file-button" id="newFileButton" type="button"[^>]*>[\s\S]*?New file\s*<\/button>/);
+    const newDocument = app.match(/async function newDocument[\s\S]*?\n {4}}\n/)[0];
+    // Unsaved changes are asked about before anything is replaced.
+    assert.ok(newDocument.indexOf('await loadCodeMirror()') < newDocument.indexOf('await leaveEditor()'), 'the editor loads (and can fail) before unsaved changes go');
+    assert.ok(newDocument.indexOf('await leaveEditor()') < newDocument.indexOf('renderMarkdown('));
+    assert.match(newDocument, /kind: 'untitled'/);
+    assert.match(newDocument, /await startEditing\(\)/);
+    // File > New reaches the page as a pending untitled document.
+    assert.match(app, /if \(pending\.untitled\) \{\s*\/\/ File > New\.[^\n]*\s*if \(!\(await newDocument\(\)\) && !currentSource\) showDropZone\(\);/);
+});
+
+test('a new document\'s first save goes through the Save panel or showSaveFilePicker, then it is that file', () => {
+    const save = app.match(/async function saveNewDocument[\s\S]*?\n {4}}\n/)[0];
+    assert.match(save, /invoke\('save_new_document', \{ content \}\)/);
+    assert.match(save, /window\.showSaveFilePicker\(\{ suggestedName: core\.UNTITLED_FILE_NAME, types: SAVE_TYPES \}\)/);
+    // Cancelling the panel keeps the document untitled; the picker's cancel is an AbortError,
+    // which writeSession ignores.
+    assert.match(save, /if \(!doc\) return;/);
+    const write = app.match(/async function writeSession[\s\S]*?\n {4}}\n/)[0];
+    assert.match(write, /if \(mode === 'saveAs'\) \{\s*await saveNewDocument\(session, source, content\);/);
+    assert.match(write, /err\.name === 'AbortError'/);
+    // Afterwards it saves in place and live-reloads.
+    assert.match(save, /kind: 'desktop', dir: doc\.dir, title: doc\.name, path: doc\.path/);
+    assert.match(save, /await watchDesktopDocument\(doc\.path\)/);
+    assert.match(save, /kind: 'file', dir: '', title: handle\.name, handle/);
+    assert.match(save, /startWebWatch\(handle, /);
+    const lib = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+    assert.match(lib, /generate_handler!\[[\s\S]*?\bsave_new_document,/);
+    // The app's File > New, above New Tab.
+    assert.match(lib, /MenuItemBuilder::with_id\(NEW_DOCUMENT_MENU_ID, "New"\)\s*\.accelerator\("CmdOrCtrl\+N"\)/);
+    assert.match(lib, /submenu\.prepend\(&new_tab\)\?;\s*submenu\.prepend\(&new_document\)\?;/);
+    assert.match(lib, /&\[\s*&new_document,\s*&open,/, 'and first in the Linux File menu');
+});
+
+test('the shortcuts page lists New file', () => {
+    const shortcuts = fs.readFileSync(path.join(root, 'docs', 'shortcuts.md'), 'utf8');
+    assert.match(shortcuts, /\| New file \(app\) \| <kbd>⌘N<\/kbd> \| <kbd>Ctrl\+N<\/kbd> \|/);
 });

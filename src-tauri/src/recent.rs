@@ -48,6 +48,15 @@ impl RecentList {
         self.paths.clear();
     }
 
+    /// Where a new document's Save panel starts: the folder of the newest entry that's still
+    /// there (a folder entry is its own folder).
+    pub fn last_folder(&self) -> Option<PathBuf> {
+        self.paths.iter().find_map(|path| {
+            let folder = if path.is_dir() { path } else { path.parent()? };
+            (path.exists() && folder.is_dir()).then(|| folder.to_path_buf())
+        })
+    }
+
     /// Menu titles, in list order: each entry's name, plus as many parent folders as it takes
     /// to tell apart entries that share a name (`README.md — markydowny`), as tab titles do.
     pub fn titles(&self) -> Vec<(PathBuf, String)> {
@@ -223,5 +232,27 @@ mod tests {
         list.clear();
         assert!(list.paths().is_empty());
         assert!(list.titles().is_empty());
+    }
+
+    #[test]
+    fn the_save_panel_starts_in_the_folder_of_the_last_opened_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let file = docs.join("a.md");
+        std::fs::write(&file, "a").unwrap();
+        let folder = tmp.path().join("notes");
+        std::fs::create_dir(&folder).unwrap();
+
+        let mut list = RecentList::default();
+        assert_eq!(list.last_folder(), None);
+        list.add(&folder);
+        list.add(&file);
+        assert_eq!(list.last_folder(), Some(canonical(&docs)));
+
+        // A file that's gone is skipped; a folder entry is its own folder.
+        list.add(&tmp.path().join("gone.md"));
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(list.last_folder(), Some(canonical(&folder)));
     }
 }

@@ -408,3 +408,22 @@ test('the editor\'s focus ring stands off the text, on the editor rather than th
     }
     assert.ok(checked >= 6, 'the web, fullscreen, phone, desktop and split paddings');
 });
+
+test('saveAction: a new document asks where to save it first, in the app and where the browser can', () => {
+    const untitled = { kind: 'untitled', dir: '', title: core.UNTITLED_TITLE };
+    assert.equal(core.saveAction(untitled, { isDesktop: true, savePicker: false }), 'saveAs');
+    assert.equal(core.saveAction(untitled, { isDesktop: false, savePicker: true }), 'saveAs');
+    // Safari and Firefox: Download, as the existing fallback.
+    assert.equal(core.saveAction(untitled, { isDesktop: false, savePicker: false }), 'download');
+    assert.equal(core.UNTITLED_FILE_NAME, 'Untitled.md');
+});
+
+test('saveAction: once saved, a document saves in place like any opened file', () => {
+    const handle = { createWritable() {} };
+    assert.equal(core.saveAction({ kind: 'desktop', path: '/a.md' }, { isDesktop: true, savePicker: false }), 'save');
+    assert.equal(core.saveAction({ kind: 'file', handle }, { isDesktop: false, savePicker: true }), 'save');
+    // A file without a writable handle (dropped in Safari, or from a folder) downloads.
+    assert.equal(core.saveAction({ kind: 'file' }, { isDesktop: false, savePicker: true }), 'download');
+    assert.equal(core.saveAction({ kind: 'folder' }, { isDesktop: false, savePicker: true }), 'download');
+    assert.equal(core.saveAction(null, { isDesktop: false, savePicker: true }), 'download');
+});

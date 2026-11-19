@@ -19,6 +19,7 @@
     const backButton = $('backButton');
     const fileInput = $('fileInput');
     const uploadButton = $('uploadButton');
+    const newFileButton = $('newFileButton');
     const openFileButton = $('openFileButton');
     const fullscreenButton = $('fullscreenButton');
     const docTitle = $('docTitle');
@@ -97,7 +98,8 @@
     let blobUrls = [];
     // Rich mode's folder images: File -> its URL in blobUrls.
     let imageBlobUrls = new Map();
-    // What is on screen: { kind: 'file' | 'folder' | 'desktop', dir, title, path?, markdown }
+    // What is on screen: { kind: 'file' | 'folder' | 'desktop' | 'untitled', dir, title, path?,
+    // handle?, markdown }. 'untitled' is a new document not yet saved anywhere.
     let currentSource = null;
     // Bumped by every render, so a slow render can't overwrite a newer one.
     let renderSeq = 0;
@@ -184,6 +186,10 @@
     uploadButton.addEventListener('click', (e) => {
         e.stopPropagation();
         chooseFile();
+    });
+    newFileButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        newDocument();
     });
     openFileButton.addEventListener('click', () => {
         // Straight to the picker while the click still counts as the user's, unless there are
@@ -318,6 +324,37 @@
         document.body.classList.remove('dragover');
     }
 
+    /**
+     * File > New and the drop zone's New file: an empty, untitled document, straight in the
+     * editor. Its first save asks where to put it (writeSession). Resolves to whether it opened.
+     */
+    async function newDocument() {
+        // The editor loads before anything unsaved is let go: loading it is what can fail.
+        try {
+            await loadCodeMirror();
+        } catch (err) {
+            console.error('Could not start editing:', err);
+            alert(`Could not open the editor: ${err && err.message ? err.message : err}`);
+            return false;
+        }
+        if (!(await leaveEditor())) return false;
+        closeFileSelector();
+        stopWebWatch();
+        setLive(false);
+        folderFiles.clear();
+        if (isDesktop) {
+            // A watch still starting for this window is no longer wanted.
+            watchGeneration++;
+            desktopFolder = null;
+            renderWatchFolderButton();
+        }
+        const source = { kind: 'untitled', dir: '', title: core.UNTITLED_TITLE };
+        await renderMarkdown('', source);
+        if (currentSource !== source) return true;
+        await startEditing();
+        return true;
+    }
+
     function chooseFile() {
         if (isDesktop) {
             invoke('show_open_dialog').catch(console.error);
@@ -374,6 +411,11 @@
         try {
             const pending = await invoke('take_pending_document');
             if (!pending) return;
+            if (pending.untitled) {
+                // File > New. If it can't start, the window goes back to counting as idle.
+                if (!(await newDocument()) && !currentSource) showDropZone();
+                return;
+            }
             if (pending.folder) {
                 // A folder opened from Finder or `open -a`: offer its files, and watching it.
                 // With none to offer, go back to the drop zone so the window counts as idle.
@@ -757,6 +799,11 @@
     const PICKER_TYPES = [{
         description: 'Markdown or text',
         accept: { 'text/markdown': core.MARKDOWN_EXTENSIONS, 'text/plain': ['.txt'] },
+    }];
+    // A new document's save: markdown only.
+    const SAVE_TYPES = [{
+        description: 'Markdown',
+        accept: { 'text/markdown': core.MARKDOWN_EXTENSIONS },
     }];
 
     async function pickFileHandle() {
@@ -1959,11 +2006,9 @@
         return separator === '\r\n' ? pos + state.doc.lineAt(pos).number - 1 : pos;
     }
 
-    /** How the editor saves: in place (desktop, or a writable file handle), or as a download. */
+    /** How the editor saves: in place, asking where first (a new document), or as a download. */
     function saveMode() {
-        if (isDesktop) return 'save';
-        const handle = currentSource && currentSource.handle;
-        return handle && typeof handle.createWritable === 'function' ? 'save' : 'download';
+        return core.saveAction(currentSource, { isDesktop, savePicker: typeof window.showSaveFilePicker === 'function' });
     }
 
     async function saveDocument() {
@@ -1987,6 +2032,10 @@
         let writable = null;
         try {
             const mode = saveMode();
+            if (mode === 'saveAs') {
+                await saveNewDocument(session, source, content);
+                return;
+            }
             if (isDesktop) {
                 await invoke('write_document', { path: source.path, base, content });
             } else if (mode === 'save') {
@@ -2010,7 +2059,7 @@
                 writable = null;
                 await closing.close();
             } else {
-                downloadText(content, source.title);
+                downloadText(content, source.kind === 'untitled' ? core.UNTITLED_FILE_NAME : source.title);
             }
             if (editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
         } catch (err) {
@@ -2025,6 +2074,45 @@
             // Not closed: drop what was written, and the lock on the file with it.
             if (writable) writable.abort().catch(() => {});
         }
+    }
+
+    /**
+     * The first save of an untitled document: the Save panel (desktop) or showSaveFilePicker
+     * (web) says where, and from then on it's that file: titled by it, saved in place and live
+     * reloaded. Cancelling the panel leaves it untitled and unsaved. Errors are writeSession's.
+     */
+    async function saveNewDocument(session, source, content) {
+        if (isDesktop) {
+            const doc = await invoke('save_new_document', { content });
+            if (!doc) return;
+            Object.assign(source, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
+            savedAs(session, source, content);
+            if (currentSource !== source) return;
+            setLive(true);
+            await watchDesktopDocument(doc.path);
+            return;
+        }
+        // Called before anything is awaited, while the key press or click still counts as the
+        // reader's. The browser asks before replacing an existing file.
+        const handle = await window.showSaveFilePicker({ suggestedName: core.UNTITLED_FILE_NAME, types: SAVE_TYPES });
+        const writable = await handle.createWritable();
+        try {
+            await writable.write(content);
+            await writable.close();
+        } catch (err) {
+            writable.abort().catch(() => {});
+            throw err;
+        }
+        Object.assign(source, { kind: 'file', dir: '', title: handle.name, handle });
+        savedAs(session, source, content);
+        if (currentSource !== source) return;
+        startWebWatch(handle, await handle.getFile(), webWatch.observer);
+    }
+
+    /** An untitled document was saved as `source`'s file. */
+    function savedAs(session, source, content) {
+        if (editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
+        if (currentSource === source) showTitle(source.title);
     }
 
     /** Web without a writable handle: saves a copy under the original file name. */
