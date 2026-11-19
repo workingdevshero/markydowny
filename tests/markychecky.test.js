@@ -503,6 +503,66 @@ for (const engine of engines) {
         assert.doesNotMatch(read(box), /notify s3 /);
     });
 
+    test(`[${engine.name}] the main agent and a subagent with dialogs open at once each have an item, answered on its own`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        const ask = agent => ({ ...notify('s1', 'permission_prompt', 'Claude needs your permission to use Bash'), ...(agent && { agent_id: agent }) });
+        const batch = agent => ({ session_id: 's1', hook_event_name: 'PostToolBatch', ...(agent && { agent_id: agent }) });
+        for (const [first, second] of [['', 'sub-1'], ['sub-1', '']]) {
+            hook(engine, box, 'notify', ask(first));
+            hook(engine, box, 'notify', ask(second));
+            let items = waitingSection(read(box));
+            assert.match(items, /<!-- markychecky:notify s1 at=\S+ -->/);
+            assert.match(items, /<!-- markychecky:notify s1 agent=sub-1 at=\S+ -->/);
+            // The earlier dialog is answered first: only its item goes.
+            hook(engine, box, 'respond', batch(first));
+            items = waitingSection(read(box));
+            assert.equal((items.match(/markychecky:notify s1 /g) || []).length, 1, items);
+            assert.match(items, new RegExp(`notify s1 ${second ? `agent=${second} ` : ''}at=`));
+            hook(engine, box, 'respond', batch(second));
+            assert.doesNotMatch(read(box), /markychecky:notify/);
+        }
+        // A prompt answers the main agent's dialog, but not a subagent's, which its batch answers.
+        hook(engine, box, 'notify', ask(''));
+        hook(engine, box, 'notify', ask('sub-1'));
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.match(read(box), /notify s1 agent=sub-1 /);
+        assert.doesNotMatch(read(box), /notify s1 at=/);
+        // Ending the session clears every agent's item.
+        hook(engine, box, 'notify', ask(''));
+        hook(engine, box, 'end', { session_id: 's1' });
+        assert.doesNotMatch(read(box), /markychecky:notify/);
+    });
+
+    test(`[${engine.name}] a respond doesn't clear a notification raised after it started`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        // As if the notification took the lock after the prompt was submitted but before its
+        // respond did: its time is later than when the respond started.
+        const flagPath = path.join(box.env.CLAUDE_PLUGIN_DATA, 'sessions', 's1.notify');
+        const flag = JSON.parse(fs.readFileSync(flagPath, 'utf8'));
+        flag[''].at = '2999-01-01T00:00:00+00:00';
+        fs.writeFileSync(flagPath, JSON.stringify(flag));
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.match(read(box), /notify s1 /);
+        hook(engine, box, 'end', { session_id: 's1' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+    });
+
+    test(`[${engine.name}] writes also wait on the lock 0.3 took in the data folder, which sessions from before the update hold`, { skip: engine.skip || !hasPython }, async () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('s1', 1, 'One'));
+        const name = `board-${require('node:crypto').createHash('sha1').update(box.board).digest('hex').slice(0, 16)}.lock`;
+        const oldLock = path.join(box.env.CLAUDE_PLUGIN_DATA, name);
+        assert.ok(fs.existsSync(oldLock), `no ${name} in the data folder`);
+        // An old session holds it for a moment.
+        const holder = spawn('python3', ['-c', 'import fcntl, sys, time\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("held", flush=True)\ntime.sleep(0.8)', oldLock]);
+        await new Promise(resolve => holder.stdout.once('data', resolve));
+        const started = Date.now();
+        await hookAsync(engine, box, 'task', create('s1', 2, 'Two'));
+        assert.ok(Date.now() - started >= 500, 'the write went ahead while an old session held its lock');
+        assert.match(section(read(box), 's1'), /- \[ \] Two\n/);
+    });
+
     test(`[${engine.name}] items from waiting add outlive their session and idle_hours; old notifications don't`, { skip: engine.skip }, () => {
         const box = sandbox();
         hook(engine, box, 'task', create('old', 1, 'Old work'));
@@ -719,6 +779,7 @@ test('both engines write byte-identical boards for the same events', both, () =>
         hook(engine, box, 'notify', { cwd, ...notify('s2', 'permission_prompt', 'Claude needs your permission to use mcp__x-y.') });
         hook(engine, box, 'notify', { cwd, ...notify('n1', 'idle_prompt', 'Claude is waiting for your input') });
         hook(engine, box, 'notify', { cwd, ...notify('n2', 'elicitation_dialog', 'Pick one') });
+        hook(engine, box, 'notify', { cwd, ...notify('n2', 'permission_prompt', 'Claude needs your permission to use Read'), agent_id: 'sub 1/é' });
         hook(engine, box, 'notify', { cwd, ...notify('n3', 'agent_completed', 'Done') });
         hook(engine, box, 'respond', { session_id: 'n1', hook_event_name: 'UserPromptSubmit' });
         const listed = waiting(engine, box, 'list').stdout;
@@ -731,6 +792,7 @@ test('both engines write byte-identical boards for the same events', both, () =>
     assert.ok(boards[0].indexOf('Arabic one') < boards[0].indexOf('Seven'), '١ sorts as 1');
     assert.match(boards[0], /- by hand  \n- widgets: /, 'the commands\' items follow a person\'s line');
     assert.match(boards[0], /markychecky:notify n2 at=T -->/);
+    assert.match(boards[0], /markychecky:notify n2 agent=sub1é at=T -->/);
     assert.equal(boards[1], boards[0]);
 });
 

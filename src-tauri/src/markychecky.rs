@@ -150,16 +150,30 @@ fn run(args: &[String]) -> Result<()> {
     // runs after every batch of tools, so it checks this before it takes the lock, and does
     // nothing the rest of the time.
     let flag_path = format!("{data}/sessions/{session_id}.notify");
+    // The subagent the event comes from, or "" for the session's main agent.
+    let agent = self::session_id(event.get("agent_id"));
 
     if command == "respond" {
-        match read_flag(&flag_path) {
-            Some(flag) if answers(event, &flag) => {}
-            _ => return Ok(()),
+        let started = now_micros();
+        if answered(event, read_flag(&flag_path).as_ref(), started).is_empty() {
+            return Ok(());
         }
-        write_board(&board_path, |board| {
-            let _ = fs::remove_file(&flag_path);
-            Ok(without_notify(board, &session_id))
-        })?;
+        write_board(
+            &board_path,
+            |board| {
+                // Again under the lock: a notification may have come in since, which this
+                // doesn't answer.
+                let mut flag = read_flag(&flag_path).unwrap_or_default();
+                let done = answered(event, Some(&flag), started);
+                if done.is_empty() {
+                    return Ok(board.to_string());
+                }
+                flag.retain(|agent, _| !done.contains(agent));
+                save_flag(&flag_path, &flag)?;
+                Ok(without_notify(board, &session_id, Some(&done)))
+            },
+            Some(&data),
+        )?;
         return Ok(());
     }
 
@@ -172,30 +186,42 @@ fn run(args: &[String]) -> Result<()> {
         }
         let cwd = event_cwd(event.get("cwd"))?;
         let now = now_micros();
+        let at = iso_utc(now);
+        let agent_attr = if agent.is_empty() {
+            String::new()
+        } else {
+            format!(" agent={agent}")
+        };
         let line = format!(
-            "- {}: {text} {NOTIFY}{session_id} at={} -->",
+            "- {}: {text} {NOTIFY}{session_id}{agent_attr} at={at} -->",
             one_line(&place(&cwd)),
-            iso_utc(now)
         );
-        let empty = Value::String(String::new());
-        let agent = or(event.get("agent_id"), Some(&empty)).unwrap().clone();
         let mut opening = false;
-        let created = write_board(&board_path, |board| {
-            let mut flag = Map::new();
-            flag.insert("waits".into(), Value::String(waits.into()));
-            flag.insert("agent".into(), agent);
-            fs::write(&flag_path, Value::Object(flag).to_string()).map_err(|e| e.to_string())?;
-            let mut state = load_state(&state_path);
-            if first_open(&mut state) {
-                save_state(&state_path, &state)?;
-                opening = true;
-            }
-            let board = edit_waiting(&without_notify(board, &session_id), |mut lines| {
-                lines.push(line);
-                lines
-            });
-            sweep(&board, idle_hours, &session_id, now)
-        })?;
+        let created = write_board(
+            &board_path,
+            |board| {
+                // The main agent and each subagent have an item of their own: their dialogs can
+                // be open at once, and each is answered on its own.
+                let mut flag = read_flag(&flag_path).unwrap_or_default();
+                let mut item = Map::new();
+                item.insert("waits".into(), Value::String(waits.into()));
+                item.insert("at".into(), Value::String(at.clone()));
+                flag.insert(agent.clone(), Value::Object(item));
+                save_flag(&flag_path, &flag)?;
+                let mut state = load_state(&state_path);
+                if first_open(&mut state) {
+                    save_state(&state_path, &state)?;
+                    opening = true;
+                }
+                let board = without_notify(board, &session_id, Some(&[agent.clone()]));
+                let board = edit_waiting(&board, |mut lines| {
+                    lines.push(line);
+                    lines
+                });
+                sweep(&board, idle_hours, &session_id, now)
+            },
+            Some(&data),
+        )?;
         if created || opening {
             open_in_markydowny(&board_path, None);
         }
@@ -213,41 +239,45 @@ fn run(args: &[String]) -> Result<()> {
         None
     };
     let mut first = false;
-    write_board(&board_path, |board| {
-        // Under the board's lock: hooks for one session run at once when several task tools
-        // fire in a turn, and each must fold its event into the state the last one saved.
-        let mut state = load_state(&state_path);
-        let now = now_micros();
-        let mut board = board.to_string();
-        let ended = if let Some((place, repo)) = &place_and_repo {
-            if !apply_event(&mut state, event)? {
-                return Ok(board);
+    write_board(
+        &board_path,
+        |board| {
+            // Under the board's lock: hooks for one session run at once when several task tools
+            // fire in a turn, and each must fold its event into the state the last one saved.
+            let mut state = load_state(&state_path);
+            let now = now_micros();
+            let mut board = board.to_string();
+            let ended = if let Some((place, repo)) = &place_and_repo {
+                if !apply_event(&mut state, event)? {
+                    return Ok(board);
+                }
+                state.insert("place".into(), Value::String(place.clone()));
+                state.insert("repo".into(), Value::String(repo.clone()));
+                state.remove("ended");
+                None
+            } else {
+                let _ = fs::remove_file(&flag_path);
+                board = without_notify(&board, &session_id, None);
+                if !truthy(state.get("wrote")) {
+                    return Ok(board); // never wrote a section
+                }
+                state.insert("ended".into(), Value::String(iso_utc(now)));
+                Some(now)
+            };
+            if first_open(&mut state) {
+                first = true;
             }
-            state.insert("place".into(), Value::String(place.clone()));
-            state.insert("repo".into(), Value::String(repo.clone()));
-            state.remove("ended");
-            None
-        } else {
-            let _ = fs::remove_file(&flag_path);
-            board = without_notify(&board, &session_id);
-            if !truthy(state.get("wrote")) {
-                return Ok(board); // never wrote a section
+            state.insert("wrote".into(), Value::Bool(true));
+            save_state(&state_path, &state)?;
+            let section = render_section(&session_id, &state, ended, local_hh_mm)?;
+            let mut board = replace_section(&board, &session_id, &section);
+            if waiting {
+                board = ensure_waiting(&board);
             }
-            state.insert("ended".into(), Value::String(iso_utc(now)));
-            Some(now)
-        };
-        if first_open(&mut state) {
-            first = true;
-        }
-        state.insert("wrote".into(), Value::Bool(true));
-        save_state(&state_path, &state)?;
-        let section = render_section(&session_id, &state, ended, local_hh_mm)?;
-        let mut board = replace_section(&board, &session_id, &section);
-        if waiting {
-            board = ensure_waiting(&board);
-        }
-        sweep(&board, idle_hours, &session_id, now)
-    })?;
+            sweep(&board, idle_hours, &session_id, now)
+        },
+        Some(&data),
+    )?;
     if first {
         open_in_markydowny(&board_path, None);
     }
@@ -1013,7 +1043,7 @@ fn sweep(board: &str, idle_hours: f64, keep: &str, now: i64) -> Result<String> {
     Ok(keep_lines(&out, |line| {
         !notify_markers(line)
             .first()
-            .and_then(|&(_, _, at)| parse_iso(at))
+            .and_then(|&(_, _, _, at)| parse_iso(at))
             .is_some_and(|at| at < cutoff)
     }))
 }
@@ -1205,20 +1235,29 @@ fn value_then_close(line: &str, from: usize) -> Option<(&str, usize)> {
 }
 
 /// Each notification marker in a line, in order, as `NOTIFY_RE` finds them:
-/// `<!-- markychecky:notify (?P<session>[\w.-]+) at=(?P<at>\S+) -->`. Gives (start, session, at).
-fn notify_markers(line: &str) -> Vec<(usize, &str, &str)> {
+/// `<!-- markychecky:notify (?P<session>[\w.-]+)(?: agent=(?P<agent>[\w.-]+))? at=(?P<at>\S+) -->`.
+/// Gives (start, session, agent, at), with "" for no agent.
+fn notify_markers(line: &str) -> Vec<(usize, &str, &str, &str)> {
+    let id_char = |c: char| is_word(c) || c == '.' || c == '-';
+    // ` at=(?P<at>\S+) -->` at `from`.
+    let time_at = |from: usize| {
+        line[from..]
+            .strip_prefix(" at=")
+            .and_then(|_| value_then_close(line, from + 4))
+            .map(|(time, _)| time)
+    };
     let mut found = Vec::new();
     for (at, _) in line.match_indices(NOTIFY) {
-        let Some((session, after)) =
-            marker_at(line, at, NOTIFY, |c| is_word(c) || c == '.' || c == '-')
-        else {
+        let Some((session, after)) = marker_at(line, at, NOTIFY, id_char) else {
             continue;
         };
-        let Some(time_at) = line[after..].strip_prefix(" at=").map(|_| after + 4) else {
-            continue;
-        };
-        if let Some((time, _)) = value_then_close(line, time_at) {
-            found.push((at, session, time));
+        // The optional group first, as the regex tries it, then without it.
+        let with_agent = marker_at(line, after, " agent=", id_char)
+            .and_then(|(agent, end)| Some((agent, time_at(end)?)));
+        if let Some((agent, time)) = with_agent {
+            found.push((at, session, agent, time));
+        } else if let Some(time) = time_at(after) {
+            found.push((at, session, "", time));
         }
     }
     found
@@ -1247,12 +1286,17 @@ fn keep_lines(board: &str, mut keep: impl FnMut(&str) -> bool) -> String {
         .collect()
 }
 
-/// The board without this session's notification item.
-fn without_notify(board: &str, session_id: &str) -> String {
+/// The board without this session's notification items, or only those of the given agents
+/// ("" for the session's main agent).
+fn without_notify(board: &str, session_id: &str, agents: Option<&[String]>) -> String {
     keep_lines(board, |line| {
+        // As `re.sub` does, only the line's first marker decides.
         !notify_markers(line)
-            .iter()
-            .any(|&(_, session, _)| session == session_id)
+            .first()
+            .is_some_and(|&(_, session, agent, _)| {
+                session == session_id
+                    && agents.is_none_or(|agents| agents.iter().any(|a| a == agent))
+            })
     })
 }
 
@@ -1301,29 +1345,61 @@ fn notification_text(event: &Map<String, Value>) -> Result<Option<(String, &'sta
     Ok(Some((text, waits)))
 }
 
-/// What the session's notification item waits on, as notify saved it, or None without one.
+/// The session's notification items, as notify saved them: what each agent's waits on and when
+/// it was raised. None without any.
 fn read_flag(path: &str) -> Option<Map<String, Value>> {
     let bytes = fs::read(path).ok()?;
     let text = String::from_utf8(bytes).unwrap_or_default();
     let text = if text.is_empty() { "{}" } else { &text };
     match serde_json::from_str::<Value>(text) {
-        Ok(Value::Object(flag)) => Some(flag),
+        Ok(Value::Object(mut flag)) => {
+            flag.retain(|_, item| item.is_object());
+            Some(flag)
+        }
         _ => Some(Map::new()),
     }
 }
 
-/// Whether this respond event answers the notification the flag describes.
-fn answers(event: &Map<String, Value>, flag: &Map<String, Value>) -> bool {
+fn save_flag(path: &str, flag: &Map<String, Value>) -> Result<()> {
+    if flag.is_empty() {
+        let _ = fs::remove_file(path);
+        return Ok(());
+    }
+    fs::write(path, Value::Object(flag.clone()).to_string()).map_err(|e| e.to_string())
+}
+
+/// Whether this respond event, which started at `started`, answers the agent's notification.
+fn answers(event: &Map<String, Value>, agent: &str, item: &Value, started: i64) -> bool {
+    let at = item.get("at").and_then(Value::as_str).and_then(parse_iso);
+    if at.is_some_and(|at| at > started) {
+        return false; // raised after the user answered, so it's a new one
+    }
     let name = event.get("hook_event_name");
-    if !truthy(name) || name.and_then(Value::as_str) == Some("UserPromptSubmit") {
+    if !truthy(name) {
         return true;
     }
-    // A permission dialog holds up its batch, so the batch resolving means it was answered. A
-    // subagent's batch answers only its own dialog: subagents share the session's id.
-    let empty = Value::String(String::new());
-    name.and_then(Value::as_str) == Some("PostToolBatch")
-        && flag.get("waits").and_then(Value::as_str) != Some("prompt")
-        && or(event.get("agent_id"), Some(&empty)) == Some(flag.get("agent").unwrap_or(&empty))
+    let waits = item.get("waits").and_then(Value::as_str);
+    let own = agent == session_id(event.get("agent_id"));
+    match name.and_then(Value::as_str) {
+        // A prompt answers whatever waits on one, and anything the agent it comes from waits on.
+        Some("UserPromptSubmit") => waits == Some("prompt") || own,
+        // A permission dialog holds up its batch, so the batch resolving means it was answered.
+        // A subagent's batch answers only its own dialog: subagents share the session's id.
+        Some("PostToolBatch") => waits != Some("prompt") && own,
+        _ => false,
+    }
+}
+
+fn answered(
+    event: &Map<String, Value>,
+    flag: Option<&Map<String, Value>>,
+    started: i64,
+) -> Vec<String> {
+    flag.into_iter()
+        .flatten()
+        .filter(|(agent, item)| answers(event, agent, item, started))
+        .map(|(agent, _)| agent.clone())
+        .collect()
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1466,7 +1542,7 @@ fn run_waiting(args: &[String]) -> Result<i32> {
         for line in &lines {
             if let Some((start, end, id)) = item_marker(line) {
                 println!("{}{}  (key: {id})", &line[..start], &line[end..]);
-            } else if let Some(&(start, _, _)) = notify_markers(line).first() {
+            } else if let Some(&(start, _, _, _)) = notify_markers(line).first() {
                 println!(
                     "{}  (a notification; it clears itself)",
                     line[..start].trim_end_matches(is_space)
@@ -1530,38 +1606,43 @@ fn run_waiting(args: &[String]) -> Result<i32> {
         // plugin's data folder, which this command only knows from what SessionStart saved.
         let state_path = settings
             .data
+            .as_ref()
             .map(|data| format!("{data}/sessions/{session}.json"));
         let mut opening = false;
         let shown = line[2..line.len() - marker.len() - 1].to_string();
-        let created = write_board(&board, |old| {
-            if let Some(state_path) = &state_path {
-                if std::path::Path::new(dirname(state_path)).is_dir() {
-                    let mut state = load_state(state_path);
-                    if first_open(&mut state) {
-                        save_state(state_path, &state)?;
-                        opening = true;
+        let created = write_board(
+            &board,
+            |old| {
+                if let Some(state_path) = &state_path {
+                    if std::path::Path::new(dirname(state_path)).is_dir() {
+                        let mut state = load_state(state_path);
+                        if first_open(&mut state) {
+                            save_state(state_path, &state)?;
+                            opening = true;
+                        }
                     }
                 }
-            }
-            Ok(edit_waiting(old, |lines| {
-                if lines.iter().any(|old| old.contains(&marker)) {
-                    lines
-                        .into_iter()
-                        .map(|old| {
-                            if old.contains(&marker) {
-                                line.clone()
-                            } else {
-                                old
-                            }
-                        })
-                        .collect()
-                } else {
-                    let mut lines = lines;
-                    lines.push(line.clone());
-                    lines
-                }
-            }))
-        })?;
+                Ok(edit_waiting(old, |lines| {
+                    if lines.iter().any(|old| old.contains(&marker)) {
+                        lines
+                            .into_iter()
+                            .map(|old| {
+                                if old.contains(&marker) {
+                                    line.clone()
+                                } else {
+                                    old
+                                }
+                            })
+                            .collect()
+                    } else {
+                        let mut lines = lines;
+                        lines.push(line.clone());
+                        lines
+                    }
+                }))
+            },
+            settings.data.as_deref(),
+        )?;
         if created || opening {
             open_in_markydowny(&board, Some(settings.open));
         }
@@ -1570,20 +1651,24 @@ fn run_waiting(args: &[String]) -> Result<i32> {
     }
 
     let mut found = false;
-    write_board(&board, |old| {
-        if find_waiting(old).is_none()
-            || !waiting_lines(old).iter().any(|line| line.contains(&marker))
-        {
-            return Ok(old.to_string());
-        }
-        found = true;
-        Ok(edit_waiting(old, |lines| {
-            lines
-                .into_iter()
-                .filter(|line| !line.contains(&marker))
-                .collect()
-        }))
-    })?;
+    write_board(
+        &board,
+        |old| {
+            if find_waiting(old).is_none()
+                || !waiting_lines(old).iter().any(|line| line.contains(&marker))
+            {
+                return Ok(old.to_string());
+            }
+            found = true;
+            Ok(edit_waiting(old, |lines| {
+                lines
+                    .into_iter()
+                    .filter(|line| !line.contains(&marker))
+                    .collect()
+            }))
+        },
+        settings.data.as_deref(),
+    )?;
     if !found {
         eprintln!("No item {item_id} on the board; nothing changed.");
         return Ok(1);
@@ -1628,8 +1713,13 @@ fn board_settings(board: &str) -> Result<BoardSettings> {
 // ----------------------------------------------------------------------------------------------
 
 /// Applies update(board_text) -> new text under a lock, and swaps the file in atomically.
-/// Returns whether the board was created by this call.
-fn write_board(path: &str, update: impl FnOnce(&str) -> Result<String>) -> Result<bool> {
+/// Returns whether the board was created by this call. With the plugin's data folder, it takes
+/// the lock 0.3 took there as well.
+fn write_board(
+    path: &str,
+    update: impl FnOnce(&str) -> Result<String>,
+    data: Option<&str>,
+) -> Result<bool> {
     let path = abspath(&expand_user(path))?;
     let dir = dirname(&path).to_string();
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1643,15 +1733,25 @@ fn write_board(path: &str, update: impl FnOnce(&str) -> Result<String>) -> Resul
         .truncate(true)
         .open(&lock_path)
         .map_err(|e| e.to_string())?;
-    loop {
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0 {
-            break;
+    take_lock(&lock)?;
+    // Sessions started before 0.4 lock a file in the plugin's data folder instead, so this takes
+    // that one too, after its own. Drop it once no 0.3 session can still be running.
+    let _old_lock = match data.filter(|data| fs::metadata(data).is_ok_and(|m| m.is_dir())) {
+        Some(data) => {
+            let old = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(format!(
+                    "{data}/board-{}.lock",
+                    &sha1_hex(path.as_bytes())[..16]
+                ))
+                .map_err(|e| e.to_string())?;
+            take_lock(&old)?;
+            Some(old)
         }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(error.to_string());
-        }
-    }
+        None => None,
+    };
     let (before, created) = match fs::read(&path) {
         Ok(bytes) => {
             let text = String::from_utf8(bytes).map_err(|e| format!("UnicodeDecodeError({e})"))?;
@@ -1682,6 +1782,18 @@ fn write_board(path: &str, update: impl FnOnce(&str) -> Result<String>) -> Resul
         return Err(error.to_string());
     }
     Ok(created)
+}
+
+fn take_lock(lock: &fs::File) -> Result<()> {
+    loop {
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error.to_string());
+        }
+    }
 }
 
 /// `tempfile.mkstemp(prefix=…, dir=…)`: a new file only this process can read, named like
@@ -2043,6 +2155,59 @@ fn parse_float(text: &str) -> Option<f64> {
         return None;
     }
     text.replace('_', "").parse().ok()
+}
+
+// ----------------------------------------------------------------------------------------------
+// SHA-1, for the name of the lock 0.3 took
+// ----------------------------------------------------------------------------------------------
+
+fn sha1_hex(data: &[u8]) -> String {
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let mut message = data.to_vec();
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
+    for block in message.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, word) in block.chunks(4).enumerate() {
+            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, &word) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = t;
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    h.iter().map(|x| format!("{x:08x}")).collect()
 }
 
 #[cfg(test)]
@@ -2482,7 +2647,7 @@ mod tests {
         let board = dir.path().join("board.md");
         let board_s = board.to_str().unwrap();
 
-        assert!(write_board(board_s, |b| Ok(format!("{b}new\n"))).unwrap());
+        assert!(write_board(board_s, |b| Ok(format!("{b}new\n")), None).unwrap());
         assert_eq!(
             fs::metadata(&board).unwrap().permissions().mode() & 0o777,
             0o644
@@ -2491,10 +2656,14 @@ mod tests {
         fs::write(&board, "one\r\ntwo\r").unwrap();
         fs::set_permissions(&board, fs::Permissions::from_mode(0o600)).unwrap();
         let mut seen = String::new();
-        assert!(!write_board(board_s, |b| {
-            seen = b.to_string();
-            Ok(format!("{b}three\n"))
-        })
+        assert!(!write_board(
+            board_s,
+            |b| {
+                seen = b.to_string();
+                Ok(format!("{b}three\n"))
+            },
+            None
+        )
         .unwrap());
         assert_eq!(seen, "one\ntwo\n", "read with universal newlines");
         assert_eq!(fs::read_to_string(&board).unwrap(), "one\ntwo\nthree\n");
@@ -2504,8 +2673,8 @@ mod tests {
         );
 
         // No change, no write; a failed update leaves the board alone.
-        write_board(board_s, |b| Ok(b.to_string())).unwrap();
-        assert!(write_board(board_s, |_| Err("no".into())).is_err());
+        write_board(board_s, |b| Ok(b.to_string()), None).unwrap();
+        assert!(write_board(board_s, |_| Err("no".into()), None).is_err());
         assert_eq!(fs::read_to_string(&board).unwrap(), "one\ntwo\nthree\n");
         let names: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
@@ -2522,10 +2691,14 @@ mod tests {
             .map(|i| {
                 let board = board.clone();
                 std::thread::spawn(move || {
-                    write_board(&board, |b| {
-                        std::thread::sleep(Duration::from_millis(2));
-                        Ok(format!("{b}{i}\n"))
-                    })
+                    write_board(
+                        &board,
+                        |b| {
+                            std::thread::sleep(Duration::from_millis(2));
+                            Ok(format!("{b}{i}\n"))
+                        },
+                        None,
+                    )
                     .unwrap();
                 })
             })
@@ -2672,13 +2845,28 @@ mod tests {
         let found = notify_markers(line);
         assert_eq!(found.len(), 1);
         assert_eq!(
-            (found[0].1, found[0].2),
-            ("s1", "2000-01-01T00:00:00+00:00")
+            (found[0].1, found[0].2, found[0].3),
+            ("s1", "", "2000-01-01T00:00:00+00:00")
         );
         assert!(notify_markers("<!-- markychecky:notify s1 at= -->").is_empty());
+        let found = notify_markers("<!-- markychecky:notify s1 agent=sub-1 at=t -->");
+        assert_eq!((found[0].1, found[0].2, found[0].3), ("s1", "sub-1", "t"));
+        // An `agent=` that isn't followed by ` at=` is read as no marker, as the regex reads it.
+        assert!(notify_markers("<!-- markychecky:notify s1 agent= at=t -->").is_empty());
+        let board = "a\nx <!-- markychecky:notify s1 at=t --> y\n\
+            b <!-- markychecky:notify s10 at=t -->\n\
+            c <!-- markychecky:notify s1 agent=sub at=t -->\n";
         assert_eq!(
-            without_notify("a\nx <!-- markychecky:notify s1 at=t --> y\nb <!-- markychecky:notify s10 at=t -->\n", "s1"),
+            without_notify(board, "s1", None),
             "a\nb <!-- markychecky:notify s10 at=t -->\n"
+        );
+        assert_eq!(
+            without_notify(board, "s1", Some(&["sub".into()])),
+            "a\nx <!-- markychecky:notify s1 at=t --> y\nb <!-- markychecky:notify s10 at=t -->\n"
+        );
+        assert_eq!(
+            without_notify(board, "s1", Some(&["".into()])),
+            "a\nb <!-- markychecky:notify s10 at=t -->\nc <!-- markychecky:notify s1 agent=sub at=t -->\n"
         );
         let line = "- q \t<!-- markychecky:item s1/k --> tail";
         assert_eq!(item_marker(line), Some((3, 35, "s1/k")));
@@ -2725,7 +2913,7 @@ mod tests {
 
     #[test]
     fn a_line_is_answered_by_a_prompt_or_its_own_agents_batch() {
-        let flag = |waits: &str, agent: &str| obj(json!({"waits": waits, "agent": agent}));
+        let item = |waits: &str| json!({"waits": waits, "at": "2000-01-01T00:00:00+00:00"});
         let event = |name: &str, agent: Option<&str>| {
             let mut event = obj(json!({"hook_event_name": name}));
             if let Some(agent) = agent {
@@ -2733,18 +2921,59 @@ mod tests {
             }
             event
         };
-        assert!(answers(&event("UserPromptSubmit", None), &flag("tool", "")));
-        assert!(answers(&event("PostToolBatch", None), &flag("tool", "")));
+        let later = parse_iso("2001-01-01T00:00:00+00:00").unwrap();
+        let answers = |event: &Map<String, Value>, agent: &str, item: &Value| {
+            answers(event, agent, item, later)
+        };
+        assert!(answers(&event("UserPromptSubmit", None), "", &item("tool")));
+        assert!(answers(
+            &event("UserPromptSubmit", None),
+            "sub",
+            &item("prompt")
+        ));
+        assert!(!answers(
+            &event("UserPromptSubmit", None),
+            "sub",
+            &item("tool")
+        ));
+        assert!(answers(&event("PostToolBatch", None), "", &item("tool")));
         assert!(!answers(
             &event("PostToolBatch", Some("sub")),
-            &flag("tool", "")
+            "",
+            &item("tool")
         ));
         assert!(answers(
             &event("PostToolBatch", Some("sub")),
-            &flag("tool", "sub")
+            "sub",
+            &item("tool")
         ));
-        assert!(!answers(&event("PostToolBatch", None), &flag("prompt", "")));
-        assert!(!answers(&event("PostToolUse", None), &flag("tool", "")));
-        assert!(answers(&obj(json!({})), &Map::new()));
+        assert!(!answers(&event("PostToolBatch", None), "", &item("prompt")));
+        assert!(!answers(&event("PostToolUse", None), "", &item("tool")));
+        assert!(answers(&obj(json!({})), "", &json!({})));
+        // A notification raised after the respond event started is a new one.
+        let early = parse_iso("1999-01-01T00:00:00+00:00").unwrap();
+        assert!(!super::answers(
+            &event("UserPromptSubmit", None),
+            "",
+            &item("prompt"),
+            early
+        ));
+        // Each agent's item is answered on its own.
+        let flag = obj(json!({"": item("tool"), "sub": item("tool"), "idle": item("prompt")}));
+        assert_eq!(
+            answered(&event("PostToolBatch", Some("sub")), Some(&flag), later),
+            vec!["sub".to_string()]
+        );
+        assert_eq!(
+            answered(&event("UserPromptSubmit", None), Some(&flag), later),
+            vec!["".to_string(), "idle".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_lock_0_3_took_is_named_as_it_named_it() {
+        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(&sha1_hex(b"/tmp/mcq/board.md")[..16], "db16c49a5ed44a30");
     }
 }

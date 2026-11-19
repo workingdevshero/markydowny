@@ -105,6 +105,6 @@ Problems are logged to `markychecky.log` in the plugin's data folder. A hook nev
 ## Notes
 
 - No section for a session? It probably has no task tools: see step 2 of [Or step by step](#or-step-by-step). Headless runs (`claude -p`) need the same setting.
-- The board's lock is a hidden file next to it, `.markychecky.md.lock`.
+- The board's lock is a hidden file next to it, `.markychecky.md.lock`. For now, writes also take the lock 0.3 kept in the plugin's data folder, so sessions started before the update don't write at the same time as newer ones.
 - Each session's start also saves the `waiting` and `open` settings next to the board, in `.markychecky.md.settings.json`, for the `waiting` commands, which run without the plugin's settings.
 - The board is plain markdown, so any viewer works. Markydowny is the one that reloads it live.

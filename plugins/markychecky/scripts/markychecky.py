@@ -28,8 +28,8 @@ updates, and anything a person writes outside the sections is kept as it is.
 "Waiting on you" is the board's one shared section, a heading at the top. markychecky adds the
 heading when the board has none, and only ever edits lines that end in its own hidden marker:
 `<!-- markychecky:item <session>/<key> -->` from `waiting add`, which stays until it's removed,
-and `<!-- markychecky:notify <session> at=<time> -->` from a notification, which goes when the
-session responds or ends. Lines a person writes there are never changed.
+and `<!-- markychecky:notify <session> at=<time> -->` from a notification (with `agent=<id>`
+before `at=` for a subagent's), which goes when the session responds or ends. Lines a person writes there are never changed.
 
 Settings come from the plugin's options (CLAUDE_PLUGIN_OPTION_*), or MARKYCHECKY_* for testing:
   FILE        the board's path (default ~/markychecky.md)
@@ -47,6 +47,7 @@ hook exits 0.
 
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -68,8 +69,10 @@ WAITING_HEADING = "## Waiting on you"
 # The heading may be any level, and has no other text.
 WAITING_RE = re.compile(r"^(?P<level>#{1,6})[ \t]+waiting on you[ \t]*#*[ \t]*$", re.I | re.M)
 ITEM = "<!-- markychecky:item {id} -->"
-NOTIFY = "<!-- markychecky:notify {session} at={at} -->"
-NOTIFY_RE = re.compile(r"<!-- markychecky:notify (?P<session>[\w.-]+) at=(?P<at>\S+) -->")
+NOTIFY = "<!-- markychecky:notify {session}{agent} at={at} -->"
+NOTIFY_RE = re.compile(
+    r"<!-- markychecky:notify (?P<session>[\w.-]+)(?: agent=(?P<agent>[\w.-]+))? at=(?P<at>\S+) -->"
+)
 KEY_RE = re.compile(r"[\w.-]{1,64}")
 
 
@@ -364,11 +367,19 @@ def edit_waiting(board, edit):
     return board[:start] + body + board[end:]
 
 
-def without_notify(board, session_id):
-    """The board without this session's notification item."""
-    return re.sub(
-        r"^.*<!-- markychecky:notify %s at=\S+ -->.*\n?" % re.escape(session_id), "", board, flags=re.M
-    )
+def without_notify(board, session_id, agents=None):
+    """The board without this session's notification items, or only those of the given agents
+    ("" for the session's main agent)."""
+
+    def drop(match):
+        marker = NOTIFY_RE.search(match.group(0))
+        if marker.group("session") != session_id:
+            return match.group(0)
+        if agents is not None and (marker.group("agent") or "") not in agents:
+            return match.group(0)
+        return ""
+
+    return re.sub(r"^.*" + NOTIFY_RE.pattern + r".*\n?", drop, board, flags=re.M)
 
 
 def waiting_lines(board):
@@ -383,16 +394,22 @@ def waiting_lines(board):
 # ----------------------------------------------------------------------------------------------
 
 
-def write_board(path, update):
+def write_board(path, update, data=None):
     """Applies update(board_text) -> new text under a lock, and swaps the file in atomically.
-    Returns whether the board was created by this call."""
+    Returns whether the board was created by this call. With the plugin's data folder, it takes
+    the lock 0.3 took there as well."""
     path = os.path.abspath(os.path.expanduser(path))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     # The lock sits next to the board, not in the plugin's data folder, so the `waiting`
     # commands a session runs itself, which don't get the plugin's environment, take the same one.
     lock_path = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.lock")
-    with open(lock_path, "w") as lock:
+    # Sessions started before 0.4 lock a file in the plugin's data folder instead, so this takes
+    # that one too, after its own. Drop it once no 0.3 session can still be running.
+    legacy = os.path.join(data, f"board-{hashlib.sha1(path.encode()).hexdigest()[:16]}.lock") if data and os.path.isdir(data) else None
+    with open(lock_path, "w") as lock, open(legacy or os.devnull, "w") as old_lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if legacy:
+            fcntl.flock(old_lock, fcntl.LOCK_EX)
         try:
             with open(path, encoding="utf-8") as f:
                 before = f.read()
@@ -514,27 +531,54 @@ def notification_text(event):
     return text, WAITS[kind]
 
 
+def agent_of(event):
+    """The subagent an event comes from, or "" for the session's main agent."""
+    return re.sub(r"[^\w.-]", "", str(event.get("agent_id") or ""))[:64]
+
+
 def read_flag(flag_path):
-    """What the session's notification item waits on, as notify saved it, or None without one."""
+    """The session's notification items, as notify saved them: what each agent's waits on and
+    when it was raised. None without any."""
     try:
         with open(flag_path, encoding="utf-8") as f:
             flag = json.loads(f.read() or "{}")
-        return flag if isinstance(flag, dict) else {}
     except ValueError:
         return {}
     except OSError:
         return None
+    if not isinstance(flag, dict):
+        return {}
+    return {agent: item for agent, item in flag.items() if isinstance(item, dict)}
 
 
-def answers(event, flag):
-    """Whether this respond event answers the notification the flag describes."""
+def save_flag(flag_path, flag):
+    if flag:
+        with open(flag_path, "w", encoding="utf-8") as f:
+            json.dump(flag, f)
+    elif os.path.exists(flag_path):
+        os.unlink(flag_path)
+
+
+def answers(event, agent, item, started):
+    """Whether this respond event, which started at `started`, answers the agent's notification."""
+    try:
+        if dt.datetime.fromisoformat(item.get("at")) > started:
+            return False  # raised after the user answered, so it's a new one
+    except (ValueError, TypeError):
+        pass
     name = event.get("hook_event_name") or ""
-    if name == "UserPromptSubmit" or not name:
+    if not name:
         return True
+    # A prompt answers whatever waits on one, and anything the agent it comes from waits on.
+    if name == "UserPromptSubmit":
+        return item.get("waits") == "prompt" or agent == agent_of(event)
     # A permission dialog holds up its batch, so the batch resolving means it was answered. A
     # subagent's batch answers only its own dialog: subagents share the session's id.
-    return (name == "PostToolBatch" and flag.get("waits") != "prompt"
-            and (event.get("agent_id") or "") == flag.get("agent", ""))
+    return name == "PostToolBatch" and item.get("waits") != "prompt" and agent == agent_of(event)
+
+
+def answered(event, flag, started):
+    return [agent for agent, item in (flag or {}).items() if answers(event, agent, item, started)]
 
 
 def run_hook(command, event):
@@ -549,40 +593,50 @@ def run_hook(command, event):
     # runs after every batch of tools, so it checks this before it takes the lock, and does
     # nothing the rest of the time.
     flag_path = os.path.join(data_dir(), "sessions", f"{session_id}.notify")
+    agent = agent_of(event)
 
     if command == "respond":
-        flag = read_flag(flag_path)
-        if flag is None or not answers(event, flag):
+        started = now()
+        if not answered(event, read_flag(flag_path), started):
             return
 
         def update(board):
-            if os.path.exists(flag_path):
-                os.unlink(flag_path)
-            return without_notify(board, session_id)
+            # Again under the lock: a notification may have come in since, which this doesn't answer.
+            flag = read_flag(flag_path) or {}
+            done = answered(event, flag, started)
+            if not done:
+                return board
+            save_flag(flag_path, {a: item for a, item in flag.items() if a not in done})
+            return without_notify(board, session_id, done)
 
-        write_board(board_path, update)
+        write_board(board_path, update, data_dir())
         return
 
     if command == "notify":
         text, waits = notification_text(event)
         if not waiting or not text:
             return
+        at = now().isoformat()
         line = f"- {one_line(place(event.get('cwd')))}: {text} " + NOTIFY.format(
-            session=session_id, at=now().isoformat()
+            session=session_id, agent=f" agent={agent}" if agent else "", at=at
         )
         opening = []
 
         def update(board):
-            with open(flag_path, "w", encoding="utf-8") as f:
-                json.dump({"waits": waits, "agent": event.get("agent_id") or ""}, f)
+            # The main agent and each subagent have an item of their own: their dialogs can be
+            # open at once, and each is answered on its own.
+            flag = read_flag(flag_path) or {}
+            flag[agent] = {"waits": waits, "at": at}
+            save_flag(flag_path, flag)
             state = load_state(state_path)
             if first_open(state):
                 save_state(state_path, state)
                 opening.append(True)
-            board = edit_waiting(without_notify(board, session_id), lambda lines: lines + [line])
+            board = without_notify(board, session_id, [agent])
+            board = edit_waiting(board, lambda lines: lines + [line])
             return sweep(board, idle_hours, session_id)
 
-        if write_board(board_path, update) or opening:
+        if write_board(board_path, update, data_dir()) or opening:
             open_in_markydowny(board_path)
         return
 
@@ -620,7 +674,7 @@ def run_hook(command, event):
             board = ensure_waiting(board)
         return sweep(board, idle_hours, session_id)
 
-    write_board(board_path, update)
+    write_board(board_path, update, data_dir())
     if first:
         open_in_markydowny(board_path)
 
@@ -702,7 +756,7 @@ def run_waiting(args):
                     opening.append(True)
             return edit_waiting(board, edit)
 
-        if write_board(opts.board, update) or opening:
+        if write_board(opts.board, update, data) or opening:
             open_in_markydowny(opts.board, settings["open"])
         print(f"Added {item_id}: {line[2: -len(marker) - 1]}")
         return 0
@@ -718,7 +772,7 @@ def run_waiting(args):
         found.append(True)
         return edit_waiting(board, lambda lines: [line for line in lines if marker not in line])
 
-    write_board(opts.board, drop)
+    write_board(opts.board, drop, settings["data"])
     if not found:
         print(f"No item {item_id} on the board; nothing changed.", file=sys.stderr)
         return 1
