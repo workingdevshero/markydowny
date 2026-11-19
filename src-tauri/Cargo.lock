@@ -318,9 +318,9 @@ dependencies = [
 
 [[package]]
 name = "bugsplat"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab57dfd7685c6c8ba550a706256add67430730c5fd3c1e65c2116327fc17b304"
+checksum = "1d947f8282b2b122aae1194364f52b2cf0f0087669a03e041d3c75a010947a0a"
 dependencies = [
  "bugsplat-sys",
  "serde",
@@ -331,9 +331,9 @@ dependencies = [
 
 [[package]]
 name = "bugsplat-sys"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3591f3c1f2309f4d97bef8b95a6886e7fcaacfa6d1836f58155ad3331383ceef"
+checksum = "c0e5363cefd0d3515aadc2bb2eb0236eea55befb1a904a16e2432ac1067ef816"
 dependencies = [
  "cmake",
 ]
@@ -3707,9 +3707,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-bugsplat"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d850d0beb75cf7effbbf45f3df048fbfbde28ba8b1132bb8a4b7546ed2a1e0a2"
+checksum = "bf1f7ebc5a415d169a5758e1d732ac7ffb637443f3253c97cd217f4244a27e58"
 dependencies = [
  "bugsplat",
  "bugsplat-sys",

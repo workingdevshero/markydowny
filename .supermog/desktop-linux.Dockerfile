@@ -2,7 +2,8 @@
 # verify.desktop.linux). scripts/build-desktop.sh installs anything that is missing, so this
 # file only saves each round the time: with it, a round compiles and nothing else.
 #
-# Debian 13 for its glibc: BugSplat's prebuilt Crashpad needs 2.38 or newer. The package list is
+# Debian 13, though the app's floor is glibc 2.35 (Debian 12): the release build's glibc floor
+# check proves that floor. The package list is
 # LINUX_PACKAGES in scripts/build-desktop.sh; tests/build-desktop.test.js keeps the two the same.
 FROM rust:1-trixie
 

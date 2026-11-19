@@ -126,7 +126,7 @@ To build a debug app on a fresh machine or VM, for testing:
 scripts/build-desktop.sh   # prints the built artifact's path as its last line
 ```
 
-On macOS that's `Markydowny.app`; on Linux it's the `markydowny` binary. The app builds and runs on Linux without the macOS-only parts: window tabs, staying open with no windows, and Finder's open events. The script installs Rust, Node, CMake and Ninja if they're missing, and on Debian or Ubuntu the WebKitGTK build dependencies and Clang. Linux needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04), and Clang rather than GCC, for BugSplat's Crashpad.
+On macOS that's `Markydowny.app`; on Linux it's the `markydowny` binary. The app builds and runs on Linux without the macOS-only parts: window tabs, staying open with no windows, and Finder's open events. The script installs Rust, Node, CMake and Ninja if they're missing, and on Debian or Ubuntu the WebKitGTK build dependencies and Clang. Linux needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12), and Clang rather than GCC, for BugSplat's Crashpad.
 
 ### Crash reporting
 
@@ -180,8 +180,8 @@ open Markydowny-*-universal.dmg   # then drag Markydowny to Applications
 ```
 
 The Mac build is notarized, so it opens like any other app, however it was downloaded. (A release built
-without the Apple secrets isn't, and its notes say how to open it.) The Linux packages need glibc 2.38 or
-newer (Ubuntu 24.04, Debian 13, Fedora 39 and later). The Windows installers aren't code-signed yet, so
+without the Apple secrets isn't, and its notes say how to open it.) The Linux packages need glibc 2.35 or
+newer (Ubuntu 22.04, Debian 12, Fedora 36 and later). The Windows installers aren't code-signed yet, so
 SmartScreen warns the first time one runs: click **More info**, then **Run anyway**. See
 [Download](https://markydowny.com/docs/install/#windows) for making it the default for `.md` files.
 

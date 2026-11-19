@@ -144,7 +144,7 @@ test('the release job attaches everything to a draft, with checksums, and re-run
     assert.match(release, /gh release upload "\$TAG" artifacts\/\* --clobber/);
     // A re-run's notes follow its build (notarized or not), not the first run's.
     assert.match(release, /gh release edit "\$TAG" --notes-file full-notes\.md/);
-    assert.match(release, /glibc 2\.38/);
+    assert.match(release, /need glibc 2\.35 or newer: Ubuntu 22\.04, Debian 12, Fedora 36 and later\./);
     assert.match(release, /SmartScreen warns the first time\. Windows: click \*\*More info\*\*, then \*\*Run anyway\*\*\./);
 });
 
@@ -170,8 +170,10 @@ test('the builds are the ones the release promises', () => {
     assert.match(mac, /runs-on: macos-latest/);
     assert.match(mac, /scripts\/release-mac\.sh --arch universal --identity "\$SIGNING_IDENTITY" --notary-profile markydowny-notary\n/);
     assert.match(mac, /scripts\/release-mac\.sh --arch universal --identity - --no-notarize/);
-    assert.match(linux, /runner: ubuntu-24\.04\n/);
-    assert.match(linux, /runner: ubuntu-24\.04-arm\n/);
+    // 22.04, not 24.04: the runner's glibc sets the packages' floor.
+    assert.match(linux, /runner: ubuntu-22\.04\n/);
+    assert.match(linux, /runner: ubuntu-22\.04-arm\n/);
+    assert.doesNotMatch(linux, /ubuntu-24/);
     assert.match(linux, /npx tauri build --bundles deb,appimage/);
     assert.match(windows, /runs-on: windows-latest/);
     assert.match(windows, /\$bundles = if \(\$env:PRERELEASE -eq 'true'\) \{ 'nsis' \} else \{ 'nsis,msi' \}\n\s+npx tauri build --bundles \$bundles\n/);
@@ -259,6 +261,66 @@ test('a prerelease .deb is versioned to sort before the release, as dpkg reads i
         const run = spawnSync('bash', ['-c', convert], { env: { ...process.env, VERSION: version }, encoding: 'utf8' });
         assert.equal(run.stdout.trim(), expected, version);
     }
+});
+
+test("the Linux build compiles with Ubuntu 22.04's own Clang, as scripts/build-desktop.sh does", () => {
+    const linux = jobs().linux;
+    // Clang 14 compiles bugsplat-sys's Crashpad code (C++20); no newer Clang is fetched.
+    assert.match(step(linux, 'Install build dependencies'), /\sclang\s/);
+    assert.doesNotMatch(linux, /llvm\.sh|clang-18/);
+    assert.match(linux, /^ {6}CC: clang\n {6}CXX: clang\+\+$/m);
+});
+
+test('the Linux build fails when a packaged executable needs a glibc newer than 2.35', () => {
+    const linux = jobs().linux;
+    const check = linux.indexOf('name: Check the glibc floor');
+    assert.ok(check > linux.indexOf('name: Build .deb and .AppImage'), 'the check runs after the build');
+    assert.ok(check < linux.indexOf('- uses: actions/upload-artifact'), 'the check runs before the upload');
+    const floor = step(linux, 'Check the glibc floor');
+    assert.match(floor, /MAX_GLIBC: "2\.35"/);
+    const script = floor.match(/run: \|\n((?: {10}.*\n)+)/)[1].replace(/^ {10}/gm, '').replace(/\$\{\{ matrix\.arch \}\}/g, 'x86_64');
+    // A build tree with one .deb and one .AppImage, and stand-ins for dpkg-deb, the AppImage's
+    // extractor and objdump: each executable's "binary" is the objdump -T output it gives.
+    const build = (versions, { missing } = {}) => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'glibc-floor-'));
+        const bin = path.join(dir, 'stub-bin');
+        const bundle = path.join(dir, 'src-tauri/target/release/bundle');
+        fs.mkdirSync(bin);
+        fs.mkdirSync(path.join(bundle, 'deb'), { recursive: true });
+        fs.mkdirSync(path.join(bundle, 'appimage'));
+        const files = Object.entries(versions).filter(([name]) => name !== missing)
+            .map(([name, v]) => `printf '%s\\n' '0000000000000000      DF *UND*  0000000000000000 (GLIBC_2.2.5) memcpy' '0000000000000000      DF *UND*  0000000000000000 (GLIBC_${v}) f' > "$out/usr/bin/${name}"`)
+            .join('\n');
+        const unpack = `mkdir -p "$out/usr/bin"\n${files}\n`;
+        fs.writeFileSync(path.join(bundle, 'deb', 'Markydowny_1.0.0_amd64.deb'), 'deb');
+        fs.writeFileSync(path.join(bin, 'dpkg-deb'), `#!/bin/bash\n[[ "$1" == -x ]] || exit 2\nout=$3\n${unpack}`, { mode: 0o755 });
+        fs.writeFileSync(path.join(bundle, 'appimage', 'Markydowny_1.0.0_amd64.AppImage'), `#!/bin/bash\n[[ "$1" == --appimage-extract ]] || exit 2\nout=squashfs-root\n${unpack}`, { mode: 0o755 });
+        fs.writeFileSync(path.join(bin, 'objdump'), '#!/bin/bash\n[[ "$1" == -T ]] || exit 2\ncat "$2"\n', { mode: 0o755 });
+        return { dir, bin };
+    };
+    const run = ({ dir, bin }) => {
+        const summary = path.join(dir, 'summary');
+        const r = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], {
+            cwd: dir, encoding: 'utf8',
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, MAX_GLIBC: '2.35', GITHUB_STEP_SUMMARY: summary },
+        });
+        return { ...r, summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : '' };
+    };
+    const helpers = { markydowny: '2.34', BugSplatMonitor: '2.35', BugSplatReporter: '2.17' };
+    const ok = run(build(helpers));
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    for (const where of ['deb', 'squashfs-root']) assert.match(ok.stdout, new RegExp(`^${where}/usr/bin/BugSplatMonitor needs glibc 2\\.35$`, 'm'));
+    assert.equal(ok.summary, 'Linux x86_64: the packages need glibc 2.35 (floor: 2.35).\n');
+    // 2.38 is what an Ubuntu 24.04 build's Crashpad needed; 2.39 what its own binary picked up.
+    for (const [name, v] of [['BugSplatReporter', '2.38'], ['markydowny', '2.39'], ['BugSplatMonitor', '2.35.1']]) {
+        const bad = run(build({ ...helpers, [name]: v }));
+        assert.equal(bad.status, 1, `${name} needing ${v} passed`);
+        assert.match(bad.stdout, new RegExp(`::error::deb/usr/bin/${name} needs glibc ${v.replace(/\./g, '\\.')}, newer than the 2\\.35 floor`));
+        assert.match(bad.summary, new RegExp(`need glibc ${v.replace(/\./g, '\\.')} `));
+    }
+    const missing = run(build(helpers, { missing: 'BugSplatMonitor' }));
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /::error::squashfs-root\/usr\/bin\/BugSplatMonitor is missing/);
 });
 
 test('the Linux packages carry the crash reporting helpers next to the executable', () => {
