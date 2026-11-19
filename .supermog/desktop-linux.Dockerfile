@@ -3,8 +3,7 @@
 # file only saves each round the time: with it, a round compiles and nothing else.
 #
 # Debian 13, though the app's floor is glibc 2.35 (Debian 12): the release build's glibc floor
-# check proves that floor, and Debian 13's Clang 19 is closer to the release's Clang 18 than
-# Debian 12's Clang 14. The package list is
+# check proves that floor. The package list is
 # LINUX_PACKAGES in scripts/build-desktop.sh; tests/build-desktop.test.js keeps the two the same.
 FROM rust:1-trixie
 

@@ -9,7 +9,8 @@
 #   - Rust, through rustup, at the version rust-toolchain.toml names;
 #   - Node 22, into ~/.cache/markydowny, when there's no Node 20 or newer;
 #   - CMake and Ninja, which BugSplat's native code needs: on macOS from their official
-#     releases into ~/.cache/markydowny when they aren't on PATH (there may be no Homebrew);
+#     releases into ~/.cache/markydowny when they aren't on PATH (there may be no Homebrew), and
+#     CMake the same way on Linux when the one on PATH is older than 3.24;
 #   - on Linux, those, Clang and the WebKitGTK build dependencies with apt-get, when running as
 #     root or with passwordless sudo. Otherwise it names the missing packages and stops. Linux
 #     needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12); it says so and stops on older ones.
@@ -27,12 +28,15 @@ CMAKE_VERSION=4.5.0
 NINJA_VERSION=1.13.2
 # The packages Tauri 2 needs to build on Debian and Ubuntu (https://v2.tauri.app/start/prerequisites/).
 # CMake, Ninja and Clang build BugSplat's native code (bugsplat-sys). On Linux it has to be
-# Clang: GCC rejects Crashpad's headers ("expected identifier before '__attribute__'").
-# Releases build with Clang 18; set CC=clang-18 CXX=clang++-18 to use one beside an older clang.
+# Clang: GCC rejects Crashpad's headers ("expected identifier before '__attribute__'"). The
+# distro's Clang is enough: Clang 14 on Ubuntu 22.04 and Debian 12, as in the release build.
 LINUX_PACKAGES=(build-essential clang curl ca-certificates xz-utils file pkg-config cmake ninja-build libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev)
 # BugSplat's prebuilt Linux Crashpad is built on Ubuntu 22.04 and links against its glibc 2.35:
 # Ubuntu 22.04 or Debian 12 and later.
 MIN_GLIBC=2.35
+# bugsplat-native's cmake_minimum_required. Ubuntu 22.04's cmake is 3.22, so the script fetches
+# CMake from Kitware there, as it does on a Mac without one.
+MIN_CMAKE=3.24
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 os=$(uname -s)
@@ -108,7 +112,23 @@ else
             fail "build dependencies are missing. Install: ${LINUX_PACKAGES[*]}"
         fi
     fi
-    # Keep an inherited CC/CXX only when it's a Clang (say clang-18): GCC can't build Crashpad.
+    cmake_version=$(cmake --version | awk 'NR == 1 {print $3}')
+    if [[ "$(printf '%s\n%s\n' "$MIN_CMAKE" "$cmake_version" | sort -V | head -1)" != "$MIN_CMAKE" ]]; then
+        case "$(uname -m)" in
+            arm64 | aarch64) cmake_arch=aarch64 ;;
+            x86_64) cmake_arch=x86_64 ;;
+            *) fail "cmake $cmake_version is older than $MIN_CMAKE, and there's no CMake build for $(uname -m)" ;;
+        esac
+        cmake_dir="$cache/cmake-${CMAKE_VERSION}-linux-$cmake_arch"
+        if [[ ! -x "$cmake_dir/bin/cmake" ]]; then
+            log "cmake $cmake_version is older than $MIN_CMAKE. Installing CMake ${CMAKE_VERSION}..."
+            mkdir -p "$cache"
+            curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$cmake_arch.tar.gz" |
+                tar -xz -C "$cache"
+        fi
+        export PATH="$cmake_dir/bin:$PATH"
+    fi
+    # Keep an inherited CC/CXX only when it's a Clang (say clang-15): GCC can't build Crashpad.
     [[ "${CC:-}" == *clang* ]] || CC=clang
     [[ "${CXX:-}" == *clang* ]] || CXX=clang++
     export CC CXX

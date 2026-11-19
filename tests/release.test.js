@@ -263,12 +263,11 @@ test('a prerelease .deb is versioned to sort before the release, as dpkg reads i
     }
 });
 
-test("the Linux build compiles with Clang 18, which takes Crashpad's headers on Ubuntu 22.04", () => {
+test("the Linux build compiles with Ubuntu 22.04's own Clang, as scripts/build-desktop.sh does", () => {
     const linux = jobs().linux;
-    const clang = step(linux, 'Install Clang 18');
-    assert.match(clang, /sudo bash \/tmp\/llvm\.sh 18/);
-    assert.match(clang, /echo "\$RUNNER_TEMP\/clang-18" >> "\$GITHUB_PATH"/);
-    assert.ok(linux.indexOf('name: Install Clang 18') < linux.indexOf('name: Build .deb and .AppImage'));
+    // Clang 14 compiles bugsplat-sys's Crashpad code (C++20); no newer Clang is fetched.
+    assert.match(step(linux, 'Install build dependencies'), /\sclang\s/);
+    assert.doesNotMatch(linux, /llvm\.sh|clang-18/);
     assert.match(linux, /^ {6}CC: clang\n {6}CXX: clang\+\+$/m);
 });
 

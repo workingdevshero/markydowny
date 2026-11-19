@@ -56,6 +56,13 @@ test('the script stops on a glibc older than 2.35, the floor the release package
     assert.match(release, /MAX_GLIBC: "2\.35"/);
 });
 
+test("on Linux the script fetches CMake when the one on PATH is older than bugsplat-native's 3.24", () => {
+    // Ubuntu 22.04's cmake is 3.22.
+    const source = fs.readFileSync(script, 'utf8');
+    assert.match(source, /^MIN_CMAKE=3\.24$/m);
+    assert.match(source, /cmake-\$\{CMAKE_VERSION\}-linux-\$cmake_arch\.tar\.gz/);
+});
+
 test('build-desktop.sh is plain ASCII, which macOS bash 3.2 needs', () => {
     // Bash 3.2 read "$NODE_VERSION…" as one long variable name and failed on it.
     const source = fs.readFileSync(script, 'utf8');

@@ -249,25 +249,15 @@ jobs:
             .crashpad-cache
           key: release-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
       # The packages scripts/build-desktop.sh installs: Tauri's WebKitGTK prerequisites, and
-      # CMake, Ninja and Clang for BugSplat's native code.
+      # CMake, Ninja and Clang for BugSplat's native code. Ubuntu 22.04's clang is Clang 14, which
+      # compiles bugsplat-sys's Crashpad code (C++20) against its libstdc++ 11. Its cmake is 3.22,
+      # older than bugsplat-native's 3.24, but the runner's own CMake in /usr/local/bin is first on PATH.
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             build-essential clang file pkg-config cmake ninja-build libssl-dev \
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev
-      # Ubuntu 22.04's GCC 11 rejects Crashpad's headers and its Clang 14 rejects -std=c++23, so
-      # this takes Clang 18 from LLVM's own packages, as bugsplat-crashpad's Linux build does.
-      # The links make it the `clang` that CC and CXX name.
-      - name: Install Clang 18
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          sudo bash /tmp/llvm.sh 18
-          mkdir -p "$RUNNER_TEMP/clang-18"
-          for tool in clang clang++; do ln -sf "/usr/bin/$tool-18" "$RUNNER_TEMP/clang-18/$tool"; done
-          echo "$RUNNER_TEMP/clang-18" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/clang-18/clang" --version | head -1
-          ldd --version | head -1
       # --include=dev: the Tauri CLI is a devDependency.
       - run: npm ci --include=dev --no-audit --no-fund
       - name: Build .deb and .AppImage
