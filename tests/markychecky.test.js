@@ -1,4 +1,4 @@
-// markychecky's hook, run the way Claude Code runs it: hook JSON on stdin. The behaviour tests run
+// markychecky's hooks, run the way Claude Code runs them: hook JSON on stdin. The behaviour tests run
 // against both engines, the Python script and the Markydowny app's `markychecky` mode (when a
 // build of the app is around: MARKYDOWNY_BIN, or src-tauri/target/debug/markydowny), and must
 // pass the same on each.
@@ -13,18 +13,20 @@ const root = path.join(__dirname, '..');
 const plugin = path.join(root, 'plugins', 'markychecky');
 const script = path.join(plugin, 'scripts', 'markychecky.py');
 const launcher = path.join(plugin, 'scripts', 'markychecky.sh');
+const startHook = path.join(plugin, 'scripts', 'session-start.sh');
 const hasPython = spawnSync('python3', ['--version']).status === 0;
-const MARKER = 'markychecky-hook-engine-1';
+const MARKER = 'markychecky-hook-engine-2';
 const appBin = process.env.MARKYDOWNY_BIN
     ? path.resolve(process.env.MARKYDOWNY_BIN)
     : path.join(root, 'src-tauri', 'target', 'debug', 'markydowny');
-// A build from before the mode would open its window rather than run the hook.
+// A build from before the mode would open its window rather than run the hook, and one with engine 1
+// has no notify, respond or waiting.
 const hasApp = fs.existsSync(appBin) && spawnSync('grep', ['-q', '-F', MARKER, appBin]).status === 0;
 if (process.env.MARKYDOWNY_BIN && !hasApp) throw new Error(`MARKYDOWNY_BIN (${appBin}) has no markychecky mode`);
 
 const engines = [
-    { name: 'python', skip: !hasPython, argv: command => ['python3', [script, command]] },
-    { name: 'app', skip: !hasApp, argv: command => [appBin, ['markychecky', command]] },
+    { name: 'python', skip: !hasPython, argv: (...args) => ['python3', [script, ...args]] },
+    { name: 'app', skip: !hasApp, argv: (...args) => [appBin, ['markychecky', ...args]] },
 ];
 
 function sandbox() {
@@ -80,6 +82,45 @@ const section = (board, session) => {
     assert.ok(m, `no section for ${session} in:\n${board}`);
     return m[1];
 };
+
+// "Waiting on you": the section at the top of the board, its commands and its notification items.
+
+/** A `waiting` command, as a session runs it: in its own folder, and with no stdin. */
+function waiting(engine, box, ...args) {
+    const [cmd, argv] = engine.argv('waiting', ...args);
+    return spawnSync(cmd, argv, { cwd: box.cwd || box.dir, env: box.env, encoding: 'utf8' });
+}
+function waitingAsync(engine, box, ...args) {
+    return new Promise((resolve, reject) => {
+        const [cmd, argv] = engine.argv('waiting', ...args);
+        const child = spawn(cmd, argv, { cwd: box.dir, env: box.env, stdio: ['ignore', 'ignore', 'pipe'] });
+        child.on('exit', code => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+    });
+}
+/** The SessionStart hook, with the task list on, so it has nothing to warn about. */
+function sessionStart(box, session = 's1', { env = box.env, PATH = process.env.PATH } = {}) {
+    const result = spawnSync('sh', [startHook], {
+        input: JSON.stringify({ session_id: session, hook_event_name: 'SessionStart', cwd: box.dir, source: 'startup' }),
+        cwd: box.dir,
+        env: { ...env, PATH, CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' },
+        encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+}
+/** The environment a session's own commands get: none of the plugin's settings. */
+function sessionShell(env) {
+    const clean = { ...env };
+    for (const key of Object.keys(clean)) if (/^(MARKYCHECKY_|CLAUDE_PLUGIN_)/.test(key)) delete clean[key];
+    return clean;
+}
+const notify = (session, type, message) => ({ session_id: session, hook_event_name: 'Notification', notification_type: type, message });
+const waitingSection = board => {
+    const m = board.match(/^## Waiting on you\n([\s\S]*?)(?=<!-- markychecky:start |(?![\s\S]))/m);
+    assert.ok(m, `no Waiting on you section in:\n${board}`);
+    return m[1];
+};
+const installedApp = fs.existsSync('/Applications/Markydowny.app/Contents/MacOS/markydowny');
 
 for (const engine of engines) {
     test(`[${engine.name}] a session's tasks become its section: Now, then the checklist in task order`, { skip: engine.skip }, () => {
@@ -173,7 +214,7 @@ for (const engine of engines) {
         await Promise.all(Array.from({ length: 20 }, (_, i) => run(create(`s${i}`, 1, `Task ${i}`))));
         const board = read(box);
         for (let i = 0; i < 20; i++) assert.match(section(board, `s${i}`), new RegExp(`Task ${i}\\n`));
-        const leftovers = fs.readdirSync(box.dir).filter(f => f.startsWith('.board.md.'));
+        const leftovers = fs.readdirSync(box.dir).filter(f => f.startsWith('.board.md.') && f !== '.board.md.lock');
         assert.deepEqual(leftovers, [], 'no temporary files left next to the board');
     });
 
@@ -273,7 +314,7 @@ for (const engine of engines) {
         fs.chmodSync(box.board, 0o600);
         hook(engine, box, 'task', create('s1', 1, 'Task'));
         assert.equal(fs.statSync(box.board).mode & 0o777, 0o600);
-        assert.match(read(box), /^# Mine\n\nA note\.\n\n<!-- markychecky:start s1 -->/);
+        assert.match(read(box), /^# Mine\n\nA note\.\n\n## Waiting on you\n\n<!-- markychecky:start s1 -->/);
     });
 
     test(`[${engine.name}] a session in a git worktree is named after the repository, not the worktree folder`, { skip: engine.skip }, () => {
@@ -289,19 +330,344 @@ for (const engine of engines) {
         assert.match(section(read(box), 's1'), /^## widgets · fix\/login$/m);
         assert.match(section(read(box), 's2'), /^## widgets · main$/m);
     });
+
+    test(`[${engine.name}] a new board starts with a Waiting on you section, above the sessions`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('s1', 1, 'First'));
+        assert.match(read(box), /^# Markychecky\n\nWhat each[^\n]*\n\n## Waiting on you\n\n<!-- markychecky:start s1 /);
+        // A board made by waiting add has one too, and a task hook after it doesn't add a second.
+        const other = sandbox();
+        assert.equal(waiting(engine, other, 'add', '--session', 's1', '--key', 'k', 'A question').status, 0);
+        hook(engine, other, 'task', create('s1', 1, 'First'));
+        assert.equal((read(other).match(/Waiting on you/g) || []).length, 1);
+        assert.match(read(other), /^## Waiting on you\n\n- [^\n]*A question <!-- markychecky:item s1\/k -->\n\n<!-- markychecky:start s1 /m);
+    });
+
+    test(`[${engine.name}] a board without the section gets one, and a heading of any level counts as one`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        // A board from markychecky 0.3.0, with no section.
+        hook(engine, box, 'task', create('s1', 1, 'First'));
+        fs.writeFileSync(box.board, read(box).replace('## Waiting on you\n\n', ''));
+        assert.doesNotMatch(read(box), /Waiting on you/);
+        hook(engine, box, 'task', create('s1', 2, 'Second'));
+        assert.match(read(box), /\n## Waiting on you\n\n<!-- markychecky:start s1 /);
+        // Someone's own "### Waiting on You" is the section: no second one is added.
+        const mine = sandbox();
+        fs.writeFileSync(mine.board, '# My board\n\n### Waiting on You\n\n- by hand\n');
+        hook(engine, mine, 'task', create('s1', 1, 'First'));
+        assert.equal((read(mine).match(/waiting on you/gi) || []).length, 1);
+        assert.equal(waiting(engine, mine, 'add', '--session', 's1', '--key', 'k', 'Mine').status, 0);
+        assert.match(read(mine), /### Waiting on You\n\n- by hand\n- [^\n]*Mine <!-- markychecky:item s1\/k -->\n\n<!-- markychecky:start s1 /);
+    });
+
+    test(`[${engine.name}] hand-written lines in Waiting on you are never changed, by the hooks or the commands`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        const byHand = '- markydowny: OK to delete the   VM?  \n- web: sign off on [#51](https://x) <!-- a note -->\nA paragraph, *as typed*.';
+        fs.writeFileSync(box.board, `# Markychecky\n\n## Waiting on you\n\n${byHand}\n`);
+        hook(engine, box, 'task', create('s1', 1, 'First'));
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'k', 'Mine').status, 0);
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'k', 'Mine, updated').status, 0);
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        hook(engine, box, 'respond', { session_id: 's1' });
+        assert.equal(waiting(engine, box, 'remove', '--session', 's1', '--key', 'k').status, 0);
+        // A key that isn't there removes nothing, and says so.
+        const missing = waiting(engine, box, 'remove', '--session', 's1', '--key', 'nope');
+        assert.equal(missing.status, 1);
+        assert.match(missing.stderr, /No item s1\/nope/);
+        hook(engine, box, 'end', { session_id: 's1' });
+        assert.equal(waitingSection(read(box)), `\n${byHand}\n\n`);
+    });
+
+    test(`[${engine.name}] waiting add, update by key, remove and list`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        spawnSync('git', ['init', '-q', '-b', 'main', box.dir]);
+        spawnSync('git', ['-C', box.dir, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+        spawnSync('git', ['-C', box.dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'init']);
+        const name = path.basename(box.dir);
+        let r = waiting(engine, box, 'add', '--session', 's1', '--key', 'ok-to-merge-24', 'OK to merge #24?');
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /Added s1\/ok-to-merge-24/);
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'release-v1', 'Release', 'v1', 'is', 'parked').status, 0);
+        assert.equal(waitingSection(read(box)), [
+            '',
+            `- ${name} · main: OK to merge [#24](https://github.com/acme/widgets/issues/24)? <!-- markychecky:item s1/ok-to-merge-24 -->`,
+            `- ${name} · main: Release v1 is parked <!-- markychecky:item s1/release-v1 -->`,
+            '',
+        ].join('\n'));
+        // The same key updates the line in place; another session's same key is its own line.
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'ok-to-merge-24', 'Merged, OK to\ndeploy?').status, 0);
+        assert.equal(waiting(engine, box, 'add', '--session', 's2', '--key', 'release-v1', 'Another session').status, 0);
+        let items = waitingSection(read(box));
+        assert.match(items, /^\n- [^\n]*: Merged, OK to deploy\? <!-- markychecky:item s1\/ok-to-merge-24 -->\n- [^\n]*Release v1 is parked[^\n]*\n- [^\n]*Another session <!-- markychecky:item s2\/release-v1 -->\n$/);
+        // list shows every line, with the keys of the commands' lines.
+        fs.appendFileSync(box.board, '- by hand\n');
+        r = waiting(engine, box, 'list');
+        assert.equal(r.status, 0, r.stderr);
+        assert.deepEqual(r.stdout.trim().split('\n'), [
+            `- ${name} · main: Merged, OK to deploy?  (key: s1/ok-to-merge-24)`,
+            `- ${name} · main: Release v1 is parked  (key: s1/release-v1)`,
+            `- ${name} · main: Another session  (key: s2/release-v1)`,
+            '- by hand  (written by hand; the commands leave it alone)',
+        ]);
+        // remove takes this session's key, or another session's <session>/<key>.
+        assert.equal(waiting(engine, box, 'remove', '--session', 's1', '--key', 'release-v1').status, 0);
+        assert.equal(waiting(engine, box, 'remove', '--session', 's3', '--key', 's2/release-v1').status, 0);
+        items = waitingSection(read(box));
+        assert.doesNotMatch(items, /release-v1/);
+        assert.match(items, /ok-to-merge-24/);
+        assert.equal(waiting(engine, box, 'remove', '--session', 's1', '--key', 'ok-to-merge-24').status, 0);
+        assert.equal(waiting(engine, box, 'list').stdout, '- by hand  (written by hand; the commands leave it alone)\n');
+        // A key that could break the marker, or a call without one, is refused.
+        r = waiting(engine, box, 'add', '--session', 's1', '--key', 'bad key -->', 'x');
+        assert.equal(r.status, 2);
+        assert.match(r.stderr, /--key 'bad key -->'/);
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'k\n', 'x').status, 2);
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', 'x').status, 2);
+        assert.equal(waiting(engine, box, 'nope').status, 2);
+        // Text can't fake a marker.
+        assert.equal(waiting(engine, box, 'add', '--session', 's1', '--key', 'k', 'x <!-- markychecky:item s9/k -->').status, 0);
+        assert.equal((read(box).match(/<!-- markychecky:item/g) || []).length, 1);
+        // An empty board has nothing waiting.
+        assert.equal(waiting(engine, sandbox(), 'list').stdout, 'Nothing is waiting on you.\n');
+    });
+
+    test(`[${engine.name}] twenty waiting adds at once, alongside task hooks, all land`, { skip: engine.skip }, async () => {
+        const box = sandbox();
+        await Promise.all([
+            ...Array.from({ length: 20 }, (_, i) => waitingAsync(engine, box, 'add', '--session', `w${i % 4}`, '--key', `item-${i}`, `Question ${i}`)),
+            ...Array.from({ length: 20 }, (_, i) => hookAsync(engine, box, 'task', create(`s${i}`, 1, `Task ${i}`))),
+        ]);
+        const board = read(box);
+        const items = waitingSection(board);
+        for (let i = 0; i < 20; i++) {
+            assert.match(items, new RegExp(`Question ${i} <!-- markychecky:item w${i % 4}/item-${i} -->\\n`));
+            assert.match(section(board, `s${i}`), new RegExp(`Task ${i}\\n`));
+        }
+        assert.equal((board.match(/Waiting on you/g) || []).length, 1);
+    });
+
+    test(`[${engine.name}] a notification adds an item for the session, and the prompt or tool batch that answers it clears it`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        const name = path.basename(box.dir);
+        // Responding with nothing on the board doesn't make a board.
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+        assert.ok(!fs.existsSync(box.board));
+        hook(engine, box, 'notify', notify('s1', 'permission_prompt', 'Claude needs your permission to use Bash'));
+        assert.match(waitingSection(read(box)), new RegExp(`^\\n- ${name}: needs permission to use Bash <!-- markychecky:notify s1 at=\\S+ -->\\n$`));
+        // A second notification refreshes the item rather than adding another.
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        hook(engine, box, 'notify', notify('s2', 'idle_prompt', 'Claude is waiting for your input'));
+        let items = waitingSection(read(box));
+        assert.equal((items.match(/markychecky:notify s1 /g) || []).length, 1);
+        assert.match(items, new RegExp(`- ${name}: waiting for your input <!-- markychecky:notify s1 `));
+        // The next prompt clears s1's item, and only s1's.
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        items = waitingSection(read(box));
+        assert.doesNotMatch(items, /notify s1 /);
+        assert.match(items, /notify s2 /);
+        // A permission line stays while the dialog is up: through another tool finishing, and a
+        // subagent's batch, which carries the session's id too.
+        hook(engine, box, 'notify', notify('s1', 'permission_prompt', 'Claude needs your permission to use Edit.'));
+        assert.match(read(box), /needs permission to use Edit <!-- markychecky:notify s1 /);
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolUse' });
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch', agent_id: 'sub-1' });
+        assert.match(read(box), /notify s1 /);
+        // The batch resolving, approved or denied, clears it.
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+        // A subagent's own dialog is answered by its own batch.
+        hook(engine, box, 'notify', { ...notify('s1', 'permission_prompt', 'Claude needs your permission to use Bash'), agent_id: 'sub-1' });
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+        assert.match(read(box), /notify s1 /);
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch', agent_id: 'sub-1' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+        // Waiting for input is answered by a prompt, not by a batch.
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+        assert.match(read(box), /waiting for your input <!-- markychecky:notify s1 /);
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+        // An MCP server's question shows as one.
+        hook(engine, box, 'notify', notify('s1', 'elicitation_url_dialog', 'Sign in to continue'));
+        assert.match(read(box), /has a question for you <!-- markychecky:notify s1 /);
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+        // And so does the session ending, for a session with no task list.
+        hook(engine, box, 'end', { session_id: 's2' });
+        assert.doesNotMatch(read(box), /markychecky:notify/);
+        assert.doesNotMatch(read(box), /markychecky:start s2/);
+        // A notification that isn't waiting on you adds nothing, whatever its message says.
+        for (const type of ['auth_success', 'agent_completed', 'quota_auto_resume_fired', 'push_notification', 'some_new_type']) {
+            hook(engine, box, 'notify', notify('s3', type, 'Asked for permission to use Bash, and finished'));
+        }
+        assert.doesNotMatch(read(box), /notify s3 /);
+    });
+
+    test(`[${engine.name}] the main agent and a subagent with dialogs open at once each have an item, answered on its own`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        const ask = agent => ({ ...notify('s1', 'permission_prompt', 'Claude needs your permission to use Bash'), ...(agent && { agent_id: agent }) });
+        const batch = agent => ({ session_id: 's1', hook_event_name: 'PostToolBatch', ...(agent && { agent_id: agent }) });
+        for (const [first, second] of [['', 'sub-1'], ['sub-1', '']]) {
+            hook(engine, box, 'notify', ask(first));
+            hook(engine, box, 'notify', ask(second));
+            let items = waitingSection(read(box));
+            assert.match(items, /<!-- markychecky:notify s1 at=\S+ -->/);
+            assert.match(items, /<!-- markychecky:notify s1 agent=sub-1 at=\S+ -->/);
+            // The earlier dialog is answered first: only its item goes.
+            hook(engine, box, 'respond', batch(first));
+            items = waitingSection(read(box));
+            assert.equal((items.match(/markychecky:notify s1 /g) || []).length, 1, items);
+            assert.match(items, new RegExp(`notify s1 ${second ? `agent=${second} ` : ''}at=`));
+            hook(engine, box, 'respond', batch(second));
+            assert.doesNotMatch(read(box), /markychecky:notify/);
+        }
+        // A prompt answers the main agent's dialog, but not a subagent's, which its batch answers.
+        hook(engine, box, 'notify', ask(''));
+        hook(engine, box, 'notify', ask('sub-1'));
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.match(read(box), /notify s1 agent=sub-1 /);
+        assert.doesNotMatch(read(box), /notify s1 at=/);
+        // Ending the session clears every agent's item.
+        hook(engine, box, 'notify', ask(''));
+        hook(engine, box, 'end', { session_id: 's1' });
+        assert.doesNotMatch(read(box), /markychecky:notify/);
+    });
+
+    test(`[${engine.name}] a respond doesn't clear a notification raised after it started`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        // As if the notification took the lock after the prompt was submitted but before its
+        // respond did: its time is later than when the respond started.
+        const flagPath = path.join(box.env.CLAUDE_PLUGIN_DATA, 'sessions', 's1.notify');
+        const flag = JSON.parse(fs.readFileSync(flagPath, 'utf8'));
+        flag[''].at = '2999-01-01T00:00:00+00:00';
+        fs.writeFileSync(flagPath, JSON.stringify(flag));
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.match(read(box), /notify s1 /);
+        hook(engine, box, 'end', { session_id: 's1' });
+        assert.doesNotMatch(read(box), /notify s1 /);
+    });
+
+    test(`[${engine.name}] writes also wait on the lock 0.3 took in the data folder, which sessions from before the update hold`, { skip: engine.skip || !hasPython }, async () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('s1', 1, 'One'));
+        const name = `board-${require('node:crypto').createHash('sha1').update(box.board).digest('hex').slice(0, 16)}.lock`;
+        const oldLock = path.join(box.env.CLAUDE_PLUGIN_DATA, name);
+        assert.ok(fs.existsSync(oldLock), `no ${name} in the data folder`);
+        // An old session holds it for a moment.
+        const holder = spawn('python3', ['-c', 'import fcntl, sys, time\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("held", flush=True)\ntime.sleep(0.8)', oldLock]);
+        await new Promise(resolve => holder.stdout.once('data', resolve));
+        const started = Date.now();
+        await hookAsync(engine, box, 'task', create('s1', 2, 'Two'));
+        assert.ok(Date.now() - started >= 500, 'the write went ahead while an old session held its lock');
+        assert.match(section(read(box), 's1'), /- \[ \] Two\n/);
+    });
+
+    test(`[${engine.name}] items from waiting add outlive their session and idle_hours; old notifications don't`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('old', 1, 'Old work'));
+        assert.equal(waiting(engine, box, 'add', '--session', 'old', '--key', 'parked', 'Parked until Monday').status, 0);
+        hook(engine, box, 'notify', notify('crashed', 'idle_prompt', 'Claude is waiting for your input'));
+        hook(engine, box, 'end', { session_id: 'old' });
+        // Age the ended section and the notification (whose session never ended) past the limit.
+        fs.writeFileSync(box.board, read(box).replace(/ended=\S+/, 'ended=2000-01-01T00:00:00+00:00').replace(/at=\S+/, 'at=2000-01-01T00:00:00+00:00'));
+        hook(engine, box, 'task', create('new', 1, 'New work'));
+        const board = read(box);
+        assert.doesNotMatch(board, /markychecky:start old/);
+        assert.doesNotMatch(board, /notify crashed/);
+        assert.match(waitingSection(board), /^\n- [^\n]*Parked until Monday <!-- markychecky:item old\/parked -->\n+$/);
+    });
+
+    test(`[${engine.name}] waiting=false turns off the section, the context, the commands' writes and notification items`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        box.env.MARKYCHECKY_WAITING = 'false';
+        hook(engine, box, 'task', create('s1', 1, 'First'));
+        hook(engine, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+        assert.equal(sessionStart(box), '');
+        // The commands run in the session's shell, without the plugin's settings: they read what
+        // SessionStart saved beside the board.
+        const r = waiting(engine, { ...box, env: sessionShell(box.env) }, 'add', '--board', box.board, '--session', 's1', '--key', 'k', 'A question');
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stderr, /turned off/);
+        assert.doesNotMatch(read(box), /Waiting on you|markychecky:(item|notify)/);
+        assert.match(section(read(box), 's1'), /First/);
+    });
+
+    test(`[${engine.name}] SessionStart tells the session the board, and commands through the launcher that work as given`, { skip: engine.skip || installedApp }, () => {
+        const box = sandbox();
+        // The launcher runs this engine: the app when it's on PATH as markydowny, or else python3.
+        const bin = path.join(box.dir, 'bin');
+        fs.mkdirSync(bin);
+        if (engine.name === 'app') fs.symlinkSync(appBin, path.join(bin, 'markydowny'));
+        const PATH = `${bin}:${process.env.PATH}`;
+        const out = JSON.parse(sessionStart(box, 'abc-123', { PATH }));
+        assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
+        assert.equal(out.systemMessage, undefined);
+        const context = out.hookSpecificOutput.additionalContext;
+        assert.ok(context.includes(box.board), 'names the board');
+        assert.match(context, /a question, a decision, work you've parked, or something waiting on someone else/);
+        assert.match(context, /remove it once it's resolved/);
+        const commands = Object.fromEntries(['add', 'remove', 'list'].map(action => {
+            const m = context.match(new RegExp(`^- [^:]+: (sh '[^']+' waiting ${action} [^\\n]*)$`, 'm'));
+            assert.ok(m, `no ${action} command in:\n${context}`);
+            assert.ok(m[1].startsWith(`sh '${launcher}' `), 'the launcher\'s absolute path');
+            assert.ok(m[1].includes('--session abc-123'));
+            return [action, m[1]];
+        }));
+        // Run them the way a session would, with the plugin's settings not in its environment.
+        const env = { ...sessionShell(box.env), PATH };
+        const sh = cmd => spawnSync('sh', ['-c', cmd], { cwd: box.dir, env, encoding: 'utf8' });
+        let r = sh(commands.add.replace('<key>', 'q1').replace('"<text>"', '"Which name?"'));
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(waitingSection(read(box)), /Which name\? <!-- markychecky:item abc-123\/q1 -->/);
+        assert.match(sh(commands.list).stdout, /Which name\?  \(key: abc-123\/q1\)/);
+        r = sh(commands.remove.replace('<key>', 'q1'));
+        assert.equal(r.status, 0, r.stderr);
+        assert.doesNotMatch(read(box), /Which name/);
+    });
+
+    test(`[${engine.name}] a session opens the board on its first write, whether that's a task, a notification or waiting add`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        const state = session => JSON.parse(fs.readFileSync(path.join(box.dir, 'data', 'sessions', `${session}.json`), 'utf8'));
+        hook(engine, box, 'task', create('t', 1, 'First'));
+        assert.equal(state('t').wrote, true);
+        // A notification on a board that's already there is still the session's first write.
+        hook(engine, box, 'notify', notify('n', 'permission_prompt', 'Claude needs your permission to use Bash'));
+        assert.equal(state('n').opened, true);
+        // And a waiting add, which finds the session's state from what SessionStart saved.
+        sessionStart(box, 'w');
+        const env = { ...sessionShell(box.env), MARKYCHECKY_OPEN: 'false' };
+        const r = waiting(engine, { ...box, env }, 'add', '--board', box.board, '--session', 'w', '--key', 'k', 'A question');
+        assert.equal(r.status, 0, r.stderr);
+        assert.equal(state('w').opened, true);
+        const saved = JSON.parse(fs.readFileSync(path.join(box.dir, '.board.md.settings.json'), 'utf8'));
+        assert.deepEqual(saved, { waiting: true, open: false, data: path.join(box.dir, 'data') });
+    });
 }
 
-test('the hooks run the script on task-tool updates and at session end', () => {
+test('the hooks run through the launcher, for tasks, notifications and responses, and SessionStart runs its own script', () => {
     const hooks = JSON.parse(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8')).hooks;
-    const post = hooks.PostToolUse[0];
-    assert.deepEqual(post.matcher.split('|').sort(), ['TaskCreate', 'TaskUpdate', 'TodoWrite']);
-    assert.match(post.hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" task/);
-    assert.match(hooks.SessionEnd[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/markychecky\.sh" end/);
-    // Not after compacting: that's the same session, which has been told already.
+    const command = entry => entry.hooks[0].command;
+    const runs = name => new RegExp(`^sh "\\$\\{CLAUDE_PLUGIN_ROOT\\}/scripts/markychecky\\.sh" ${name} \\|\\| true$`);
+    const [tasks, ...more] = hooks.PostToolUse;
+    assert.deepEqual(more, []);
+    assert.deepEqual(tasks.matcher.split('|').sort(), ['TaskCreate', 'TaskUpdate', 'TodoWrite']);
+    assert.match(command(tasks), runs('task'));
+    // A notification is answered by a prompt, or by its tool batch resolving: not by any one
+    // tool, whose hooks run while a sibling's permission dialog is still up.
+    assert.equal(hooks.PreToolUse, undefined);
+    for (const entry of [hooks.PostToolBatch[0], hooks.UserPromptSubmit[0]]) {
+        assert.equal(entry.matcher, undefined);
+        assert.match(command(entry), runs('respond'));
+    }
+    assert.match(command(hooks.Notification[0]), runs('notify'));
+    assert.match(command(hooks.SessionEnd[0]), runs('end'));
+    // One SessionStart hook, and not after compacting: that's the same session, which has been told already.
+    assert.equal(hooks.SessionStart.length, 1);
     assert.deepEqual(hooks.SessionStart[0].matcher.split('|').sort(), ['clear', 'fork', 'resume', 'startup']);
-    assert.match(hooks.SessionStart[0].hooks[0].command, /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/session-start\.sh"/);
-    // The launcher always exits 0; even so, a hook never fails the session.
-    for (const h of [post.hooks[0], hooks.SessionEnd[0].hooks[0], hooks.SessionStart[0].hooks[0]]) assert.match(h.command, /\|\| true$/);
+    assert.match(command(hooks.SessionStart[0]), /^sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/session-start\.sh" \|\| true$/);
+    // Every script the hooks name is there; the old Python-only wrapper is gone.
+    assert.deepEqual(fs.readdirSync(path.join(plugin, 'scripts')).sort(), ['markychecky.py', 'markychecky.sh', 'session-start.sh']);
 });
 
 test('the marketplace lists the plugin, and the versions agree', () => {
@@ -311,7 +677,9 @@ test('the marketplace lists the plugin, and the versions agree', () => {
     assert.ok(entry);
     assert.equal(entry.source, './plugins/markychecky');
     assert.equal(manifest.name, 'markychecky');
-    assert.deepEqual(Object.keys(manifest.userConfig).sort(), ['file', 'idle_hours', 'open']);
+    assert.deepEqual(Object.keys(manifest.userConfig).sort(), ['file', 'idle_hours', 'open', 'waiting']);
+    assert.equal(manifest.userConfig.waiting.default, true);
+    assert.equal(manifest.version, '0.4.0');
 });
 
 test('every place markychecky is documented says how to turn on the task list', () => {
@@ -400,12 +768,31 @@ test('both engines write byte-identical boards for the same events', both, () =>
         hook(engine, box, 'task', { cwd, ...update('s2', 7, { status: 'in_progress', subject: 'Seven, renamed' }) });
         hook(engine, box, 'task', { cwd, ...update('s2', 10, { status: 'deleted' }) });
         hook(engine, box, 'task', { cwd, session_id: 's 3/é!', tool_name: 'TaskCreate', tool_input: { subject: 42 }, tool_response: {} });
+        // "Waiting on you": a person's lines, items from the commands, and notifications.
+        fs.writeFileSync(box.board, read(box).replace('## Waiting on you\n', '## Waiting on you\n- by hand  \n\n\n'));
+        const texts = corpus().slice(0, 60);
+        texts.forEach((text, i) => {
+            const r = waiting(engine, { ...box, cwd }, 'add', '--session', `w${i % 3}`, '--key', `k${i % 25}`, '--', text);
+            assert.equal(r.status, 0, r.stderr);
+        });
+        for (const key of ['k3', 'w0/k6', 'w2/k7']) waiting(engine, { ...box, cwd }, 'remove', '--session', 'w1', '--key', key);
+        hook(engine, box, 'notify', { cwd, ...notify('s2', 'permission_prompt', 'Claude needs your permission to use mcp__x-y.') });
+        hook(engine, box, 'notify', { cwd, ...notify('n1', 'idle_prompt', 'Claude is waiting for your input') });
+        hook(engine, box, 'notify', { cwd, ...notify('n2', 'elicitation_dialog', 'Pick one') });
+        hook(engine, box, 'notify', { cwd, ...notify('n2', 'permission_prompt', 'Claude needs your permission to use Read'), agent_id: 'sub 1/é' });
+        hook(engine, box, 'notify', { cwd, ...notify('n3', 'agent_completed', 'Done') });
+        hook(engine, box, 'respond', { session_id: 'n1', hook_event_name: 'UserPromptSubmit' });
+        const listed = waiting(engine, box, 'list').stdout;
         hook(engine, box, 'end', { session_id: 's2' });
-        // The end time differs between runs, not between engines.
-        return read(box).replace(/ended=\S+/g, 'ended=T').replace(/ended at \d\d:\d\d/g, 'ended at HH:MM');
+        // The end and notification times differ between runs, not between engines.
+        const times = text => text.replace(/ended=\S+/g, 'ended=T').replace(/ended at \d\d:\d\d/g, 'ended at HH:MM').replace(/ at=\S+ -->/g, ' at=T -->');
+        return times(read(box)) + times(listed);
     });
     assert.ok(!boards[0].includes('markychecky:start old'), 'the old sections were swept');
     assert.ok(boards[0].indexOf('Arabic one') < boards[0].indexOf('Seven'), '١ sorts as 1');
+    assert.match(boards[0], /- by hand  \n- widgets: /, 'the commands\' items follow a person\'s line');
+    assert.match(boards[0], /markychecky:notify n2 at=T -->/);
+    assert.match(boards[0], /markychecky:notify n2 agent=sub1é at=T -->/);
     assert.equal(boards[1], boards[0]);
 });
 
@@ -420,10 +807,23 @@ test('a session can switch engines mid-way: they share their state and the lock'
     assert.match(s, /\*\*Now:\*\* Two\n\n- \[x\] One\n- \[ \] \*\*Two\*\*\n/);
     hook(python, box, 'end', { session_id: 's1' });
     assert.match(section(read(box), 's1'), /\*\*Now:\*\* idle/);
+    // A notification one engine adds, the other clears: they share the flag beside the state.
+    hook(app, box, 'notify', notify('s1', 'permission_prompt', 'Claude needs your permission to use Bash'));
+    hook(python, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+    hook(python, box, 'notify', notify('s1', 'idle_prompt', 'Claude is waiting for your input'));
+    hook(app, box, 'respond', { session_id: 's1', hook_event_name: 'PostToolBatch' });
+    assert.match(read(box), /notify s1 /, 'a batch doesn\'t answer a prompt, on either engine');
+    hook(app, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+    assert.doesNotMatch(read(box), /notify s1 /);
     // Both at once, through the same lock file.
-    await Promise.all(Array.from({ length: 16 }, (_, i) => hookAsync(engines[i % 2], box, 'task', create('s2', i + 1, `Task ${i + 1}`))));
+    await Promise.all([
+        ...Array.from({ length: 16 }, (_, i) => hookAsync(engines[i % 2], box, 'task', create('s2', i + 1, `Task ${i + 1}`))),
+        ...Array.from({ length: 16 }, (_, i) => waitingAsync(engines[i % 2], box, 'add', '--session', 's2', '--key', `q${i}`, `Question ${i}`)),
+    ]);
     s = section(read(box), 's2');
     for (let i = 1; i <= 16; i++) assert.match(s, new RegExp(`- \\[ \\] Task ${i}\\n`));
+    const items = waitingSection(read(box));
+    for (let i = 0; i < 16; i++) assert.match(items, new RegExp(`Question ${i} <!-- markychecky:item s2/q${i} -->\\n`));
 });
 
 test('the app\'s markychecky mode runs without starting the app: one call takes well under a second', { skip: !hasApp }, () => {
@@ -458,15 +858,14 @@ function launcherBox({ tools = [], darwin = false } = {}) {
     const tool = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
     tool('uname', `echo ${darwin ? 'Darwin' : 'Linux'}`);
     const env = { CLAUDE_PLUGIN_DATA: path.join(box.dir, 'data'), PATH: bin, HOME: home };
-    const launch = command => {
-        const result = spawnSync('/bin/sh', [launcher, command], { input: '{"session_id":"s1"}', env, encoding: 'utf8' });
-        assert.equal(result.status, 0, result.stderr);
-        return { stdout: result.stdout, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '' };
+    const launch = (...args) => {
+        const result = spawnSync('/bin/sh', [launcher, ...args], { input: '{"session_id":"s1"}', env, encoding: 'utf8' });
+        // A hook always exits 0; a waiting command fails when it can't run.
+        if (args[0] !== 'waiting') assert.equal(result.status, 0, result.stderr);
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '' };
     };
     return { box, bin, home, env, fake, tool, launch };
 }
-
-const installedApp = fs.existsSync('/Applications/Markydowny.app/Contents/MacOS/markydowny');
 
 test('the launcher prefers the Markydowny app, then markydowny on PATH, then Python', { skip: installedApp }, () => {
     const l = launcherBox();
@@ -480,6 +879,21 @@ test('the launcher prefers the Markydowny app, then markydowny on PATH, then Pyt
     const { stdout, calls } = l.launch('task');
     assert.equal(calls, 'mac-app markychecky task\n{"session_id":"s1"}');
     assert.equal(stdout, '');
+    // Every argument goes through, for the commands a session runs.
+    fs.rmSync(path.join(l.box.dir, 'calls'));
+    assert.match(l.launch('waiting', 'add', '--key', 'k', 'two words').calls, /^mac-app markychecky waiting add --key k two words\n/);
+});
+
+test('the launcher only hands an app engine 2: one with engine 1 gets Python, and so does a waiting command', { skip: installedApp }, () => {
+    const l = launcherBox();
+    l.fake(path.join(l.bin, 'python3'), 'python');
+    l.fake(path.join(l.bin, 'markydowny'), 'v1-app', 'markychecky-hook-engine-1');
+    for (const command of ['task', 'notify', 'respond']) {
+        fs.rmSync(path.join(l.box.dir, 'calls'), { force: true });
+        assert.equal(l.launch(command).calls, `python ${script} ${command}\n{"session_id":"s1"}`);
+    }
+    fs.rmSync(path.join(l.box.dir, 'calls'));
+    assert.match(l.launch('waiting', 'list', '--board', '/x/b.md').calls, new RegExp(`^python ${script} waiting list --board /x/b.md\n`));
 });
 
 test('the launcher skips a Markydowny without the mode, and uses an AppImage the installer saved', { skip: installedApp }, () => {
@@ -491,7 +905,14 @@ test('the launcher skips a Markydowny without the mode, and uses an AppImage the
     const appImage = path.join(l.box.dir, 'Markydowny.AppImage');
     l.fake(appImage, 'appimage');
     fs.mkdirSync(l.env.CLAUDE_PLUGIN_DATA, { recursive: true });
+    // An AppImage saved without its engine (engine 1 saves only its path) is passed over.
     fs.writeFileSync(path.join(l.env.CLAUDE_PLUGIN_DATA, 'markydowny-path'), `${appImage}\n`);
+    assert.match(l.launch('task').calls, /^python /);
+    fs.rmSync(path.join(l.box.dir, 'calls'));
+    fs.writeFileSync(path.join(l.env.CLAUDE_PLUGIN_DATA, 'markydowny-path'), `${appImage}\nmarkychecky-hook-engine-1\n`);
+    assert.match(l.launch('task').calls, /^python /);
+    fs.rmSync(path.join(l.box.dir, 'calls'));
+    fs.writeFileSync(path.join(l.env.CLAUDE_PLUGIN_DATA, 'markydowny-path'), `${appImage}\n${MARKER}\n`);
     assert.equal(l.launch('task').calls, 'appimage markychecky task\n{"session_id":"s1"}');
 });
 
@@ -502,7 +923,7 @@ test('the launcher uses an AppImage that saved itself, even without a trailing n
     l.fake(appImage, 'appimage');
     const cache = path.join(l.home, '.cache', 'markychecky');
     fs.mkdirSync(cache, { recursive: true });
-    fs.writeFileSync(path.join(cache, 'markydowny-path'), appImage);
+    fs.writeFileSync(path.join(cache, 'markydowny-path'), `${appImage}\n${MARKER}`);
     assert.equal(l.launch('end').calls, 'appimage markychecky end\n{"session_id":"s1"}');
     // One that has since been deleted is passed over.
     fs.rmSync(path.join(l.box.dir, 'calls'));
@@ -540,4 +961,9 @@ test('with neither Markydowny nor Python, the launcher shows how to set up once,
     assert.match(hint, /Python 3/);
     assert.equal(l.launch('task').stdout, '', 'only once');
     assert.equal(l.launch('end').stdout, '');
+    // A session's own command fails, and says why, rather than printing hook JSON.
+    const command = l.launch('waiting', 'list');
+    assert.equal(command.status, 1);
+    assert.equal(command.stdout, '');
+    assert.match(command.stderr, /needs an up-to-date Markydowny, or Python 3/);
 });

@@ -125,22 +125,25 @@ Any markdown viewer can show the board; Markydowny is the one that updates it li
 
 ## Questions for you, and parked work
 
-A session's task list holds the steps of what it's doing now. Questions for you, work that's parked and things waiting on someone else don't fit there, and they matter more than any one session's checklist. Keep them in one section of your own at the top of the board:
+A session's task list holds the steps of what it's doing now. Questions for you, work that's parked and things waiting on someone else don't fit there, and they matter more than any one session's checklist. So the board has one section for them at the top, and it's automatic:
 
 ```markdown
 # Markychecky
 
 ## Waiting on you
 
-- markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
-- web: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- markydowny · main: OK to delete the 33 GB `mog-desktop-base` VM?
+- web · pricing: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- api · fix/login: waiting for your input
 ```
 
-markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. Its own updates take a lock that a session's edits don't, though, so an edit made in the same instant as an update can be lost; the line below has sessions check theirs landed. To have your sessions use it, add this line to `~/.claude/CLAUDE.md`:
+- **It comes with the board.** markychecky puts `## Waiting on you` at the top of a new board, and adds it to a board that doesn't have one.
+- **Sessions know to use it.** As each session starts, markychecky tells it where the board is and how to add a line when something needs you, and remove it once it's resolved. Sessions do that with markychecky's own commands, which take the same lock as everything else that writes to the board, so no line is lost.
+- **A session that's waiting shows up by itself.** When a session stops for a permission prompt, or sits waiting for your input, a line like `api · fix/login: waiting for your input` appears, and goes as soon as you respond.
 
-```
-Put questions for me, and work that's parked or waiting on someone else, in the "Waiting on you" section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, read the file again just before each edit, check your line is there afterwards, and remove your lines once they're resolved.
-```
+A line a session adds stays when the session ends, until it's resolved and removed. Lines you write there yourself are never changed.
+
+You don't need to add anything to `~/.claude/CLAUDE.md`. If you added a "Waiting on you" line there for an earlier version, it can stay: markychecky tells sessions the same thing.
 
 ## Settings
 
@@ -151,6 +154,7 @@ Change these with `claude plugin configure markychecky`, or in `/plugin` > **Ins
 | `file` | `~/markychecky.md` | The board every session writes to |
 | `open` | `true` | Open the board in Markydowny on a session's first write (macOS) |
 | `idle_hours` | `24` | How long an ended session's section stays on the board |
+| `waiting` | `true` | Keep the "Waiting on you" section at the top of the board, and tell sessions about it |
 
 ## Keep it up to date
 

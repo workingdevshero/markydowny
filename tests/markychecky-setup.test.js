@@ -227,8 +227,11 @@ test('the installer is bash 3.2 friendly: it parses, and reads all of itself bef
     assert.doesNotMatch(text, /declare -A|local -A|\$\{\w+,,\}|\$\{\w+\^\^\}|mapfile|readarray/);
 });
 
+// With a home of its own: the hook saves the settings the `waiting` commands need beside the board.
 function sessionStart(env, PATH = process.env.PATH) {
-    const clean = { ...process.env, PATH, ...env };
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'markychecky-home-'));
+    const clean = { ...process.env, PATH, HOME: home, ...env };
+    for (const key of Object.keys(clean)) if (/^(MARKYCHECKY_|CLAUDE_PLUGIN_)/.test(key) && !(key in env)) delete clean[key];
     if (!('CLAUDE_CODE_ENABLE_TODO_TOOLS' in env)) delete clean.CLAUDE_CODE_ENABLE_TODO_TOOLS;
     return spawnSync(which('sh'), [startHook], {
         input: JSON.stringify({ session_id: 's1', hook_event_name: 'SessionStart', source: 'startup' }),
@@ -248,15 +251,43 @@ test('the SessionStart hook says how to turn on the task list when it\'s off', {
     }
 });
 
-test('the SessionStart hook stays silent when the task list is on', () => {
+test('the SessionStart hook shows you nothing when the task list is on, and only tells the session about Waiting on you', () => {
     const run = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' });
     assert.equal(run.status, 0);
-    assert.equal(run.stdout, '');
+    const out = JSON.parse(run.stdout);
+    assert.deepEqual(Object.keys(out), ['hookSpecificOutput']);
+    assert.match(out.hookSpecificOutput.additionalContext, /"Waiting on you" section/);
+    // With "Waiting on you" turned off, it's silent.
+    const off = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MARKYCHECKY_WAITING: 'false' });
+    assert.equal(off.status, 0);
+    assert.equal(off.stdout, '');
+});
+
+test('the SessionStart hook gives both, as one JSON object, when there\'s a problem and Waiting on you is on', { skip: !hasPython }, () => {
+    const run = sessionStart({});
+    const out = JSON.parse(run.stdout);
+    assert.match(out.systemMessage, /CLAUDE_CODE_ENABLE_TODO_TOOLS/);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
+    assert.match(out.hookSpecificOutput.additionalContext, /--session s1\b/);
+});
+
+test('the SessionStart hook quotes the board and the launcher for the shell, and escapes them for JSON', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'markychecky-quote-'));
+    const board = path.join(dir, `it's "a" \\ board.md`);
+    const run = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MARKYCHECKY_FILE: board });
+    const context = JSON.parse(run.stdout).hookSpecificOutput.additionalContext;
+    const list = context.match(/^- See what's there: (.*)$/m)[1];
+    // The shell reads the path back as it was.
+    const echo = spawnSync('sh', ['-c', `set -- ${list}; printf '%s' "$6"`], { encoding: 'utf8' });
+    assert.equal(echo.stdout, board);
+    const settings = JSON.parse(fs.readFileSync(path.join(dir, `.it's "a" \\ board.md.settings.json`), 'utf8'));
+    assert.equal(settings.waiting, true);
 });
 
 test('the SessionStart hook says python3 is missing, and still exits 0', () => {
     const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'markychecky-tools-'));
-    fs.symlinkSync(which('uname'), path.join(tools, 'uname'));
+    // Everything a system has but python3.
+    for (const tool of ['uname', 'cat', 'sed', 'awk', 'tr', 'cut', 'mkdir', 'mv', 'rm']) fs.symlinkSync(which(tool), path.join(tools, tool));
     const run = sessionStart({ CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }, tools);
     assert.equal(run.status, 0);
     assert.match(JSON.parse(run.stdout).systemMessage, /needs python3/);
