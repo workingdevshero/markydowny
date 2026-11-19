@@ -270,7 +270,7 @@ test('opening a file from outside the list closes a file list that was up', () =
     }
 });
 
-test('the homepage shows the product: screenshot rows, the markychecky spotlight and a 1.0 badge', () => {
+test('the homepage shows the product: screenshot rows, the markychecky spotlight and a download badge', () => {
     const features = main.match(/<div class="features marketing" id="features">([\s\S]*?)\n {12}<\/div>\n/)[1];
     const rows = [...features.matchAll(/<section class="feature feature-row"[\s\S]*?<\/section>/g)].map(m => m[0]);
     assert.equal(rows.length, 3, 'live reload, the editor and tabs each get a screenshot row');
@@ -299,8 +299,18 @@ test('the homepage shows the product: screenshot rows, the markychecky spotlight
 
     const hero = main.match(/<div class="hero marketing">[\s\S]*?<\/div>/)[0];
     assert.match(hero, /<a class="hero-badge" href="\/docs\/install\/">/);
-    // The download band also offers Linux, through the Download page.
-    assert.match(main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/)[0], /href="\/docs\/install\/"/);
+    // No version number to go stale, and every platform the Download page covers.
+    const badge = hero.match(/<a class="hero-badge"[\s\S]*?<\/a>/)[0];
+    assert.doesNotMatch(badge, /\d+\.\d+/);
+    const download = main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/)[0];
+    const install = fs.readFileSync(path.join(root, 'docs', 'install.md'), 'utf8');
+    for (const platform of ['Mac', 'Windows', 'Linux']) {
+        assert.match(install, new RegExp(`^## ${platform}`, 'm'));
+        assert.match(badge, new RegExp(platform), `the badge names ${platform}`);
+        assert.match(download.match(/<p>[\s\S]*?<\/p>/)[0], new RegExp(platform), `the download band names ${platform}`);
+    }
+    // The download band offers Windows and Linux through the Download page.
+    assert.match(download, /href="\/docs\/install\/"/);
 });
 
 test('the website loads the homepage screenshots, and the desktop app never does', () => {
