@@ -1,5 +1,5 @@
 {
-  "description": "Mirrors each session's task list to its own section of the markychecky board",
+  "description": "Mirrors each session's task list to its own section of the markychecky board, and keeps its \"Waiting on you\" section",
   "hooks": {
     "SessionStart": [
       {
@@ -20,6 +20,39 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" task || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" respond || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" respond || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/markychecky.sh\" notify || true",
             "timeout": 10
           }
         ]

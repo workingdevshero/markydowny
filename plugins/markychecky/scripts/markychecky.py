@@ -1,22 +1,45 @@
 #!/usr/bin/env python3
 """markychecky: keeps one markdown board of what every Claude Code session is doing.
 
-Claude Code runs this from hooks (see ../hooks/hooks.json) with the hook's JSON on stdin:
+Claude Code runs this from hooks (see ../hooks/hooks.json), through the launcher markychecky.sh,
+when the Markydowny app can't run them itself. Each gets the hook's JSON on stdin:
 
-  markychecky.py task   PostToolUse for TaskCreate, TaskUpdate and TodoWrite: update this
-                        session's task list and rewrite its section of the board
-  markychecky.py end    SessionEnd: mark this session's section idle
+  markychecky.py task     PostToolUse for TaskCreate, TaskUpdate and TodoWrite: update this
+                          session's task list and rewrite its section of the board
+  markychecky.py end      SessionEnd: mark this session's section idle, and clear its
+                          notification item
+  markychecky.py notify   Notification: add or refresh this session's "waiting for your input"
+                          or "needs permission" item in "Waiting on you"
+  markychecky.py respond  UserPromptSubmit and PostToolBatch: clear that item, once the user
+                          has answered it
+
+Sessions run these themselves, through markychecky.sh, from the context session-start.sh gives
+them:
+
+  markychecky.py waiting add --key <key> "<text>"   add or update this session's item
+  markychecky.py waiting remove --key <key>         remove it (or --key <session>/<key>)
+  markychecky.py waiting list                       print the section
 
 Each session owns one section, between `<!-- markychecky:start <id> -->` and
 `<!-- markychecky:end <id> -->`. A write takes a lock, re-reads the board, replaces only its own
 section and swaps the file in atomically, so sessions writing at once don't lose each other's
 updates, and anything a person writes outside the sections is kept as it is.
 
+"Waiting on you" is the board's one shared section, a heading at the top. markychecky adds the
+heading when the board has none, and only ever edits lines that end in its own hidden marker:
+`<!-- markychecky:item <session>/<key> -->` from `waiting add`, which stays until it's removed,
+and `<!-- markychecky:notify <session> at=<time> -->` from a notification, which goes when the
+session responds or ends. Lines a person writes there are never changed.
+
 Settings come from the plugin's options (CLAUDE_PLUGIN_OPTION_*), or MARKYCHECKY_* for testing:
   FILE        the board's path (default ~/markychecky.md)
   OPEN        "true" to open the board in Markydowny, in the background, when a session first
               writes to it (macOS, when Markydowny is installed; default true)
   IDLE_HOURS  how long an ended session's section stays on the board (default 24)
+  WAITING     "false" to leave out "Waiting on you": no section, no context, no items
+
+The `waiting` commands run in the session's shell, which doesn't get the plugin's options, so
+session-start.sh writes the ones they need to a file beside the board, `.<board>.settings.json`.
 
 It never fails the session: errors go to markychecky.log in the plugin's data folder, and the
 hook exits 0.
@@ -24,7 +47,6 @@ hook exits 0.
 
 import datetime as dt
 import fcntl
-import hashlib
 import json
 import os
 import re
@@ -42,6 +64,14 @@ SECTION_RE = re.compile(
 )
 STATUS_BOX = {"completed": "x", "in_progress": " ", "pending": " "}
 
+WAITING_HEADING = "## Waiting on you"
+# The heading may be any level, and has no other text.
+WAITING_RE = re.compile(r"^(?P<level>#{1,6})[ \t]+waiting on you[ \t]*#*[ \t]*$", re.I | re.M)
+ITEM = "<!-- markychecky:item {id} -->"
+NOTIFY = "<!-- markychecky:notify {session} at={at} -->"
+NOTIFY_RE = re.compile(r"<!-- markychecky:notify (?P<session>[\w.-]+) at=(?P<at>\S+) -->")
+KEY_RE = re.compile(r"[\w.-]{1,64}")
+
 
 def setting(name, default):
     for key in (f"MARKYCHECKY_{name}", f"CLAUDE_PLUGIN_OPTION_{name}"):
@@ -49,6 +79,10 @@ def setting(name, default):
         if value not in (None, ""):
             return value
     return default
+
+
+def on(name, default="true"):
+    return setting(name, default).lower() in ("1", "true", "yes")
 
 
 def data_dir():
@@ -256,7 +290,18 @@ def sweep(board, idle_hours, keep):
                 pass
         return match.group(0)
 
-    return SECTION_RE.sub(drop, board)
+    def stale(match):
+        # A notification item whose session never ended (it crashed, say) goes after idle_hours
+        # too. Items from `waiting add` have no time on them, and stay until they're removed.
+        try:
+            if dt.datetime.fromisoformat(NOTIFY_RE.search(match.group(0)).group("at")) < cutoff:
+                return ""
+        except (ValueError, TypeError):
+            pass
+        return match.group(0)
+
+    board = SECTION_RE.sub(drop, board)
+    return re.sub(r"^.*" + NOTIFY_RE.pattern + r".*\n?", stale, board, flags=re.M)
 
 
 def replace_section(board, session_id, section):
@@ -270,6 +315,70 @@ def replace_section(board, session_id, section):
 
 
 # ----------------------------------------------------------------------------------------------
+# Waiting on you
+# ----------------------------------------------------------------------------------------------
+
+
+def find_waiting(board):
+    """(start of the body, end of the body) of the "Waiting on you" section outside any session's
+    section, or None. The body runs to the next heading of the same level or higher, or the next
+    session's section."""
+    sessions = [m.span() for m in SECTION_RE.finditer(board)]
+    for match in WAITING_RE.finditer(board):
+        if any(a <= match.start() < b for a, b in sessions):
+            continue
+        body = board.find("\n", match.end())
+        body = len(board) if body < 0 else body + 1
+        level = len(match.group("level"))
+        boundary = re.compile(r"^(?:#{1,%d}[ \t]|<!-- markychecky:start )" % level, re.M)
+        end = boundary.search(board, body)
+        return body, end.start() if end else len(board)
+    return None
+
+
+def ensure_waiting(board):
+    """The board with a "Waiting on you" section: a new one goes above the sessions' sections."""
+    if not board.strip():
+        board = TITLE
+    if find_waiting(board):
+        return board
+    first = SECTION_RE.search(board)
+    if first:
+        return board[: first.start()] + WAITING_HEADING + "\n\n" + board[first.start():]
+    return board.rstrip("\n") + "\n\n" + WAITING_HEADING + "\n"
+
+
+def edit_waiting(board, edit):
+    """The board with the lines of "Waiting on you" replaced by edit(lines). Blank lines around
+    them are tidied; the lines themselves are kept exactly as edit returns them."""
+    board = ensure_waiting(board)
+    start, end = find_waiting(board)
+    lines = edit(board[start:end].strip("\n").split("\n") if board[start:end].strip() else [])
+    body = "".join(line + "\n" for line in lines)
+    if body and end < len(board):
+        body += "\n"  # a blank line before what follows
+    if body or end < len(board):
+        body = "\n" + body  # and one after the heading
+    if not board[:start].endswith("\n"):
+        body = "\n" + body  # the heading was the file's last line, with no newline
+    return board[:start] + body + board[end:]
+
+
+def without_notify(board, session_id):
+    """The board without this session's notification item."""
+    return re.sub(
+        r"^.*<!-- markychecky:notify %s at=\S+ -->.*\n?" % re.escape(session_id), "", board, flags=re.M
+    )
+
+
+def waiting_lines(board):
+    found = find_waiting(board)
+    if not found or not board[found[0]:found[1]].strip():
+        return []
+    return [line for line in board[found[0]:found[1]].strip("\n").split("\n") if line.strip()]
+
+
+# ----------------------------------------------------------------------------------------------
 # Writing the board
 # ----------------------------------------------------------------------------------------------
 
@@ -279,9 +388,9 @@ def write_board(path, update):
     Returns whether the board was created by this call."""
     path = os.path.abspath(os.path.expanduser(path))
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    lock_path = os.path.join(
-        data_dir(), f"board-{hashlib.sha1(path.encode()).hexdigest()[:16]}.lock"
-    )
+    # The lock sits next to the board, not in the plugin's data folder, so the `waiting`
+    # commands a session runs itself, which don't get the plugin's environment, take the same one.
+    lock_path = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.lock")
     with open(lock_path, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
@@ -317,8 +426,8 @@ def log(message):
         pass
 
 
-def open_in_markydowny(path):
-    if sys.platform != "darwin" or setting("OPEN", "true").lower() not in ("1", "true", "yes"):
+def open_in_markydowny(path, enabled=None):
+    if sys.platform != "darwin" or not (on("OPEN") if enabled is None else enabled):
         return
     if subprocess.run(["open", "-Ra", "Markydowny"], capture_output=True).returncode != 0:
         return  # not installed
@@ -326,19 +435,157 @@ def open_in_markydowny(path):
     subprocess.run(["open", "-g", "-a", "Markydowny", os.path.expanduser(path)], capture_output=True)
 
 
-def main(argv):
-    command = argv[1] if len(argv) > 1 else ""
-    event = json.load(sys.stdin)
+def settings_path(board_path):
+    """The file beside the board where SessionStart leaves the options the `waiting` commands
+    need. It sits there, like the lock, because those commands don't get the plugin's environment
+    and so can't find its data folder."""
+    path = os.path.abspath(os.path.expanduser(board_path))
+    return os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.settings.json")
+
+
+def board_settings(board_path):
+    """The options as the `waiting` commands see them: from the environment when it has them,
+    as the hooks do, or else from what SessionStart last saved beside the board."""
+    try:
+        with open(settings_path(board_path), encoding="utf-8") as f:
+            saved = json.load(f)
+        saved = saved if isinstance(saved, dict) else {}
+    except (OSError, ValueError):
+        saved = {}
+
+    def option(name):
+        if setting(name, "") != "":
+            return on(name)
+        return saved.get(name.lower()) is not False
+
+    return {"waiting": option("WAITING"), "open": option("OPEN"),
+            "data": saved.get("data") if isinstance(saved.get("data"), str) else None}
+
+
+def first_open(state):
+    """Whether this is the session's first write to the board, when the board opens in
+    Markydowny. Marks it, so the caller saves the state."""
+    if state.get("opened") or state.get("wrote"):
+        return False
+    state["opened"] = True
+    return True
+
+
+def idle_hours_setting():
+    try:
+        return float(setting("IDLE_HOURS", "24"))
+    except ValueError:
+        log(f"idle_hours is not a number of hours: {setting('IDLE_HOURS', '')!r}; using 24")
+        return 24.0
+
+
+# The notifications that mean a session is stopped until the user answers, and what clears
+# each: "tool" ones are a dialog in the middle of a tool call, answered when the call's batch
+# resolves, whether the user approved or denied it; "prompt" ones are answered by a prompt.
+# Every other type (a background agent finishing, a sign-in, a quota resume) isn't waiting on you.
+WAITS = {
+    "permission_prompt": "tool",
+    "worker_permission_prompt": "tool",
+    "elicitation_dialog": "tool",
+    "elicitation_url_dialog": "tool",
+    "idle_prompt": "prompt",
+    "agent_needs_input": "prompt",
+    "quota_auto_resume_stale": "prompt",
+}
+PERMISSION_RE = re.compile(r"permission to use ([\w-]+)")
+
+
+def notification_text(event):
+    """(what a Notification event is waiting on, what answers it), or ("", "") for one that
+    isn't waiting on the user."""
+    kind = event.get("notification_type") or ""
+    message = one_line(event.get("message") or "")
+    tool = PERMISSION_RE.search(message)
+    if not kind:  # from a Claude Code without notification types, which sent only these two
+        kind = "permission_prompt" if tool else "idle_prompt"
+    if kind not in WAITS:
+        return "", ""
+    if kind in ("permission_prompt", "worker_permission_prompt"):
+        text = f"needs permission to use {tool.group(1)}" if tool else "needs your permission"
+    elif kind.startswith("elicitation_"):
+        text = "has a question for you"
+    else:
+        text = "waiting for your input"
+    return text, WAITS[kind]
+
+
+def read_flag(flag_path):
+    """What the session's notification item waits on, as notify saved it, or None without one."""
+    try:
+        with open(flag_path, encoding="utf-8") as f:
+            flag = json.loads(f.read() or "{}")
+        return flag if isinstance(flag, dict) else {}
+    except ValueError:
+        return {}
+    except OSError:
+        return None
+
+
+def answers(event, flag):
+    """Whether this respond event answers the notification the flag describes."""
+    name = event.get("hook_event_name") or ""
+    if name == "UserPromptSubmit" or not name:
+        return True
+    # A permission dialog holds up its batch, so the batch resolving means it was answered. A
+    # subagent's batch answers only its own dialog: subagents share the session's id.
+    return (name == "PostToolBatch" and flag.get("waits") != "prompt"
+            and (event.get("agent_id") or "") == flag.get("agent", ""))
+
+
+def run_hook(command, event):
     session_id = re.sub(r"[^\w.-]", "", str(event.get("session_id") or ""))[:64]
     if not session_id:
         return
     board_path = setting("FILE", "~/markychecky.md")
-    try:
-        idle_hours = float(setting("IDLE_HOURS", "24"))
-    except ValueError:
-        log(f"idle_hours is not a number of hours: {setting('IDLE_HOURS', '')!r}; using 24")
-        idle_hours = 24.0
+    waiting = on("WAITING")
+    idle_hours = idle_hours_setting()
     state_path = os.path.join(data_dir(), "sessions", f"{session_id}.json")
+    # Whether this session has a notification item on the board, and what answers it. `respond`
+    # runs after every batch of tools, so it checks this before it takes the lock, and does
+    # nothing the rest of the time.
+    flag_path = os.path.join(data_dir(), "sessions", f"{session_id}.notify")
+
+    if command == "respond":
+        flag = read_flag(flag_path)
+        if flag is None or not answers(event, flag):
+            return
+
+        def update(board):
+            if os.path.exists(flag_path):
+                os.unlink(flag_path)
+            return without_notify(board, session_id)
+
+        write_board(board_path, update)
+        return
+
+    if command == "notify":
+        text, waits = notification_text(event)
+        if not waiting or not text:
+            return
+        line = f"- {one_line(place(event.get('cwd')))}: {text} " + NOTIFY.format(
+            session=session_id, at=now().isoformat()
+        )
+        opening = []
+
+        def update(board):
+            with open(flag_path, "w", encoding="utf-8") as f:
+                json.dump({"waits": waits, "agent": event.get("agent_id") or ""}, f)
+            state = load_state(state_path)
+            if first_open(state):
+                save_state(state_path, state)
+                opening.append(True)
+            board = edit_waiting(without_notify(board, session_id), lambda lines: lines + [line])
+            return sweep(board, idle_hours, session_id)
+
+        if write_board(board_path, update) or opening:
+            open_in_markydowny(board_path)
+        return
+
     if command not in ("task", "end"):
         return
     # git runs before the lock is taken, so sessions don't queue behind each other's git.
@@ -356,23 +603,137 @@ def main(argv):
             state.pop("ended", None)
             ended = None
         else:
+            if os.path.exists(flag_path):
+                os.unlink(flag_path)
+            board = without_notify(board, session_id)
             if not state.get("wrote"):
                 return board  # never wrote a section
             ended = now()
             state["ended"] = ended.isoformat()
-        if not state.get("wrote"):
-            state["wrote"] = True
+        if first_open(state):
             first.append(True)
+        state["wrote"] = True
         save_state(state_path, state)
         section = render_section(session_id, state, ended_at=ended)
-        return sweep(replace_section(board, session_id, section), idle_hours, session_id)
+        board = replace_section(board, session_id, section)
+        if waiting:
+            board = ensure_waiting(board)
+        return sweep(board, idle_hours, session_id)
 
     write_board(board_path, update)
     if first:
         open_in_markydowny(board_path)
 
 
+def run_waiting(args):
+    """`waiting add|remove|list`, which a session runs itself. Unlike the hooks, these say what
+    they did, and a mistake in how they're called fails the command."""
+    import argparse
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--board", default=setting("FILE", "~/markychecky.md"),
+                        help="the board (default: the plugin's file setting, or ~/markychecky.md)")
+    common.add_argument("--session", default=os.environ.get("CLAUDE_SESSION_ID") or "cli",
+                        help="the session the item belongs to")
+    parser = argparse.ArgumentParser(prog="markychecky.py waiting",
+                                     description='Edit the board\'s "Waiting on you" section.')
+    commands = parser.add_subparsers(dest="action", required=True)
+    add = commands.add_parser("add", parents=[common], help="add or update this session's item")
+    add.add_argument("--key", required=True, help="a short id for the item, such as release-v1")
+    add.add_argument("text", nargs="+", help="what's waiting on the user, on one line")
+    remove = commands.add_parser("remove", parents=[common], help="remove an item")
+    remove.add_argument("--key", required=True, help="the item's key, or <session>/<key>")
+    commands.add_parser("list", parents=[common], help="print the section")
+    opts = parser.parse_args(args)
+
+    session = re.sub(r"[^\w.-]", "", opts.session)[:64] or "cli"
+    if opts.action == "list":
+        try:
+            with open(os.path.expanduser(opts.board), encoding="utf-8") as f:
+                lines = waiting_lines(f.read())
+        except FileNotFoundError:
+            lines = []
+        for line in lines:
+            item = re.search(r"\s*<!-- markychecky:item (\S+) -->", line)
+            notify = NOTIFY_RE.search(line)
+            if item:
+                print(f"{line[: item.start()]}{line[item.end():]}  (key: {item.group(1)})")
+            elif notify:
+                print(f"{line[: notify.start()].rstrip()}  (a notification; it clears itself)")
+            else:
+                print(f"{line}  (written by hand; the commands leave it alone)")
+        if not lines:
+            print("Nothing is waiting on you.")
+        return 0
+
+    owner, _, key = opts.key.rpartition("/")
+    owner = owner or session
+    if not KEY_RE.fullmatch(key) or not KEY_RE.fullmatch(owner):
+        parser.error(f"--key {opts.key!r}: use letters, digits, '.', '-' and '_', such as release-v1")
+    item_id = f"{owner}/{key}"
+    marker = ITEM.format(id=item_id)
+    settings = board_settings(opts.board)
+    if not settings["waiting"]:
+        print("markychecky: \"Waiting on you\" is turned off in the plugin's settings; nothing changed.",
+              file=sys.stderr)
+        return 0
+
+    if opts.action == "add":
+        cwd = os.getcwd()
+        text = link_refs(one_line(" ".join(opts.text)), github_repo(cwd))
+        line = f"- {one_line(place(cwd))}: {text} {marker}"
+
+        def edit(lines):
+            if any(marker in old for old in lines):
+                return [line if marker in old else old for old in lines]
+            return lines + [line]
+
+        # The session's state, to open the board on its first write as the hooks do, is in the
+        # plugin's data folder, which this command only knows from what SessionStart saved.
+        data = settings["data"]
+        state_path = os.path.join(data, "sessions", f"{session}.json") if data else None
+        opening = []
+
+        def update(board):
+            if state_path and os.path.isdir(os.path.dirname(state_path)):
+                state = load_state(state_path)
+                if first_open(state):
+                    save_state(state_path, state)
+                    opening.append(True)
+            return edit_waiting(board, edit)
+
+        if write_board(opts.board, update) or opening:
+            open_in_markydowny(opts.board, settings["open"])
+        print(f"Added {item_id}: {line[2: -len(marker) - 1]}")
+        return 0
+
+    found = []
+
+    def drop(board):
+        if not find_waiting(board):
+            return board
+        lines = waiting_lines(board)
+        if not any(marker in line for line in lines):
+            return board
+        found.append(True)
+        return edit_waiting(board, lambda lines: [line for line in lines if marker not in line])
+
+    write_board(opts.board, drop)
+    if not found:
+        print(f"No item {item_id} on the board; nothing changed.", file=sys.stderr)
+        return 1
+    print(f"Removed {item_id}")
+    return 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ""
+    run_hook(command, json.load(sys.stdin))
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["waiting"]:
+        sys.exit(run_waiting(sys.argv[2:]))
     try:
         main(sys.argv)
     except Exception as error:  # never fail the session over the board

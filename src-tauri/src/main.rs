@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // `markydowny markychecky task|end`: markychecky's hook, run before anything of the app
-    // starts (no window, menu or crash reporting), so it finishes in milliseconds.
+    // `markydowny markychecky <command>`: markychecky's hooks and its `waiting` commands, run
+    // before anything of the app starts (no window, menu or crash reporting), so they finish in
+    // milliseconds.
     #[cfg(unix)]
     if std::env::args_os()
         .nth(1)
@@ -13,8 +14,7 @@ fn main() {
             .skip(2)
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        markydowny_lib::markychecky::main(&args);
-        std::process::exit(0);
+        std::process::exit(markydowny_lib::markychecky::main(&args));
     }
     #[cfg(unix)]
     markydowny_lib::markychecky::remember_app_image();

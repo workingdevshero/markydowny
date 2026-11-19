@@ -1,11 +1,13 @@
-//! markychecky's hook, run by the app: `markydowny markychecky task|end`, with the hook's JSON
-//! on stdin. It does what `plugins/markychecky/scripts/markychecky.py` does, which stays as the
-//! fallback when Markydowny isn't installed, so the two must write byte-identical boards and
-//! share the same state files: a session can switch from one to the other mid-way.
+//! markychecky's hook, run by the app: `markydowny markychecky task|end|notify|respond`, with
+//! the hook's JSON on stdin, and the `waiting add|remove|list` commands sessions run themselves.
+//! It does what `plugins/markychecky/scripts/markychecky.py` does, which stays as the fallback
+//! when Markydowny isn't installed, so the two must write byte-identical boards and share the
+//! same state files: a session can switch from one to the other mid-way.
 //!
 //! `main.rs` runs this before anything of the app starts (no Tauri, window, menu or crash
-//! reporting), so a call takes milliseconds. It never fails the session: it always exits 0,
-//! prints nothing, and logs problems to `markychecky.log` in the plugin's data folder.
+//! reporting), so a call takes milliseconds. A hook never fails the session: it always exits 0,
+//! prints nothing, and logs problems to `markychecky.log` in the plugin's data folder. A
+//! `waiting` command says what it did, and exits non-zero when it couldn't.
 //!
 //! The Python script's regular expressions use lookbehind and backreferences, which the
 //! `regex` crate doesn't have, so the matchers here are written out by hand, each next to the
@@ -24,31 +26,68 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
-/// In the binary so the plugin's launcher can tell a Markydowny that has this mode from an
-/// older one, which would start its window instead (`markychecky.sh` greps for it).
-pub const ENGINE_MARKER: &str = "markychecky-hook-engine-1";
+/// In the binary so the plugin's launcher can tell a Markydowny that has this mode, with every
+/// command the plugin runs, from an older one: one without the mode would start its window, and
+/// engine 1 has no `notify`, `respond` or `waiting` (`markychecky.sh` greps for it).
+pub const ENGINE_MARKER: &str = "markychecky-hook-engine-2";
 
 const TITLE: &str =
     "# Markychecky\n\nWhat each Claude Code session is working on. Sessions update their own sections.\n";
 const START: &str = "<!-- markychecky:start ";
 const STATUSES: [&str; 3] = ["completed", "in_progress", "pending"];
+const WAITING_HEADING: &str = "## Waiting on you";
+const ITEM: &str = "<!-- markychecky:item ";
+const NOTIFY: &str = "<!-- markychecky:notify ";
+
+/// The notifications that mean a session is stopped until the user answers, and what clears
+/// each: "tool" ones are a dialog in the middle of a tool call, answered when the call's batch
+/// resolves, whether the user approved or denied it; "prompt" ones are answered by a prompt.
+/// Every other type (a background agent finishing, a sign-in, a quota resume) isn't waiting on you.
+const WAITS: [(&str, &str); 7] = [
+    ("permission_prompt", "tool"),
+    ("worker_permission_prompt", "tool"),
+    ("elicitation_dialog", "tool"),
+    ("elicitation_url_dialog", "tool"),
+    ("idle_prompt", "prompt"),
+    ("agent_needs_input", "prompt"),
+    ("quota_auto_resume_stale", "prompt"),
+];
 
 type Result<T> = std::result::Result<T, String>;
 
-/// `markydowny markychecky <args>`. Never panics or prints; problems go to the log.
-pub fn main(args: &[String]) {
+/// `markydowny markychecky <args>`, returning the exit code. A hook never panics or prints, and
+/// exits 0; its problems go to the log. A `waiting` command prints what it did, and its problems.
+pub fn main(args: &[String]) -> i32 {
     std::panic::set_hook(Box::new(|_| {}));
-    let outcome = std::panic::catch_unwind(|| run(args));
-    let message = match outcome {
-        Ok(Ok(())) => return,
-        Ok(Err(error)) => error,
-        Err(panic) => panic
+    let panic_message = |panic: Box<dyn std::any::Any + Send>| {
+        panic
             .downcast_ref::<String>()
             .cloned()
             .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_else(|| "panic".into()),
+            .unwrap_or_else(|| "panic".into())
+    };
+    if args.first().map(String::as_str) == Some("waiting") {
+        let outcome = std::panic::catch_unwind(|| run_waiting(&args[1..]));
+        return match outcome {
+            Ok(Ok(code)) => code,
+            Ok(Err(error)) => {
+                eprintln!("markychecky: {error}");
+                1
+            }
+            Err(panic) => {
+                eprintln!("markychecky: {}", panic_message(panic));
+                1
+            }
+        };
+    }
+    let outcome = std::panic::catch_unwind(|| run(args));
+    let message = match outcome {
+        Ok(Ok(())) => return 0,
+        Ok(Err(error)) => error,
+        Err(panic) => panic_message(panic),
     };
     log(args, &message);
+    0
 }
 
 /// Run as an AppImage, saves its path where markychecky's launcher looks for it: an AppImage is
@@ -61,9 +100,11 @@ pub fn remember_app_image() {
     }
 }
 
+/// The path, then the engine on the next line, so the launcher only runs an AppImage that has
+/// the commands it's given.
 fn save_app_image(app_image: &str, dir: &str) -> std::io::Result<()> {
     let file = format!("{dir}/markydowny-path");
-    let line = format!("{app_image}\n");
+    let line = format!("{app_image}\n{ENGINE_MARKER}\n");
     if fs::read_to_string(&file).is_ok_and(|saved| saved == line) {
         return Ok(());
     }
@@ -91,6 +132,7 @@ fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let board_path = setting("FILE", "~/markychecky.md");
+    let waiting = on("WAITING");
     let raw_hours = setting("IDLE_HOURS", "24");
     let idle_hours = match parse_float(&raw_hours) {
         Some(hours) => hours,
@@ -104,6 +146,62 @@ fn run(args: &[String]) -> Result<()> {
     };
     let data = data_dir()?;
     let state_path = format!("{data}/sessions/{session_id}.json");
+    // Whether this session has a notification item on the board, and what answers it. `respond`
+    // runs after every batch of tools, so it checks this before it takes the lock, and does
+    // nothing the rest of the time.
+    let flag_path = format!("{data}/sessions/{session_id}.notify");
+
+    if command == "respond" {
+        match read_flag(&flag_path) {
+            Some(flag) if answers(event, &flag) => {}
+            _ => return Ok(()),
+        }
+        write_board(&board_path, |board| {
+            let _ = fs::remove_file(&flag_path);
+            Ok(without_notify(board, &session_id))
+        })?;
+        return Ok(());
+    }
+
+    if command == "notify" {
+        let Some((text, waits)) = notification_text(event)? else {
+            return Ok(());
+        };
+        if !waiting {
+            return Ok(());
+        }
+        let cwd = event_cwd(event.get("cwd"))?;
+        let now = now_micros();
+        let line = format!(
+            "- {}: {text} {NOTIFY}{session_id} at={} -->",
+            one_line(&place(&cwd)),
+            iso_utc(now)
+        );
+        let empty = Value::String(String::new());
+        let agent = or(event.get("agent_id"), Some(&empty)).unwrap().clone();
+        let mut opening = false;
+        let created = write_board(&board_path, |board| {
+            let mut flag = Map::new();
+            flag.insert("waits".into(), Value::String(waits.into()));
+            flag.insert("agent".into(), agent);
+            fs::write(&flag_path, Value::Object(flag).to_string()).map_err(|e| e.to_string())?;
+            let mut state = load_state(&state_path);
+            if first_open(&mut state) {
+                save_state(&state_path, &state)?;
+                opening = true;
+            }
+            let board = edit_waiting(&without_notify(board, &session_id), |mut lines| {
+                lines.push(line);
+                lines
+            });
+            sweep(&board, idle_hours, &session_id, now)
+        })?;
+        if created || opening {
+            open_in_markydowny(&board_path, None);
+        }
+        return Ok(());
+    }
+
     if command != "task" && command != "end" {
         return Ok(());
     }
@@ -115,43 +213,55 @@ fn run(args: &[String]) -> Result<()> {
         None
     };
     let mut first = false;
-    write_board(&board_path, &data, |board| {
+    write_board(&board_path, |board| {
         // Under the board's lock: hooks for one session run at once when several task tools
         // fire in a turn, and each must fold its event into the state the last one saved.
         let mut state = load_state(&state_path);
         let now = now_micros();
+        let mut board = board.to_string();
         let ended = if let Some((place, repo)) = &place_and_repo {
             if !apply_event(&mut state, event)? {
-                return Ok(board.to_string());
+                return Ok(board);
             }
             state.insert("place".into(), Value::String(place.clone()));
             state.insert("repo".into(), Value::String(repo.clone()));
             state.remove("ended");
             None
         } else {
+            let _ = fs::remove_file(&flag_path);
+            board = without_notify(&board, &session_id);
             if !truthy(state.get("wrote")) {
-                return Ok(board.to_string()); // never wrote a section
+                return Ok(board); // never wrote a section
             }
             state.insert("ended".into(), Value::String(iso_utc(now)));
             Some(now)
         };
-        if !truthy(state.get("wrote")) {
-            state.insert("wrote".into(), Value::Bool(true));
+        if first_open(&mut state) {
             first = true;
         }
+        state.insert("wrote".into(), Value::Bool(true));
         save_state(&state_path, &state)?;
         let section = render_section(&session_id, &state, ended, local_hh_mm)?;
-        sweep(
-            &replace_section(board, &session_id, &section),
-            idle_hours,
-            &session_id,
-            now,
-        )
+        let mut board = replace_section(&board, &session_id, &section);
+        if waiting {
+            board = ensure_waiting(&board);
+        }
+        sweep(&board, idle_hours, &session_id, now)
     })?;
     if first {
-        open_in_markydowny(&board_path);
+        open_in_markydowny(&board_path, None);
     }
     Ok(())
+}
+
+/// Whether this is the session's first write to the board, when the board opens in Markydowny.
+/// Marks it, so the caller saves the state.
+fn first_open(state: &mut Map<String, Value>) -> bool {
+    if truthy(state.get("opened")) || truthy(state.get("wrote")) {
+        return false;
+    }
+    state.insert("opened".into(), Value::Bool(true));
+    true
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -170,6 +280,10 @@ fn setting(name: &str, default: &str) -> String {
         }
     }
     default.to_string()
+}
+
+fn on(name: &str) -> bool {
+    ["1", "true", "yes"].contains(&setting(name, "true").to_lowercase().as_str())
 }
 
 /// The plugin's data folder, with its `sessions` folder made.
@@ -894,7 +1008,14 @@ fn sweep(board: &str, idle_hours: f64, keep: &str, now: i64) -> Result<String> {
         }
     }
     out.push_str(&board[pos..]);
-    Ok(out)
+    // A notification item whose session never ended (it crashed, say) goes after idle_hours
+    // too. Items from `waiting add` have no time on them, and stay until they're removed.
+    Ok(keep_lines(&out, |line| {
+        !notify_markers(line)
+            .first()
+            .and_then(|&(_, _, at)| parse_iso(at))
+            .is_some_and(|at| at < cutoff)
+    }))
 }
 
 /// The board with this session's section replaced, or added at the end.
@@ -911,21 +1032,611 @@ fn replace_section(board: &str, session_id: &str, section: &str) -> String {
 }
 
 // ----------------------------------------------------------------------------------------------
+// Waiting on you
+// ----------------------------------------------------------------------------------------------
+
+/// A "Waiting on you" heading on the line at `p`, as `WAITING_RE` matches it:
+/// `^(?P<level>#{1,6})[ \t]+waiting on you[ \t]*#*[ \t]*$`, case-insensitively (where Python's
+/// `re.I` also takes `İ` and `ı` for `i`). Returns the end of the line and the heading's level.
+fn waiting_heading_at(board: &str, p: usize) -> Option<(usize, usize)> {
+    let line_end = board[p..].find('\n').map_or(board.len(), |at| p + at);
+    let line = &board[p..line_end];
+    let level = line.bytes().take_while(|&b| b == b'#').count();
+    if !(1..=6).contains(&level) {
+        return None;
+    }
+    let rest = line[level..].trim_start_matches([' ', '\t']);
+    if rest.len() == line.len() - level {
+        return None;
+    }
+    let mut chars = rest.chars();
+    for want in "waiting on you".chars() {
+        let c = chars.next()?;
+        let same = match want {
+            'i' => matches!(c, 'i' | 'I' | '\u{130}' | '\u{131}'),
+            ' ' => c == ' ',
+            _ => c.to_ascii_lowercase() == want,
+        };
+        if !same {
+            return None;
+        }
+    }
+    let tail = chars
+        .as_str()
+        .trim_start_matches([' ', '\t'])
+        .trim_start_matches('#')
+        .trim_start_matches([' ', '\t']);
+    tail.is_empty().then_some((line_end, level))
+}
+
+/// The start of each line of the board, from `from` on, as `^` finds them with `re.M`.
+fn line_starts(board: &str, from: usize) -> impl Iterator<Item = usize> + '_ {
+    let first = (from == 0 || board[..from].ends_with('\n')).then_some(from);
+    first.into_iter().chain(
+        board[from..]
+            .match_indices('\n')
+            .map(move |(at, _)| from + at + 1),
+    )
+}
+
+/// (start of the body, end of the body) of the "Waiting on you" section outside any session's
+/// section, or None. The body runs to the next heading of the same level or higher, or the next
+/// session's section: `^(?:#{1,level}[ \t]|<!-- markychecky:start )`.
+fn find_waiting(board: &str) -> Option<(usize, usize)> {
+    let spans: Vec<(usize, usize)> = sections(board).iter().map(|s| (s.start, s.end)).collect();
+    for p in line_starts(board, 0) {
+        let Some((line_end, level)) = waiting_heading_at(board, p) else {
+            continue;
+        };
+        if spans.iter().any(|&(a, b)| a <= p && p < b) {
+            continue;
+        }
+        let body = (line_end + 1).min(board.len());
+        let boundary = |q: usize| {
+            let line = &board[q..];
+            let hashes = line.bytes().take_while(|&b| b == b'#').count();
+            line.starts_with(START)
+                || ((1..=level).contains(&hashes)
+                    && matches!(line.as_bytes().get(hashes), Some(b' ' | b'\t')))
+        };
+        let end = line_starts(board, body)
+            .find(|&q| boundary(q))
+            .unwrap_or(board.len());
+        return Some((body, end));
+    }
+    None
+}
+
+/// The board with a "Waiting on you" section: a new one goes above the sessions' sections.
+fn ensure_waiting(board: &str) -> String {
+    let board = if board.trim_matches(is_space).is_empty() {
+        TITLE
+    } else {
+        board
+    };
+    if find_waiting(board).is_some() {
+        return board.to_string();
+    }
+    if let Some(first) = sections(board).first() {
+        return format!(
+            "{}{WAITING_HEADING}\n\n{}",
+            &board[..first.start],
+            &board[first.start..]
+        );
+    }
+    format!("{}\n\n{WAITING_HEADING}\n", board.trim_end_matches('\n'))
+}
+
+/// The lines of the section's body, or none when it's blank.
+fn body_lines(body: &str) -> Vec<String> {
+    if body.trim_matches(is_space).is_empty() {
+        return Vec::new();
+    }
+    body.trim_matches('\n')
+        .split('\n')
+        .map(String::from)
+        .collect()
+}
+
+/// The board with the lines of "Waiting on you" replaced by edit(lines). Blank lines around
+/// them are tidied; the lines themselves are kept exactly as edit returns them.
+fn edit_waiting(board: &str, edit: impl FnOnce(Vec<String>) -> Vec<String>) -> String {
+    let board = ensure_waiting(board);
+    let Some((start, end)) = find_waiting(&board) else {
+        return board;
+    };
+    let mut body: String = edit(body_lines(&board[start..end]))
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect();
+    if !body.is_empty() && end < board.len() {
+        body.push('\n'); // a blank line before what follows
+    }
+    if !body.is_empty() || end < board.len() {
+        body.insert(0, '\n'); // and one after the heading
+    }
+    if !board[..start].ends_with('\n') {
+        body.insert(0, '\n'); // the heading was the file's last line, with no newline
+    }
+    format!("{}{body}{}", &board[..start], &board[end..])
+}
+
+/// The lines of the section that aren't blank.
+fn waiting_lines(board: &str) -> Vec<String> {
+    let Some((start, end)) = find_waiting(board) else {
+        return Vec::new();
+    };
+    body_lines(&board[start..end])
+        .into_iter()
+        .filter(|line| !line.trim_matches(is_space).is_empty())
+        .collect()
+}
+
+/// A marker `<prefix><id> <rest>-->` at `at`, where `<id>` is a run of `id_char`s and `<rest>`
+/// is what `rest` reads from the text after the id and its space, returning its end there.
+/// Returns (the id, where the rest starts, the marker's end).
+fn marker_at<'a>(
+    line: &'a str,
+    at: usize,
+    prefix: &str,
+    id_char: impl Fn(char) -> bool,
+) -> Option<(&'a str, usize)> {
+    let from = at + prefix.len();
+    let rest = line
+        .get(from..)
+        .filter(|_| line[at..].starts_with(prefix))?;
+    let len: usize = rest
+        .chars()
+        .take_while(|&c| id_char(c))
+        .map(char::len_utf8)
+        .sum();
+    (len > 0).then(|| (&rest[..len], from + len))
+}
+
+/// The run of non-whitespace at `from` (`\S+`), if " -->" follows it, and the marker's end.
+fn value_then_close(line: &str, from: usize) -> Option<(&str, usize)> {
+    let rest = &line[from..];
+    let len: usize = rest
+        .chars()
+        .take_while(|&c| !is_space(c))
+        .map(char::len_utf8)
+        .sum();
+    (len > 0 && rest[len..].starts_with(" -->")).then(|| (&rest[..len], from + len + 4))
+}
+
+/// Each notification marker in a line, in order, as `NOTIFY_RE` finds them:
+/// `<!-- markychecky:notify (?P<session>[\w.-]+) at=(?P<at>\S+) -->`. Gives (start, session, at).
+fn notify_markers(line: &str) -> Vec<(usize, &str, &str)> {
+    let mut found = Vec::new();
+    for (at, _) in line.match_indices(NOTIFY) {
+        let Some((session, after)) =
+            marker_at(line, at, NOTIFY, |c| is_word(c) || c == '.' || c == '-')
+        else {
+            continue;
+        };
+        let Some(time_at) = line[after..].strip_prefix(" at=").map(|_| after + 4) else {
+            continue;
+        };
+        if let Some((time, _)) = value_then_close(line, time_at) {
+            found.push((at, session, time));
+        }
+    }
+    found
+}
+
+/// The first item marker in a line, with the whitespace before it, as
+/// `\s*<!-- markychecky:item (\S+) -->` searches for it. Gives (start, end, id).
+fn item_marker(line: &str) -> Option<(usize, usize, &str)> {
+    line.match_indices(ITEM).find_map(|(at, _)| {
+        let (id, end) = value_then_close(line, at + ITEM.len())?;
+        let space: usize = line[..at]
+            .chars()
+            .rev()
+            .take_while(|&c| is_space(c))
+            .map(char::len_utf8)
+            .sum();
+        Some((at - space, end, id))
+    })
+}
+
+/// The board with only the lines `keep` keeps, each with its newline.
+fn keep_lines(board: &str, mut keep: impl FnMut(&str) -> bool) -> String {
+    board
+        .split_inclusive('\n')
+        .filter(|piece| keep(piece.strip_suffix('\n').unwrap_or(piece)))
+        .collect()
+}
+
+/// The board without this session's notification item.
+fn without_notify(board: &str, session_id: &str) -> String {
+    keep_lines(board, |line| {
+        !notify_markers(line)
+            .iter()
+            .any(|&(_, session, _)| session == session_id)
+    })
+}
+
+/// (what a Notification event is waiting on, what answers it), or None for one that isn't
+/// waiting on the user.
+fn notification_text(event: &Map<String, Value>) -> Result<Option<(String, &'static str)>> {
+    let message = match event.get("message") {
+        m if truthy(m) => one_line(&py_str(m.unwrap())),
+        _ => String::new(),
+    };
+    // `permission to use ([\w-]+)`
+    let tool = message
+        .match_indices("permission to use ")
+        .find_map(|(at, phrase)| {
+            let rest = &message[at + phrase.len()..];
+            let len: usize = rest
+                .chars()
+                .take_while(|&c| is_word(c) || c == '-')
+                .map(char::len_utf8)
+                .sum();
+            (len > 0).then(|| rest[..len].to_string())
+        });
+    let kind = match event.get("notification_type") {
+        // From a Claude Code without notification types, which sent only these two.
+        k if !truthy(k) && tool.is_some() => "permission_prompt",
+        k if !truthy(k) => "idle_prompt",
+        Some(Value::String(kind)) => kind.as_str(),
+        Some(Value::Array(_) | Value::Object(_)) => {
+            return Err("TypeError: unhashable notification_type".into())
+        }
+        _ => return Ok(None),
+    };
+    let Some(&(_, waits)) = WAITS.iter().find(|(name, _)| *name == kind) else {
+        return Ok(None);
+    };
+    let text = if kind.ends_with("permission_prompt") {
+        match tool {
+            Some(tool) => format!("needs permission to use {tool}"),
+            None => "needs your permission".into(),
+        }
+    } else if kind.starts_with("elicitation_") {
+        "has a question for you".into()
+    } else {
+        "waiting for your input".into()
+    };
+    Ok(Some((text, waits)))
+}
+
+/// What the session's notification item waits on, as notify saved it, or None without one.
+fn read_flag(path: &str) -> Option<Map<String, Value>> {
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8(bytes).unwrap_or_default();
+    let text = if text.is_empty() { "{}" } else { &text };
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(flag)) => Some(flag),
+        _ => Some(Map::new()),
+    }
+}
+
+/// Whether this respond event answers the notification the flag describes.
+fn answers(event: &Map<String, Value>, flag: &Map<String, Value>) -> bool {
+    let name = event.get("hook_event_name");
+    if !truthy(name) || name.and_then(Value::as_str) == Some("UserPromptSubmit") {
+        return true;
+    }
+    // A permission dialog holds up its batch, so the batch resolving means it was answered. A
+    // subagent's batch answers only its own dialog: subagents share the session's id.
+    let empty = Value::String(String::new());
+    name.and_then(Value::as_str) == Some("PostToolBatch")
+        && flag.get("waits").and_then(Value::as_str) != Some("prompt")
+        && or(event.get("agent_id"), Some(&empty)) == Some(flag.get("agent").unwrap_or(&empty))
+}
+
+// ----------------------------------------------------------------------------------------------
+// The `waiting` commands, which a session runs itself
+// ----------------------------------------------------------------------------------------------
+
+const WAITING_USAGE: &str = "usage: markychecky waiting {add,remove,list} [--board BOARD] [--session SESSION] [--key KEY] [text ...]";
+
+const WAITING_HELP: &str = "Edit the board's \"Waiting on you\" section.
+
+  waiting add --key KEY TEXT...   add or update this session's item
+  waiting remove --key KEY        remove an item: this session's KEY, or SESSION/KEY
+  waiting list                    print the section
+
+options:
+  --board BOARD      the board (default: the plugin's file setting, or ~/markychecky.md)
+  --session SESSION  the session the item belongs to
+  --key KEY          a short id for the item, such as release-v1";
+
+/// A mistake in how a command was called: the usage, then the error, and exit status 2, as
+/// Python's argparse does it.
+fn usage_error(action: &str, message: &str) -> i32 {
+    let prog = if action.is_empty() {
+        "markychecky waiting".to_string()
+    } else {
+        format!("markychecky waiting {action}")
+    };
+    eprintln!("{WAITING_USAGE}\n{prog}: error: {message}");
+    2
+}
+
+/// `waiting add|remove|list`. Unlike the hooks, these say what they did, and a mistake in how
+/// they're called fails the command.
+fn run_waiting(args: &[String]) -> Result<i32> {
+    if args.is_empty() {
+        return Ok(usage_error(
+            "",
+            "the following arguments are required: action",
+        ));
+    }
+    if matches!(args[0].as_str(), "-h" | "--help") {
+        println!("{WAITING_USAGE}\n\n{WAITING_HELP}");
+        return Ok(0);
+    }
+    let action = args[0].as_str();
+    if !matches!(action, "add" | "remove" | "list") {
+        return Ok(usage_error(
+            "",
+            &format!("argument action: invalid choice: '{action}' (choose from add, remove, list)"),
+        ));
+    }
+    let names: &[&str] = if action == "list" {
+        &["board", "session"]
+    } else {
+        &["board", "session", "key"]
+    };
+    let mut board = setting("FILE", "~/markychecky.md");
+    let mut session = match std::env::var("CLAUDE_SESSION_ID") {
+        Ok(id) if !id.is_empty() => id,
+        _ => "cli".into(),
+    };
+    let mut key: Option<String> = None;
+    let mut text: Vec<String> = Vec::new();
+    let mut rest = args[1..].iter();
+    let mut options_done = false;
+    while let Some(arg) = rest.next() {
+        if options_done || !arg.starts_with('-') || arg == "-" {
+            if action != "add" {
+                return Ok(usage_error("", &format!("unrecognized arguments: {arg}")));
+            }
+            text.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            options_done = true;
+            continue;
+        }
+        if matches!(arg.as_str(), "-h" | "--help") {
+            println!("{WAITING_USAGE}\n\n{WAITING_HELP}");
+            return Ok(0);
+        }
+        let (given, inline) = match arg.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_string())),
+            None => (arg.as_str(), None),
+        };
+        // An option's name, or any prefix of one that names only it.
+        let matching: Vec<&str> = given
+            .strip_prefix("--")
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                names
+                    .iter()
+                    .copied()
+                    .filter(|n| n.starts_with(name))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let [name] = matching[..] else {
+            return Ok(usage_error("", &format!("unrecognized arguments: {arg}")));
+        };
+        let value = match inline {
+            Some(value) => value,
+            None => match rest.next() {
+                Some(value) if !value.starts_with('-') || value == "-" => value.clone(),
+                _ => {
+                    return Ok(usage_error(
+                        action,
+                        &format!("argument --{name}: expected one argument"),
+                    ))
+                }
+            },
+        };
+        match name {
+            "board" => board = value,
+            "session" => session = value,
+            _ => key = Some(value),
+        }
+    }
+    let session: String = session
+        .chars()
+        .filter(|&c| is_word(c) || c == '.' || c == '-')
+        .take(64)
+        .collect();
+    let session = if session.is_empty() {
+        "cli".to_string()
+    } else {
+        session
+    };
+
+    if action == "list" {
+        let text = match fs::read(expand_user(&board)) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .map_err(|e| format!("UnicodeDecodeError({e})"))?
+                .replace("\r\n", "\n")
+                .replace('\r', "\n"),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.to_string()),
+        };
+        let lines = waiting_lines(&text);
+        for line in &lines {
+            if let Some((start, end, id)) = item_marker(line) {
+                println!("{}{}  (key: {id})", &line[..start], &line[end..]);
+            } else if let Some(&(start, _, _)) = notify_markers(line).first() {
+                println!(
+                    "{}  (a notification; it clears itself)",
+                    line[..start].trim_end_matches(is_space)
+                );
+            } else {
+                println!("{line}  (written by hand; the commands leave it alone)");
+            }
+        }
+        if lines.is_empty() {
+            println!("Nothing is waiting on you.");
+        }
+        return Ok(0);
+    }
+
+    let required: Vec<&str> = [
+        key.is_none().then_some("--key"),
+        (action == "add" && text.is_empty()).then_some("text"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !required.is_empty() {
+        return Ok(usage_error(
+            action,
+            &format!(
+                "the following arguments are required: {}",
+                required.join(", ")
+            ),
+        ));
+    }
+    let given_key = key.unwrap_or_default();
+    let (owner, item_key) = given_key.rsplit_once('/').unwrap_or(("", &given_key));
+    let owner = if owner.is_empty() { &session } else { owner };
+    let valid = |id: &str| {
+        (1..=64).contains(&id.chars().count())
+            && id.chars().all(|c| is_word(c) || c == '.' || c == '-')
+    };
+    if !valid(item_key) || !valid(owner) {
+        return Ok(usage_error(
+            action,
+            &format!(
+                "--key '{given_key}': use letters, digits, '.', '-' and '_', such as release-v1"
+            ),
+        ));
+    }
+    let item_id = format!("{owner}/{item_key}");
+    let marker = format!("{ITEM}{item_id} -->");
+    let settings = board_settings(&board)?;
+    if !settings.waiting {
+        eprintln!(
+            "markychecky: \"Waiting on you\" is turned off in the plugin's settings; nothing changed."
+        );
+        return Ok(0);
+    }
+
+    if action == "add" {
+        let cwd = current_dir()?;
+        let text = link_refs(&one_line(&text.join(" ")), &github_repo(&cwd));
+        let line = format!("- {}: {text} {marker}", one_line(&place(&cwd)));
+        // The session's state, to open the board on its first write as the hooks do, is in the
+        // plugin's data folder, which this command only knows from what SessionStart saved.
+        let state_path = settings
+            .data
+            .map(|data| format!("{data}/sessions/{session}.json"));
+        let mut opening = false;
+        let shown = line[2..line.len() - marker.len() - 1].to_string();
+        let created = write_board(&board, |old| {
+            if let Some(state_path) = &state_path {
+                if std::path::Path::new(dirname(state_path)).is_dir() {
+                    let mut state = load_state(state_path);
+                    if first_open(&mut state) {
+                        save_state(state_path, &state)?;
+                        opening = true;
+                    }
+                }
+            }
+            Ok(edit_waiting(old, |lines| {
+                if lines.iter().any(|old| old.contains(&marker)) {
+                    lines
+                        .into_iter()
+                        .map(|old| {
+                            if old.contains(&marker) {
+                                line.clone()
+                            } else {
+                                old
+                            }
+                        })
+                        .collect()
+                } else {
+                    let mut lines = lines;
+                    lines.push(line.clone());
+                    lines
+                }
+            }))
+        })?;
+        if created || opening {
+            open_in_markydowny(&board, Some(settings.open));
+        }
+        println!("Added {item_id}: {shown}");
+        return Ok(0);
+    }
+
+    let mut found = false;
+    write_board(&board, |old| {
+        if find_waiting(old).is_none()
+            || !waiting_lines(old).iter().any(|line| line.contains(&marker))
+        {
+            return Ok(old.to_string());
+        }
+        found = true;
+        Ok(edit_waiting(old, |lines| {
+            lines
+                .into_iter()
+                .filter(|line| !line.contains(&marker))
+                .collect()
+        }))
+    })?;
+    if !found {
+        eprintln!("No item {item_id} on the board; nothing changed.");
+        return Ok(1);
+    }
+    println!("Removed {item_id}");
+    Ok(0)
+}
+
+struct BoardSettings {
+    waiting: bool,
+    open: bool,
+    data: Option<String>,
+}
+
+/// The options as the `waiting` commands see them: from the environment when it has them, as
+/// the hooks do, or else from what SessionStart last saved beside the board.
+fn board_settings(board: &str) -> Result<BoardSettings> {
+    let path = beside(&abspath(&expand_user(board))?, ".settings.json");
+    let saved = match fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    {
+        Some(Value::Object(saved)) => saved,
+        _ => Map::new(),
+    };
+    let option = |name: &str| {
+        if !setting(name, "").is_empty() {
+            on(name)
+        } else {
+            saved.get(&name.to_lowercase()) != Some(&Value::Bool(false))
+        }
+    };
+    Ok(BoardSettings {
+        waiting: option("WAITING"),
+        open: option("OPEN"),
+        data: saved.get("data").and_then(Value::as_str).map(String::from),
+    })
+}
+
+// ----------------------------------------------------------------------------------------------
 // Writing the board
 // ----------------------------------------------------------------------------------------------
 
 /// Applies update(board_text) -> new text under a lock, and swaps the file in atomically.
 /// Returns whether the board was created by this call.
-fn write_board(
-    path: &str,
-    data: &str,
-    update: impl FnOnce(&str) -> Result<String>,
-) -> Result<bool> {
+fn write_board(path: &str, update: impl FnOnce(&str) -> Result<String>) -> Result<bool> {
     let path = abspath(&expand_user(path))?;
     let dir = dirname(&path).to_string();
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // The same lock file as the Python script's, so the two can't write at once.
-    let lock_path = format!("{data}/board-{}.lock", &sha1_hex(path.as_bytes())[..16]);
+    // The same lock file as the Python script's, so the two can't write at once. It sits next to
+    // the board, not in the plugin's data folder, so the `waiting` commands a session runs
+    // itself, which don't get the plugin's environment, take the same one.
+    let lock_path = beside(&path, ".lock");
     let lock = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -1004,12 +1715,23 @@ fn temp_file(dir: &str, prefix: &str) -> Result<(String, fs::File)> {
     Err("FileExistsError: no usable temporary file name".into())
 }
 
+/// The hidden file beside the board with this suffix: `.<board><suffix>`, as Python's
+/// `os.path.join(dirname, …)` names it.
+fn beside(board: &str, suffix: &str) -> String {
+    let dir = dirname(board);
+    let name = basename(board);
+    if dir.is_empty() || dir.ends_with('/') {
+        format!("{dir}.{name}{suffix}")
+    } else {
+        format!("{dir}/.{name}{suffix}")
+    }
+}
+
 /// Opens the board in Markydowny, in the background, on a session's first write: this app when
 /// it's a Mac app bundle, or else an installed Markydowny. macOS only, as in the Python script.
-fn open_in_markydowny(path: &str) {
-    if !cfg!(target_os = "macos")
-        || !["1", "true", "yes"].contains(&setting("OPEN", "true").to_lowercase().as_str())
-    {
+/// `enabled` is the `open` option when the caller has it, or else it's read from the environment.
+fn open_in_markydowny(path: &str, enabled: Option<bool>) {
+    if !cfg!(target_os = "macos") || !enabled.unwrap_or_else(|| on("OPEN")) {
         return;
     }
     let quiet = |args: &[&str]| {
@@ -1321,59 +2043,6 @@ fn parse_float(text: &str) -> Option<f64> {
         return None;
     }
     text.replace('_', "").parse().ok()
-}
-
-// ----------------------------------------------------------------------------------------------
-// SHA-1, for the lock file's name
-// ----------------------------------------------------------------------------------------------
-
-fn sha1_hex(data: &[u8]) -> String {
-    let mut h: [u32; 5] = [
-        0x6745_2301,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
-    let mut message = data.to_vec();
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
-    for block in message.chunks(64) {
-        let mut w = [0u32; 80];
-        for (i, word) in block.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, &word) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
-                _ => (b ^ c ^ d, 0xCA62_C1D6),
-            };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = t;
-        }
-        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
-            *x = x.wrapping_add(y);
-        }
-    }
-    h.iter().map(|x| format!("{x:08x}")).collect()
 }
 
 #[cfg(test)]
@@ -1775,15 +2444,16 @@ mod tests {
     }
 
     #[test]
-    fn the_lock_is_named_as_the_python_scripts_is() {
-        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
-        assert_eq!(&sha1_hex(b"/tmp/mcq/board.md")[..16], "db16c49a5ed44a30");
-        let long = "a".repeat(1000);
+    fn the_lock_and_settings_sit_beside_the_board_as_the_python_scripts_do() {
         assert_eq!(
-            sha1_hex(long.as_bytes()),
-            "291e9a6c66994949b57ba5e650361e98fc36b1ba"
+            beside("/tmp/mcq/board.md", ".lock"),
+            "/tmp/mcq/.board.md.lock"
         );
+        assert_eq!(
+            beside("/home/me/markychecky.md", ".settings.json"),
+            "/home/me/.markychecky.md.settings.json"
+        );
+        assert_eq!(beside("/board.md", ".lock"), "/.board.md.lock");
     }
 
     // Writing
@@ -1797,24 +2467,22 @@ mod tests {
         let saved = cache.join("markydowny-path");
         assert_eq!(
             fs::read_to_string(&saved).unwrap(),
-            "/opt/Mark ydowny.AppImage\n"
+            format!("/opt/Mark ydowny.AppImage\n{ENGINE_MARKER}\n")
         );
         save_app_image("/home/me/Markydowny.AppImage", cache_s).unwrap();
         assert_eq!(
             fs::read_to_string(&saved).unwrap(),
-            "/home/me/Markydowny.AppImage\n"
+            format!("/home/me/Markydowny.AppImage\n{ENGINE_MARKER}\n")
         );
     }
 
     #[test]
     fn writes_are_atomic_keep_the_mode_and_leave_nothing_behind() {
         let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("data");
-        fs::create_dir_all(&data).unwrap();
         let board = dir.path().join("board.md");
-        let (board_s, data_s) = (board.to_str().unwrap(), data.to_str().unwrap());
+        let board_s = board.to_str().unwrap();
 
-        assert!(write_board(board_s, data_s, |b| Ok(format!("{b}new\n"))).unwrap());
+        assert!(write_board(board_s, |b| Ok(format!("{b}new\n"))).unwrap());
         assert_eq!(
             fs::metadata(&board).unwrap().permissions().mode() & 0o777,
             0o644
@@ -1823,7 +2491,7 @@ mod tests {
         fs::write(&board, "one\r\ntwo\r").unwrap();
         fs::set_permissions(&board, fs::Permissions::from_mode(0o600)).unwrap();
         let mut seen = String::new();
-        assert!(!write_board(board_s, data_s, |b| {
+        assert!(!write_board(board_s, |b| {
             seen = b.to_string();
             Ok(format!("{b}three\n"))
         })
@@ -1836,26 +2504,25 @@ mod tests {
         );
 
         // No change, no write; a failed update leaves the board alone.
-        write_board(board_s, data_s, |b| Ok(b.to_string())).unwrap();
-        assert!(write_board(board_s, data_s, |_| Err("no".into())).is_err());
+        write_board(board_s, |b| Ok(b.to_string())).unwrap();
+        assert!(write_board(board_s, |_| Err("no".into())).is_err());
         assert_eq!(fs::read_to_string(&board).unwrap(), "one\ntwo\nthree\n");
         let names: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names.len(), 2, "the board and its lock: {names:?}");
     }
 
     #[test]
     fn writers_at_once_queue_on_the_lock() {
         let dir = tempfile::tempdir().unwrap();
         let board = dir.path().join("board.md").to_str().unwrap().to_string();
-        let data = dir.path().to_str().unwrap().to_string();
         let writers: Vec<_> = (0..16)
             .map(|i| {
-                let (board, data) = (board.clone(), data.clone());
+                let board = board.clone();
                 std::thread::spawn(move || {
-                    write_board(&board, &data, |b| {
+                    write_board(&board, |b| {
                         std::thread::sleep(Duration::from_millis(2));
                         Ok(format!("{b}{i}\n"))
                     })
@@ -1929,5 +2596,155 @@ mod tests {
         );
         assert_eq!(expand_user("/a/~"), "/a/~");
         assert_eq!(expand_user("~no-such-user-here/x"), "~no-such-user-here/x");
+    }
+
+    // Waiting on you
+
+    #[test]
+    fn the_waiting_heading_is_matched_as_the_regex_does() {
+        for heading in [
+            "## Waiting on you",
+            "### WAITING ON YOU ##",
+            "#\twaiting on you \t",
+            "## WAİTİNG on you",
+            "## waıting on you",
+        ] {
+            assert!(waiting_heading_at(heading, 0).is_some(), "{heading:?}");
+        }
+        for heading in [
+            "####### Waiting on you",
+            "##Waiting on you",
+            "## Waiting  on you",
+            "## Waiting on you!",
+            "## Waiting on youK",
+            " ## Waiting on you",
+        ] {
+            assert!(waiting_heading_at(heading, 0).is_none(), "{heading:?}");
+        }
+    }
+
+    #[test]
+    fn the_section_runs_to_a_heading_as_high_or_the_next_session() {
+        let board = "# T\n\n## Waiting on you\n\n- a\n### deeper\n- b\n## Next\n";
+        let (start, end) = find_waiting(board).unwrap();
+        assert_eq!(&board[start..end], "\n- a\n### deeper\n- b\n");
+        // A heading inside a session's section isn't the section.
+        let board =
+            "<!-- markychecky:start s1 -->\n## Waiting on you\n<!-- markychecky:end s1 -->\n";
+        assert_eq!(find_waiting(board), None);
+        assert_eq!(
+            ensure_waiting(board),
+            format!("## Waiting on you\n\n{board}")
+        );
+        assert_eq!(
+            ensure_waiting(""),
+            format!("{}\n\n## Waiting on you\n", TITLE.trim_end())
+        );
+    }
+
+    #[test]
+    fn editing_the_section_tidies_blank_lines_and_keeps_other_lines() {
+        let add = |line: &str| {
+            let line = line.to_string();
+            move |mut lines: Vec<String>| {
+                lines.push(line);
+                lines
+            }
+        };
+        assert_eq!(
+            edit_waiting("# T\n\n## Waiting on you", add("- x")),
+            "# T\n\n## Waiting on you\n\n- x\n"
+        );
+        let board = "## Waiting on you\n- by hand  \n\n\n<!-- markychecky:start s1 -->\n<!-- markychecky:end s1 -->\n";
+        assert_eq!(
+            edit_waiting(board, add("- y")),
+            "## Waiting on you\n\n- by hand  \n- y\n\n<!-- markychecky:start s1 -->\n<!-- markychecky:end s1 -->\n"
+        );
+        assert_eq!(
+            edit_waiting("## Waiting on you\n\n- x\n## Next\n", |_| Vec::new()),
+            "## Waiting on you\n\n## Next\n"
+        );
+    }
+
+    #[test]
+    fn markers_are_read_as_the_regexes_do() {
+        let line = "- a <!-- markychecky:notify bad --> <!-- markychecky:notify s1 at=2000-01-01T00:00:00+00:00 --> x";
+        let found = notify_markers(line);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            (found[0].1, found[0].2),
+            ("s1", "2000-01-01T00:00:00+00:00")
+        );
+        assert!(notify_markers("<!-- markychecky:notify s1 at= -->").is_empty());
+        assert_eq!(
+            without_notify("a\nx <!-- markychecky:notify s1 at=t --> y\nb <!-- markychecky:notify s10 at=t -->\n", "s1"),
+            "a\nb <!-- markychecky:notify s10 at=t -->\n"
+        );
+        let line = "- q \t<!-- markychecky:item s1/k --> tail";
+        assert_eq!(item_marker(line), Some((3, 35, "s1/k")));
+        assert_eq!(item_marker("- q <!-- markychecky:item s1/k-->"), None);
+    }
+
+    #[test]
+    fn only_notifications_that_wait_on_you_make_a_line() {
+        let text = |event: Value| notification_text(&obj(event)).unwrap();
+        assert_eq!(
+            text(
+                json!({"notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash."})
+            ),
+            Some(("needs permission to use Bash".into(), "tool"))
+        );
+        assert_eq!(
+            text(json!({"notification_type": "worker_permission_prompt"})),
+            Some(("needs your permission".into(), "tool"))
+        );
+        assert_eq!(
+            text(json!({"notification_type": "elicitation_url_dialog", "message": "Sign in"})),
+            Some(("has a question for you".into(), "tool"))
+        );
+        assert_eq!(
+            text(json!({"notification_type": "idle_prompt"})),
+            Some(("waiting for your input".into(), "prompt"))
+        );
+        for kind in ["agent_completed", "auth_success", "some_new_type"] {
+            assert_eq!(
+                text(json!({"notification_type": kind, "message": "permission to use Bash"})),
+                None
+            );
+        }
+        // Without a type, from the message.
+        assert_eq!(
+            text(json!({"message": "Claude needs your permission to use Edit"})),
+            Some(("needs permission to use Edit".into(), "tool"))
+        );
+        assert_eq!(
+            text(json!({"message": "Claude is waiting for your input"})),
+            Some(("waiting for your input".into(), "prompt"))
+        );
+    }
+
+    #[test]
+    fn a_line_is_answered_by_a_prompt_or_its_own_agents_batch() {
+        let flag = |waits: &str, agent: &str| obj(json!({"waits": waits, "agent": agent}));
+        let event = |name: &str, agent: Option<&str>| {
+            let mut event = obj(json!({"hook_event_name": name}));
+            if let Some(agent) = agent {
+                event.insert("agent_id".into(), json!(agent));
+            }
+            event
+        };
+        assert!(answers(&event("UserPromptSubmit", None), &flag("tool", "")));
+        assert!(answers(&event("PostToolBatch", None), &flag("tool", "")));
+        assert!(!answers(
+            &event("PostToolBatch", Some("sub")),
+            &flag("tool", "")
+        ));
+        assert!(answers(
+            &event("PostToolBatch", Some("sub")),
+            &flag("tool", "sub")
+        ));
+        assert!(!answers(&event("PostToolBatch", None), &flag("prompt", "")));
+        assert!(!answers(&event("PostToolUse", None), &flag("tool", "")));
+        assert!(answers(&obj(json!({})), &Map::new()));
     }
 }

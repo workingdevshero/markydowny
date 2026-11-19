@@ -123,17 +123,22 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 </ul>
 <p>Any markdown viewer can show the board; Markydowny is the one that updates it live and highlights what changed.</p>
 <h2 id="questions-for-you-and-parked-work"><a class="heading-anchor" href="#questions-for-you-and-parked-work" aria-label="Link to this section">#</a>Questions for you, and parked work</h2>
-<p>A session&#39;s task list holds the steps of what it&#39;s doing now. Questions for you, work that&#39;s parked and things waiting on someone else don&#39;t fit there, and they matter more than any one session&#39;s checklist. Keep them in one section of your own at the top of the board:</p>
+<p>A session&#39;s task list holds the steps of what it&#39;s doing now. Questions for you, work that&#39;s parked and things waiting on someone else don&#39;t fit there, and they matter more than any one session&#39;s checklist. So the board has one section for them at the top, and it&#39;s automatic:</p>
 <pre><code class="language-markdown"># Markychecky
 
 ## Waiting on you
 
-- markydowny: OK to delete the 33 GB `mog-desktop-base` VM?
-- web: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- markydowny · main: OK to delete the 33 GB `mog-desktop-base` VM?
+- web · pricing: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- api · fix/login: waiting for your input
 </code></pre>
-<p>markychecky only rewrites the sections it made, which are marked by hidden comments, so it leaves this one alone. Its own updates take a lock that a session&#39;s edits don&#39;t, though, so an edit made in the same instant as an update can be lost; the line below has sessions check theirs landed. To have your sessions use it, add this line to <code>~/.claude/CLAUDE.md</code>:</p>
-<pre><code>Put questions for me, and work that&#39;s parked or waiting on someone else, in the &quot;Waiting on you&quot; section at the top of ~/markychecky.md: one line each, starting with the repository, with links. Edit only that section, read the file again just before each edit, check your line is there afterwards, and remove your lines once they&#39;re resolved.
-</code></pre>
+<ul>
+<li><strong>It comes with the board.</strong> markychecky puts <code>## Waiting on you</code> at the top of a new board, and adds it to a board that doesn&#39;t have one.</li>
+<li><strong>Sessions know to use it.</strong> As each session starts, markychecky tells it where the board is and how to add a line when something needs you, and remove it once it&#39;s resolved. Sessions do that with markychecky&#39;s own commands, which take the same lock as everything else that writes to the board, so no line is lost.</li>
+<li><strong>A session that&#39;s waiting shows up by itself.</strong> When a session stops for a permission prompt, or sits waiting for your input, a line like <code>api · fix/login: waiting for your input</code> appears, and goes as soon as you respond.</li>
+</ul>
+<p>A line a session adds stays when the session ends, until it&#39;s resolved and removed. Lines you write there yourself are never changed.</p>
+<p>You don&#39;t need to add anything to <code>~/.claude/CLAUDE.md</code>. If you added a &quot;Waiting on you&quot; line there for an earlier version, it can stay: markychecky tells sessions the same thing.</p>
 <h2 id="settings"><a class="heading-anchor" href="#settings" aria-label="Link to this section">#</a>Settings</h2>
 <p>Change these with <code>claude plugin configure markychecky</code>, or in <code>/plugin</code> &gt; <strong>Installed</strong> &gt; markychecky &gt; <strong>Configure options</strong>:</p>
 <table>
@@ -158,6 +163,11 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 <td><code>idle_hours</code></td>
 <td><code>24</code></td>
 <td>How long an ended session&#39;s section stays on the board</td>
+</tr>
+<tr>
+<td><code>waiting</code></td>
+<td><code>true</code></td>
+<td>Keep the &quot;Waiting on you&quot; section at the top of the board, and tell sessions about it</td>
 </tr>
 </tbody></table>
 <h2 id="keep-it-up-to-date"><a class="heading-anchor" href="#keep-it-up-to-date" aria-label="Link to this section">#</a>Keep it up to date</h2>
