@@ -219,9 +219,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          # Ubuntu 22.04, not 24.04: the binary links against the runner's glibc, so this is what
+          # sets the floor (2.35: Ubuntu 22.04, Debian 12), along with BugSplat's Crashpad.
+          - runner: ubuntu-22.04
             arch: x86_64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -254,6 +256,18 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             build-essential clang file pkg-config cmake ninja-build libssl-dev \
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev
+      # Ubuntu 22.04's GCC 11 rejects Crashpad's headers and its Clang 14 rejects -std=c++23, so
+      # this takes Clang 18 from LLVM's own packages, as bugsplat-crashpad's Linux build does.
+      # The links make it the `clang` that CC and CXX name.
+      - name: Install Clang 18
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 18
+          mkdir -p "$RUNNER_TEMP/clang-18"
+          for tool in clang clang++; do ln -sf "/usr/bin/$tool-18" "$RUNNER_TEMP/clang-18/$tool"; done
+          echo "$RUNNER_TEMP/clang-18" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/clang-18/clang" --version | head -1
+          ldd --version | head -1
       # --include=dev: the Tauri CLI is a devDependency.
       - run: npm ci --include=dev --no-audit --no-fund
       - name: Build .deb and .AppImage
@@ -289,6 +303,42 @@ jobs:
             grep -qE "( |\./)usr/bin/$helper\$" <<< "$contents" || { echo "$helper is missing from the .deb"; exit 1; }
             [[ -x "$appdir/usr/bin/$helper" ]] || { echo "$helper is missing from the AppImage"; exit 1; }
           done
+      # The packages must run on glibc 2.35 (the release notes say so): no executable in them,
+      # markydowny or a BugSplat helper, may need a newer GLIBC_ symbol version.
+      - name: Check the glibc floor
+        env:
+          MAX_GLIBC: "2.35"
+        run: |
+          newer() { [[ "$(printf '%s\n%s\n' "$MAX_GLIBC" "$1" | sort -V | tail -1)" != "$MAX_GLIBC" ]]; }
+          tree=$(mktemp -d)
+          for deb in src-tauri/target/release/bundle/deb/*.deb; do dpkg-deb -x "$deb" "$tree/deb"; done
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            appimage=$(realpath "$appimage")
+            (cd "$tree" && "$appimage" --appimage-extract >/dev/null)
+          done
+          status=0
+          highest=0
+          for bin in "$tree"/{deb,squashfs-root}/usr/bin/{markydowny,BugSplatMonitor,BugSplatReporter}; do
+            name=${bin#"$tree"/}
+            if [[ ! -f "$bin" ]]; then
+              echo "::error::$name is missing"
+              status=1
+              continue
+            fi
+            need=$(objdump -T "$bin" | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } | sed 's/^GLIBC_//' | sort -V | tail -1)
+            if [[ -z "$need" ]]; then
+              echo "::error::$name has no glibc version references"
+              status=1
+            elif newer "$need"; then
+              echo "::error::$name needs glibc $need, newer than the $MAX_GLIBC floor"
+              status=1
+            else
+              echo "$name needs glibc $need"
+            fi
+            [[ -n "$need" ]] && highest=$(printf '%s\n%s\n' "$highest" "$need" | sort -V | tail -1)
+          done
+          echo "Linux ${{ matrix.arch }}: the packages need glibc $highest (floor: $MAX_GLIBC)." >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
       - name: Crash reporting
         run: |
           if [[ -n "$BUGSPLAT_DATABASE" ]]; then
@@ -496,7 +546,7 @@ jobs:
           fi
           cat >> notes.md <<'NOTES'
 
-          **Linux** (x86_64 and arm64): the `.deb` and `.AppImage` need glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39 and later.
+          **Linux** (x86_64 and arm64): the `.deb` and `.AppImage` need glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later.
 
           **Windows** (x64, Windows 10 and 11): run the `x64-setup.exe` installer, or install the `.msi` (prereleases have the installer only). They aren't code-signed yet, so SmartScreen warns the first time. Windows: click **More info**, then **Run anyway**.
 

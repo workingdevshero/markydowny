@@ -31,7 +31,7 @@ Repeat for `.markdown` (and `.mdown`, `.mkd` or `.mkdn`) if you use them.
 | `.deb` for Debian and Ubuntu | [Download](https://github.com/workingdevshero/markydowny/releases/latest/download/markydowny-linux-x86_64.deb) | [Download](https://github.com/workingdevshero/markydowny/releases/latest/download/markydowny-linux-arm64.deb) |
 | `.AppImage` for other distributions | [Download](https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-linux-x86_64.AppImage) | [Download](https://github.com/workingdevshero/markydowny/releases/latest/download/Markydowny-linux-arm64.AppImage) |
 
-They need glibc 2.38 or newer: Ubuntu 24.04, Debian 13, Fedora 39 and later.
+They need glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later.
 
 - **`.deb`:** `sudo apt install ./markydowny-linux-x86_64.deb`, or the arm64 file. Markydowny then appears with your other apps.
 - **`.AppImage`:** `chmod +x Markydowny-linux-x86_64.AppImage`, then run it.

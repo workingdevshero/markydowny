@@ -48,6 +48,14 @@ test('the Linux packages the script installs include WebKitGTK 4.1 (Tauri 2) and
     }
 });
 
+test('the script stops on a glibc older than 2.35, the floor the release packages promise', () => {
+    const source = fs.readFileSync(script, 'utf8');
+    assert.match(source, /^MIN_GLIBC=2\.35$/m);
+    assert.match(source, /needs \$MIN_GLIBC or newer \(Ubuntu 22\.04, Debian 12\)/);
+    const release = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+    assert.match(release, /MAX_GLIBC: "2\.35"/);
+});
+
 test('build-desktop.sh is plain ASCII, which macOS bash 3.2 needs', () => {
     // Bash 3.2 read "$NODE_VERSION…" as one long variable name and failed on it.
     const source = fs.readFileSync(script, 'utf8');
@@ -61,7 +69,8 @@ test("supermog's Linux desktop round runs this script in an image that has the s
     assert.match(linux, /^\s+build: scripts\/build-desktop\.sh$/m);
     const dockerfile = linux.match(/^\s+dockerfile: (\S+)$/m)[1];
     const image = fs.readFileSync(path.join(root, dockerfile), 'utf8');
-    // Debian 13 or later: BugSplat's Crashpad needs glibc 2.38 (MIN_GLIBC in the script).
+    // Debian 13 (glibc 2.41), above the 2.35 floor (MIN_GLIBC in the script), with a Clang new
+    // enough for Crashpad's headers.
     assert.match(image, /^FROM rust:1-trixie$/m);
     const packages = fs.readFileSync(script, 'utf8').match(/^LINUX_PACKAGES=\(([^)]*)\)/m)[1].split(/\s+/).filter(Boolean);
     assert.ok(packages.length > 5);

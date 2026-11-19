@@ -12,7 +12,7 @@
 #     releases into ~/.cache/markydowny when they aren't on PATH (there may be no Homebrew);
 #   - on Linux, those, Clang and the WebKitGTK build dependencies with apt-get, when running as
 #     root or with passwordless sudo. Otherwise it names the missing packages and stops. Linux
-#     needs glibc 2.38 or newer (Debian 13, Ubuntu 24.04); it says so and stops on older ones.
+#     needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12); it says so and stops on older ones.
 # On macOS the Xcode Command Line Tools must already be installed.
 #
 # Crash reporting is off unless BUGSPLAT_DATABASE is set. Building downloads Crashpad, so it
@@ -28,10 +28,11 @@ NINJA_VERSION=1.13.2
 # The packages Tauri 2 needs to build on Debian and Ubuntu (https://v2.tauri.app/start/prerequisites/).
 # CMake, Ninja and Clang build BugSplat's native code (bugsplat-sys). On Linux it has to be
 # Clang: GCC rejects Crashpad's headers ("expected identifier before '__attribute__'").
+# Releases build with Clang 18; set CC=clang-18 CXX=clang++-18 to use one beside an older clang.
 LINUX_PACKAGES=(build-essential clang curl ca-certificates xz-utils file pkg-config cmake ninja-build libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev)
-# BugSplat's prebuilt Linux Crashpad links against glibc 2.38's C23 functions (__isoc23_strtol
-# and friends): Debian 13 or Ubuntu 24.04 and later, not Debian 12.
-MIN_GLIBC=2.38
+# BugSplat's prebuilt Linux Crashpad is built on Ubuntu 22.04 and links against its glibc 2.35:
+# Ubuntu 22.04 or Debian 12 and later.
+MIN_GLIBC=2.35
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 os=$(uname -s)
@@ -88,7 +89,7 @@ if [[ "$os" == "Darwin" ]]; then
 else
     glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
     if [[ -n "$glibc" ]] && [[ "$(printf '%s\n%s\n' "$MIN_GLIBC" "$glibc" | sort -V | head -1)" != "$MIN_GLIBC" ]]; then
-        fail "glibc $glibc is too old: BugSplat's Crashpad needs $MIN_GLIBC or newer (Debian 13, Ubuntu 24.04)"
+        fail "glibc $glibc is too old: BugSplat's Crashpad needs $MIN_GLIBC or newer (Ubuntu 22.04, Debian 12)"
     fi
     # cc is rustc's linker (build-essential; Debian's clang package doesn't provide it), and curl
     # and xz fetch and unpack Rust and Node.
