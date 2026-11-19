@@ -264,8 +264,12 @@
             e.returnValue = '';
         });
     }
-    // The homepage's markychecky clip is set up here, not in the HTML: the desktop bundle doesn't
-    // ship it, and it plays by itself only for people who haven't asked for less motion.
+    // The homepage's screenshots and markychecky clip are set up here, not in the HTML: the desktop
+    // bundle doesn't ship them, and the clip plays by itself only for people who haven't asked for
+    // less motion.
+    if (!isDesktop) {
+        for (const img of document.querySelectorAll('main > .marketing img[data-src]')) img.src = img.dataset.src;
+    }
     const spotlightVideo = document.querySelector('.spotlight-video');
     if (!isDesktop && spotlightVideo) {
         spotlightVideo.autoplay = !prefersReducedMotion();

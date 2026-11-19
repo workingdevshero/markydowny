@@ -134,10 +134,11 @@ function loadApp({ reducedMotion = false } = {}) {
         hidden: false,
         getElementById: element,
         querySelector: (selector) => element(selector),
-        querySelectorAll: () => [],
+        querySelectorAll: (selector) => (selector === 'main > .marketing img[data-src]' ? screenshots : []),
         createElement: (tag) => stubElement(tag),
         addEventListener() {},
     };
+    const screenshots = ['live-reload', 'editor'].map((name) => Object.assign(stubElement(name), { dataset: { src: `/media/home/${name}.webp` } }));
     const window = {
         document,
         navigator: { platform: 'Linux', userAgent: 'node' },
@@ -155,7 +156,7 @@ function loadApp({ reducedMotion = false } = {}) {
     const context = vm.createContext(window);
     vm.runInContext(coreSource, context);
     vm.runInContext(appSource, context);
-    return { body, element, alerts };
+    return { body, element, alerts, screenshots };
 }
 
 function dropEvent(target, dataTransfer) {
@@ -274,10 +275,12 @@ test('the homepage shows the product: screenshot rows, the markychecky spotlight
     const rows = [...features.matchAll(/<section class="feature feature-row"[\s\S]*?<\/section>/g)].map(m => m[0]);
     assert.equal(rows.length, 3, 'live reload, the editor and tabs each get a screenshot row');
     for (const row of rows) {
-        const img = row.match(/<img src="\/media\/home\/([\w-]+\.webp)" alt="([^"]+)" width="1200" height="900" loading="lazy"/);
+        // data-src, not src: the desktop bundle doesn't ship media/home, so app.js loads them on the website only.
+        const img = row.match(/<img data-src="\/media\/home\/([\w-]+\.webp)" alt="([^"]+)" width="1200" height="900" loading="lazy"/);
         assert.ok(img, 'a lazy screenshot with its size and a description');
         assert.ok(fs.statSync(path.join(root, 'media', 'home', img[1])).size > 0, `media/home/${img[1]} is committed`);
     }
+    assert.doesNotMatch(features, /\ssrc="\/media\/home\//, 'no screenshot is fetched by the HTML itself');
     assert.equal([...features.matchAll(/<section class="feature feature-card"/g)].length, 2, 'Claude Code and privacy as cards');
 
     const spotlight = main.match(/<section class="spotlight marketing"[\s\S]*?<\/section>/);
@@ -289,12 +292,21 @@ test('the homepage shows the product: screenshot rows, the markychecky spotlight
     assert.doesNotMatch(video, /\s(src|poster|autoplay)[\s=>]/);
     const homeMedia = fs.readdirSync(path.join(root, 'media', 'home'));
     for (const file of homeMedia) assert.ok(main.includes(`/media/home/${file}"`), `media/home/${file} is used`);
+    // The spotlight leads with the one-line installer that its setup page leads with.
+    assert.match(spotlight[0], /<code class="spotlight-command">curl -fsSL https:\/\/markydowny\.com\/markychecky\.sh \| bash<\/code>/);
+    assert.match(fs.readFileSync(path.join(root, 'docs', 'markychecky.md'), 'utf8'), /curl -fsSL https:\/\/markydowny\.com\/markychecky\.sh \| bash/);
     assert.ok(main.indexOf('class="spotlight marketing"') < main.indexOf('class="download-strip marketing"'));
 
     const hero = main.match(/<div class="hero marketing">[\s\S]*?<\/div>/)[0];
     assert.match(hero, /<a class="hero-badge" href="\/docs\/install\/">/);
     // The download band also offers Linux, through the Download page.
     assert.match(main.match(/<section class="download-strip marketing"[\s\S]*?<\/section>/)[0], /href="\/docs\/install\/"/);
+});
+
+test('the website loads the homepage screenshots, and the desktop app never does', () => {
+    const { screenshots } = loadApp();
+    assert.deepEqual(screenshots.map((img) => img.src), ['/media/home/live-reload.webp', '/media/home/editor.webp']);
+    assert.match(appSource, /if \(!isDesktop\) \{\n\s*for \(const img of document\.querySelectorAll\('main > \.marketing img\[data-src\]'\)\)/);
 });
 
 test('the website loads the spotlight clip, and plays it only without reduced motion', () => {
