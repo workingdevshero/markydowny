@@ -271,6 +271,12 @@ test('heading text reads as the rendered heading\'s textContent', () => {
     ]);
 });
 
+test('headings reads the whole document, not just what was parsed first', () => {
+    // A new state is parsed for only 3000 characters (and 20 ms) at first.
+    const text = '# First\n\n' + 'Some words in a paragraph.\n\n'.repeat(400) + '## Last';
+    assert.deepEqual(plain(cm.headings(cm.createState(text))).map(h => h.text), ['First', 'Last']);
+});
+
 test('switching modes keeps the text, selection and undo history', () => {
     const { text, state: start } = stateFor('# T|itle\n\nbody');
     let state = start.update({ changes: { from: text.length, insert: ' more' } }).state;

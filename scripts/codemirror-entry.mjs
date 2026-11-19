@@ -5,7 +5,7 @@
 import { Compartment, EditorState, Facet, StateField, Transaction } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, drawSelection, dropCursor, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, undoDepth } from '@codemirror/commands';
-import { HighlightStyle, bracketMatching, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { HighlightStyle, bracketMatching, ensureSyntaxTree, indentOnInput, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
@@ -671,7 +671,9 @@ const HEADING_DROPPED = new Set(['HeaderMark', 'QuoteMark', 'EmphasisMark', 'Str
  */
 export function headings(state, decodeEntity = (entity) => entity) {
     const out = [];
-    syntaxTree(state).iterate({
+    // The whole document: a new state is parsed for only 20 ms and 3000 characters at first.
+    const tree = ensureSyntaxTree(state, state.doc.length, 5000) || syntaxTree(state);
+    tree.iterate({
         enter(ref) {
             const match = /^(?:ATX|Setext)Heading(\d)$/.exec(ref.name);
             if (!match) return BLOCK_CONTAINERS.has(ref.name);
