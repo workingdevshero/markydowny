@@ -22,8 +22,8 @@ serde_json = "1"
 # page can't resolve relative links against.
 dunce = "1"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
-bugsplat = "0.1"
-tauri-plugin-bugsplat = "0.1"
+bugsplat = "0.1.1"
+tauri-plugin-bugsplat = "0.1.1"
 
 # markychecky's hook (markychecky.rs): flock, localtime_r and the passwd database.
 [target.'cfg(unix)'.dependencies]
