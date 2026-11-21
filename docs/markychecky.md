@@ -166,10 +166,13 @@ claude plugin update markychecky@markydowny
 
 Or turn on auto-update: `/plugin` > **Marketplaces** > markydowny > **Enable auto-update**.
 
+A session that's already running keeps the version it started with. It picks up an update when you restart it: quit, then `claude --resume` to carry on where you were.
+
 ## If a session doesn't show up
 
 - **No task list.** The session doesn't have `TaskCreate` and `TaskUpdate`. Check step 3, then restart the session.
 - **Started before the install.** Restart it with `claude --resume`.
+- **Old behaviour after an update.** A session that was running when you updated still runs the old version. Restart it with `claude --resume`.
 - **Neither Markydowny nor Python.** The plugin says so once, the first time a session updates its tasks. Install Markydowny, or Python 3 (step 1). An older Markydowny without the hook built in is skipped.
 - **A cloud session.** Sessions in the cloud, including claude.ai/code in the browser, don't load plugins installed on your computer, so they can't write to its board.
 - **Not Claude Code.** markychecky is a Claude Code plugin. Claude chat on claude.ai and Cowork have their own, separate plugins.
