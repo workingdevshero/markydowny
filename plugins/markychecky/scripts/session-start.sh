@@ -110,7 +110,7 @@ if [ "$waiting" = true ] && [ -n "$session" ]; then
 - Remove it: $run remove $where --key <key>
 - See what's there: $run list $where
 
-<key> is a short id you pick, such as release-v1 or ok-to-merge-24. The line starts with the repository and branch by itself, and #123-style references become links. Lines you add stay after this session ends, until they're removed; to remove another session's line, pass the <session>/<key> that list shows. If ~/.claude/CLAUDE.md also asks you to keep this section, these commands are how to do it."
+<key> is a short id you pick, such as release-v1 or ok-to-merge-24. The line starts with the repository, the branch and this session's name by itself, and #123-style references become links. Lines you add stay after this session ends, until they're removed; to remove another session's line, pass the <session>/<key> that list shows. If ~/.claude/CLAUDE.md also asks you to keep this section, these commands are how to do it."
 fi
 
 # systemMessage is shown to you; additionalContext goes to the session's model.

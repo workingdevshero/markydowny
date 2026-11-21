@@ -60,14 +60,14 @@ Update with `claude plugin update markychecky@markydowny`, or turn on auto-updat
 
 Claude Code sessions keep a task list as they work (`TaskCreate` and `TaskUpdate`, or `TodoWrite` in older versions). After each change, a hook rewrites that session's section from its list:
 
-- **The heading** is the repository and branch, or the folder outside git.
+- **The heading** is the repository and branch, or the folder outside git, then the session's name in parentheses: the one you gave it with `/rename`, or else the one Claude Code made up for it. It's read from the session's transcript.
 - **Now** is what's in progress.
 - **The checklist** follows, in the order the tasks were made. The task in progress is bold.
 - **Issue and pull request numbers become links.** `#18` links into the session's GitHub repository (its `origin` remote), and `owner/repo#18` links to the repository it names. A bare `repo#18` is linked only when it names the session's own repository; anything else stays plain text rather than becoming a wrong link.
 
 The hook does the writing, not the model, so sessions never have to remember to update the board. It runs on the Markydowny app (`markydowny markychecky task`), or on `scripts/markychecky.py` without it; `scripts/markychecky.sh` picks one, and both write the same board. The launcher only uses an app that has every command this version of the plugin runs; with an older Markydowny, it uses Python.
 
-**Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so notes you write between sections are kept. Everything inside a section is the session's: a heading you rename still belongs to that session, but it's rewritten from the repository and branch on the next update.
+**Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so notes you write between sections are kept. Everything inside a section is the session's: a heading you rename still belongs to that session, but it's rewritten from the repository, branch and name on the next update.
 
 **Ended sessions** are marked idle, and removed after a day.
 
@@ -79,17 +79,17 @@ A session's task list holds the steps of what it's doing now. Questions for you,
 
 - **The section comes with the board.** markychecky puts it at the top of a new board, and adds it to a board that doesn't have one. A heading of any level with that text counts.
 - **Sessions know about it.** As each session starts, the plugin tells it where the board is and gives it three commands, run through `scripts/markychecky.sh` like the hooks: `waiting add --key <key> "<text>"` adds a line, or updates the one with that key; `waiting remove --key <key>` removes it; and `waiting list` shows what's there. The commands take the same lock as the hooks, so no edit is lost.
-- **A session waiting on you shows up by itself.** When a session stops for a permission prompt, or sits waiting for your input, a line such as `markydowny · main: needs permission to use Bash` appears. It goes as soon as you respond, or when the session ends.
+- **A session stopped on a question shows up by itself.** When a session stops for a permission prompt, or an MCP server's question, a line such as `markydowny · main (Release 1.3): needs permission to use Bash` appears. It goes as soon as you answer, or when the session ends. A session that has only finished its turn and is waiting for your next prompt doesn't get a line: that's not something to do. Lines like that from before 0.5 are cleared on the board's next update.
 
 ```markdown
 ## Waiting on you
 
-- markydowny · main: OK to delete the 33 GB `mog-desktop-base` VM?
-- web · pricing: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
-- api · fix/login: waiting for your input
+- markydowny · main (Disk cleanup): OK to delete the 33 GB `mog-desktop-base` VM?
+- web · pricing (Pricing page): the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- api · fix/login (Login bug): needs permission to use Bash
 ```
 
-Each line starts with the session's repository and branch, and `#51`-style references become links as they do in task text. A line a session adds stays after the session ends, until a session or you remove it; ended-session cleanup (`idle_hours`) never touches it. The plugin finds its own lines by a hidden marker at the end of each (`<!-- markychecky:item … -->`). Lines you write in the section have no marker, and the plugin never changes them.
+Each line starts with the session's repository, branch and name, as in its section's heading, so you can tell which session it's from. `#51`-style references become links as they do in task text. A line a session adds stays after the session ends, until a session or you remove it; ended-session cleanup (`idle_hours`) never touches it. The plugin finds its own lines by a hidden marker at the end of each (`<!-- markychecky:item … -->`). Lines you write in the section have no marker, and the plugin never changes them.
 
 You don't need a line in `~/.claude/CLAUDE.md` for any of this. If you added one for an earlier version, it can stay: the plugin tells sessions the same thing, and that its commands are how to do it.
 

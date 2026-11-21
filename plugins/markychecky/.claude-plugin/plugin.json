@@ -1,6 +1,6 @@
 {
   "name": "markychecky",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A live board of what every Claude Code session is doing: each session's task list in its own section of one markdown file, opened in Markydowny so you can watch your agents check things off.",
   "author": {
     "name": "Working Devs Hero"
@@ -31,7 +31,7 @@
     "waiting": {
       "type": "boolean",
       "title": "Waiting on you",
-      "description": "Keep a \"Waiting on you\" section at the top of the board: questions and parked work sessions add, and sessions waiting for your input or permission.",
+      "description": "Keep a \"Waiting on you\" section at the top of the board: questions and parked work sessions add, and sessions stopped on a permission prompt or a question.",
       "default": true
     }
   }
