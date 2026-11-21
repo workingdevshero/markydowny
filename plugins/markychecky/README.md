@@ -52,6 +52,10 @@ If something's still missing, such as the task list or `python3`, a new session 
 
 It needs Markydowny (or Python 3). The hook runs on [Markydowny](https://markydowny.com/docs/install/) when it's installed, and falls back to `python3`, which comes with the Xcode Command Line Tools on a Mac and with most Linux systems, when it isn't. With neither, the board doesn't update, and each new session says so as it starts.
 
+## Keep it up to date
+
+Update with `claude plugin update markychecky@markydowny`, or turn on auto-update in `/plugin` > **Marketplaces** > markydowny. A session that's already running keeps the version it started with; it picks up the update when you restart it: quit, then `claude --resume`.
+
 ## How it works
 
 Claude Code sessions keep a task list as they work (`TaskCreate` and `TaskUpdate`, or `TodoWrite` in older versions). After each change, a hook rewrites that session's section from its list:
@@ -105,6 +109,7 @@ Problems are logged to `markychecky.log` in the plugin's data folder. A hook nev
 ## Notes
 
 - No section for a session? It probably has no task tools: see step 2 of [Or step by step](#or-step-by-step). Headless runs (`claude -p`) need the same setting.
+- A session still doing what the old version did after an update? It was running when you updated, so it's still on that version. Restart it with `claude --resume`.
 - The board's lock is a hidden file next to it, `.markychecky.md.lock`. For now, writes also take the lock 0.3 kept in the plugin's data folder, so sessions started before the update don't write at the same time as newer ones.
 - Each session's start also saves the `waiting` and `open` settings next to the board, in `.markychecky.md.settings.json`, for the `waiting` commands, which run without the plugin's settings.
 - The board is plain markdown, so any viewer works. Markydowny is the one that reloads it live.

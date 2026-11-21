@@ -175,10 +175,12 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 <pre><code class="language-bash">claude plugin update markychecky@markydowny
 </code></pre>
 <p>Or turn on auto-update: <code>/plugin</code> &gt; <strong>Marketplaces</strong> &gt; markydowny &gt; <strong>Enable auto-update</strong>.</p>
+<p>A session that&#39;s already running keeps the version it started with. It picks up an update when you restart it: quit, then <code>claude --resume</code> to carry on where you were.</p>
 <h2 id="if-a-session-doesnt-show-up"><a class="heading-anchor" href="#if-a-session-doesnt-show-up" aria-label="Link to this section">#</a>If a session doesn&#39;t show up</h2>
 <ul>
 <li><strong>No task list.</strong> The session doesn&#39;t have <code>TaskCreate</code> and <code>TaskUpdate</code>. Check step 3, then restart the session.</li>
 <li><strong>Started before the install.</strong> Restart it with <code>claude --resume</code>.</li>
+<li><strong>Old behaviour after an update.</strong> A session that was running when you updated still runs the old version. Restart it with <code>claude --resume</code>.</li>
 <li><strong>Neither Markydowny nor Python.</strong> The plugin says so once, the first time a session updates its tasks. Install Markydowny, or Python 3 (step 1). An older Markydowny without the hook built in is skipped.</li>
 <li><strong>A cloud session.</strong> Sessions in the cloud, including claude.ai/code in the browser, don&#39;t load plugins installed on your computer, so they can&#39;t write to its board.</li>
 <li><strong>Not Claude Code.</strong> markychecky is a Claude Code plugin. Claude chat on claude.ai and Cowork have their own, separate plugins.</li>

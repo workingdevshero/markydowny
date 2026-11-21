@@ -679,7 +679,7 @@ test('the marketplace lists the plugin, and the versions agree', () => {
     assert.equal(manifest.name, 'markychecky');
     assert.deepEqual(Object.keys(manifest.userConfig).sort(), ['file', 'idle_hours', 'open', 'waiting']);
     assert.equal(manifest.userConfig.waiting.default, true);
-    assert.equal(manifest.version, '0.4.0');
+    assert.equal(manifest.version, '0.4.1');
 });
 
 test('every place markychecky is documented says how to turn on the task list', () => {
@@ -698,6 +698,17 @@ test('every place markychecky is documented says how to turn on the task list', 
     assert.ok(fs.existsSync(path.join(root, 'docs', 'markychecky', 'index.html')));
     for (const file of [path.join(root, 'README.md'), path.join(plugin, 'README.md'), path.join(root, 'index.html')]) {
         assert.match(fs.readFileSync(file, 'utf8'), /markydowny\.com\/docs\/markychecky\/|href="\/docs\/markychecky\/"/, `${file} doesn't link to the markychecky page`);
+    }
+});
+
+test('both markychecky pages say a running session needs a restart after an update', () => {
+    // A running session keeps the hook script it started with, so an update looks like it didn't work (#43).
+    for (const file of [path.join(plugin, 'README.md'), path.join(root, 'docs', 'markychecky.md')]) {
+        const text = fs.readFileSync(file, 'utf8');
+        const section = text.match(/^## Keep it up to date\n([\s\S]*?)(?=^## )/m);
+        assert.ok(section, `${file} has no "Keep it up to date" section`);
+        assert.match(section[1], /claude plugin update markychecky@markydowny/, `${file} doesn't give the update command`);
+        assert.match(section[1], /already running keeps the version it started with[\s\S]*claude --resume/, `${file} doesn't say to restart running sessions`);
     }
 });
 
