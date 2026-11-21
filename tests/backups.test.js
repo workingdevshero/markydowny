@@ -60,6 +60,18 @@ test('a missing file becomes untitled, named after the file, with a note', () =>
     assert.equal(core.restorePlan({ ...backup, path: 'C:\\docs\\notes.md' }, 'missing').title, 'notes.md');
 });
 
+test('restored again before it is saved, a moved or deleted file still gets its note', () => {
+    // What the untitled document reopened from a missing file writes to its backup.
+    const again = { id: 'f', text: 'mine', title: 'notes.md', file: false, name: '', path: null, fingerprint: null, missing: true };
+    assert.equal(core.backupStatus(again, null), 'missing');
+    assert.deepEqual(core.restorePlan(again, 'missing'), { kind: 'untitled', title: 'notes.md', text: 'mine', missing: true });
+    // It's kept in the backup, on the web and in the app, until a save gives it a file.
+    assert.match(fn('newDocument'), /restore\.plan\.missing\) source\.missing = true/);
+    assert.match(fn('backupRecord'), /missing: !file && Boolean\(source\.missing\)/);
+    assert.match(fn('desktopBackupStore'), /missing: record\.missing/);
+    assert.match(lib, /missing: missing\.unwrap_or\(false\)/);
+});
+
 test('a file the browser can\'t reopen becomes untitled, named after the file, without a note', () => {
     const backup = { id: 'w', text: 'mine', title: 'notes.md', file: true, name: 'notes.md', handle: null, fingerprint: core.fingerprint('x') };
     assert.deepEqual(core.restorePlan(backup, 'unreachable'), { kind: 'untitled', title: 'notes.md', text: 'mine', missing: false });

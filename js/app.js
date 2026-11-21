@@ -376,6 +376,8 @@
             renderWatchFolderButton();
         }
         const source = { kind: 'untitled', dir: '', title: restore ? restore.plan.title : core.UNTITLED_TITLE };
+        // Kept in its backup, so the note comes back if it's restored again before it's saved.
+        if (restore && restore.plan.missing) source.missing = true;
         await renderMarkdown('', source);
         if (currentSource !== source) return true;
         // Unsaved even when it's empty: a file emptied before it went is still a change to save.
@@ -2366,6 +2368,8 @@
             // Web, in Chromium: reopening the file asks the browser for permission again.
             handle: source.handle || null,
             fingerprint: file ? backup.keptFingerprint || backup.fingerprint.value : null,
+            // Untitled because its file was moved or deleted: restoring it says so again.
+            missing: !file && Boolean(source.missing),
             savedAt: Date.now(),
         };
     }
@@ -2420,6 +2424,7 @@
                 path: record.path,
                 title: record.title,
                 fingerprint: record.fingerprint,
+                missing: record.missing,
             }),
             remove: (id) => invoke('remove_backup', { id }),
         };
@@ -2546,7 +2551,7 @@
 
     /** restoreWebBackup, once `backup` is known to be kept and its `lock` is held. */
     async function reopenWebBackup(backup, lock) {
-        let status = backup.file ? 'unreachable' : 'untitled';
+        let status = backup.file ? 'unreachable' : core.backupStatus(backup, null);
         let show = null;
         if (backup.handle) {
             try {

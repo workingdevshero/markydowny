@@ -34,6 +34,10 @@ pub struct Backup {
     pub title: String,
     /// [`fingerprint`] of the file's content when editing started (`None` when untitled).
     pub fingerprint: Option<String>,
+    /// An untitled document reopened because its file was moved or deleted, so restoring it
+    /// again still says so.
+    #[serde(default)]
+    pub missing: bool,
     /// When it was written, in milliseconds since the Unix epoch.
     pub saved_at: u64,
 }
@@ -70,7 +74,11 @@ where
     R: Fn(&Path) -> Result<String, String>,
 {
     let Some(path) = &backup.path else {
-        return Status::Untitled;
+        return if backup.missing {
+            Status::Missing
+        } else {
+            Status::Untitled
+        };
     };
     match read(path) {
         Ok(content) if backup.fingerprint.as_deref() == Some(fingerprint(&content).as_str()) => {
@@ -225,6 +233,7 @@ mod tests {
             path: path.map(Path::to_path_buf),
             title: id.into(),
             fingerprint: path.map(|_| fingerprint(base)),
+            missing: false,
             saved_at,
         }
     }
@@ -372,6 +381,19 @@ mod tests {
     fn an_untitled_backup_has_no_file_to_check() {
         let untitled = backup("u", None, "", 1);
         assert_eq!(status(&untitled, read), Status::Untitled);
+    }
+
+    #[test]
+    fn an_untitled_backup_of_a_missing_file_is_still_reported_as_missing() {
+        let mut restored = backup("u", None, "", 1);
+        restored.missing = true;
+        assert_eq!(status(&restored, read), Status::Missing);
+        // Written by a build that didn't know about it: untitled, as before.
+        let older: Backup = serde_json::from_value(serde_json::json!({
+            "id": "o", "text": "", "path": null, "title": "notes.md", "fingerprint": null, "savedAt": 1
+        }))
+        .unwrap();
+        assert_eq!(status(&older, read), Status::Untitled);
     }
 
     #[test]

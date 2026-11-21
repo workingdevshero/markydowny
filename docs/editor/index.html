@@ -146,8 +146,8 @@
 <p>A document comes back in the editor, still unsaved:</p>
 <ul>
 <li><strong>An untitled document</strong> is still <em>Untitled</em>, and its first save still asks where to put it.</li>
-<li><strong>A document with a file</strong> reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the <a href="#changed-on-disk"><em>This file changed on disk</em></a> banner asks which to keep, so neither version is lost.</li>
-<li><strong>A file that was moved or deleted</strong> comes back as an untitled document named after it, with a note saying the file was moved or deleted.</li>
+<li><strong>A document with a file</strong> reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the <a href="#changed-on-disk"><em>This file changed on disk</em></a> banner asks which to keep, so neither version is lost. If the file now holds exactly your changes, there&#39;s nothing to choose between, so it opens saved.</li>
+<li><strong>A file that was moved or deleted</strong> comes back as an untitled document named after it, with a note saying the file was moved or deleted. The note comes back each time it&#39;s restored, until you save it somewhere.</li>
 </ul>
 <p>In the app, quitting (<kbd>⌘Q</kbd>, or logging out) doesn&#39;t ask about unsaved changes, and even a crash or a force quit loses at most the last second of typing. Closing a window or tab still asks, since that&#39;s how you say you&#39;re done with a document: <strong>Discard</strong> there throws the backup away too.</p>
 <p>On the web, reloading or closing a tab with unsaved changes still asks first. Close it anyway and the backup stays. In Chrome, Edge and other Chromium browsers, restoring a document you opened with <strong>Choose File</strong> or by dropping it reopens the file itself, after the browser asks for permission again. In Safari and Firefox, or if you refuse, it comes back as an untitled document named after the file. In a private window, or with site data blocked, the browser may keep nothing: editing works as before, without backups.</p>

@@ -373,7 +373,7 @@ What differs from the browser:
   - Edit a file, quit, delete or rename the file in Finder, relaunch: it comes back as an
     untitled document named after the file, with the *This file was deleted or moved* note.
     Do it with the file emptied (select all, delete): it comes back empty, still unsaved, and
-    ⌘S shows the Save panel.
+    ⌘S shows the Save panel. Quit again without saving and relaunch: the note is still there.
   - Saving, or Revert, removes the backup: relaunch, and the document doesn't come back.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.

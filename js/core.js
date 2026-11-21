@@ -793,13 +793,14 @@
     }
 
     /**
-     * What a backup's file is like now. backup: { file, path?, fingerprint } (`file`, or a
-     * desktop `path`, says it had one); current: the file's content now, or null when it's gone.
+     * What a backup's file is like now. backup: { file, path?, fingerprint, missing? } (`file`,
+     * or a desktop `path`, says it had one; `missing`, that it's an untitled document reopened
+     * because its file had gone); current: the file's content now, or null when it's gone.
      * 'untitled' (it never had a file), 'missing', 'unchanged' or 'changed' (since editing
      * started).
      */
     function backupStatus(backup, current) {
-        if (!backup.file && !backup.path) return 'untitled';
+        if (!backup.file && !backup.path) return backup.missing ? 'missing' : 'untitled';
         if (current === null || current === undefined) return 'missing';
         return fingerprint(current) === backup.fingerprint ? 'unchanged' : 'changed';
     }

@@ -501,8 +501,9 @@ fn confirm_discard(app: AppHandle, name: Option<String>) -> bool {
 }
 
 /// Keeps the calling window's unsaved work in its backup `id`, replacing what was kept before:
-/// the editor's `text`, the document's file (`None` while untitled) and the fingerprint of what
-/// the file held when editing started. Never writes the document itself.
+/// the editor's `text`, the document's file (`None` while untitled), the fingerprint of what
+/// the file held when editing started, and whether it's untitled because its file went
+/// (`missing`). Never writes the document itself.
 #[tauri::command(async)]
 fn write_backup(
     app: AppHandle,
@@ -511,6 +512,7 @@ fn write_backup(
     path: Option<String>,
     title: String,
     fingerprint: Option<String>,
+    missing: Option<bool>,
 ) -> Result<(), String> {
     let store = backup_store(&app).ok_or("No backups folder")?;
     let backup = backups::Backup {
@@ -519,6 +521,7 @@ fn write_backup(
         path: path.filter(|p| !p.is_empty()).map(PathBuf::from),
         title,
         fingerprint,
+        missing: missing.unwrap_or(false),
         saved_at: backups::now_millis(),
     };
     store.write(&backup).map_err(|e| {

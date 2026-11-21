@@ -86,8 +86,8 @@ You never lose unsaved work. About a second after each change, Markydowny keeps 
 A document comes back in the editor, still unsaved:
 
 - **An untitled document** is still *Untitled*, and its first save still asks where to put it.
-- **A document with a file** reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the [*This file changed on disk*](#changed-on-disk) banner asks which to keep, so neither version is lost.
-- **A file that was moved or deleted** comes back as an untitled document named after it, with a note saying the file was moved or deleted.
+- **A document with a file** reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the [*This file changed on disk*](#changed-on-disk) banner asks which to keep, so neither version is lost. If the file now holds exactly your changes, there's nothing to choose between, so it opens saved.
+- **A file that was moved or deleted** comes back as an untitled document named after it, with a note saying the file was moved or deleted. The note comes back each time it's restored, until you save it somewhere.
 
 In the app, quitting (<kbd>⌘Q</kbd>, or logging out) doesn't ask about unsaved changes, and even a crash or a force quit loses at most the last second of typing. Closing a window or tab still asks, since that's how you say you're done with a document: **Discard** there throws the backup away too.
 
