@@ -85,6 +85,8 @@ pub struct DocumentRouter {
     folders: HashMap<String, PathBuf>,
     /// Windows queued to start a new, untitled document (File > New).
     untitled: HashSet<String>,
+    /// Windows queued to reopen a backup of unsaved work, by the backup's id.
+    restoring: HashMap<String, String>,
     next_id: u64,
 }
 
@@ -158,13 +160,40 @@ impl DocumentRouter {
     /// when it's idle, otherwise a new window. An untitled document has no path, so it is never
     /// "already open", and any number of them can be.
     pub fn route_untitled(&mut self, windows: &[String], front: Option<&str>) -> Placement {
+        let placement = self.place_unnamed(windows, front);
+        self.untitled
+            .insert(placement_label(&placement).to_string());
+        placement
+    }
+
+    /// A relaunch reopening the backup `id` of unsaved work: queues it like a new document
+    /// (`front` when it's idle, otherwise a new window). Each backup is a window of its own, even
+    /// two of one file.
+    pub fn route_restore(
+        &mut self,
+        id: &str,
+        windows: &[String],
+        front: Option<&str>,
+    ) -> Placement {
+        let placement = self.place_unnamed(windows, front);
+        self.restoring
+            .insert(placement_label(&placement).to_string(), id.to_string());
+        placement
+    }
+
+    /// Whether `label` was queued to reopen a backup; returns its id, and it reopens it now.
+    pub fn take_restore(&mut self, label: &str) -> Option<String> {
+        self.restoring.remove(label)
+    }
+
+    /// A window for a document that isn't a path: `front` when it's idle, otherwise a new one.
+    fn place_unnamed(&mut self, windows: &[String], front: Option<&str>) -> Placement {
         let idle = front.filter(|f| windows.iter().any(|w| w == f) && !self.occupied.contains(*f));
         let label = match idle {
             Some(label) => label.to_string(),
             None => self.next_label(),
         };
         self.occupied.insert(label.clone());
-        self.untitled.insert(label.clone());
         match idle {
             Some(_) => Placement::Existing(label),
             None => Placement::New(label),
@@ -238,6 +267,7 @@ impl DocumentRouter {
     pub fn forget(&mut self, label: &str) {
         self.pending.remove(label);
         self.untitled.remove(label);
+        self.restoring.remove(label);
         self.occupied.remove(label);
         self.showing.remove(label);
         self.folders.remove(label);
@@ -246,6 +276,15 @@ impl DocumentRouter {
     pub fn next_label(&mut self) -> String {
         self.next_id += 1;
         format!("doc-{}", self.next_id)
+    }
+}
+
+fn placement_label(placement: &Placement) -> &str {
+    match placement {
+        Placement::Existing(l)
+        | Placement::New(l)
+        | Placement::Showing(l)
+        | Placement::InFolder(l) => l,
     }
 }
 
@@ -344,6 +383,32 @@ mod tests {
             ),
             Placement::Existing("main".into())
         );
+    }
+
+    #[test]
+    fn each_backup_reopens_in_a_window_of_its_own() {
+        let mut router = DocumentRouter::default();
+        let windows = labels(&["main"]);
+        assert_eq!(
+            router.route_restore("a", &windows, Some("main")),
+            Placement::Existing("main".into())
+        );
+        // Main is taken now: the next backup, even of the same file, gets a new window.
+        assert_eq!(
+            router.route_restore("b", &windows, Some("main")),
+            Placement::New("doc-1".into())
+        );
+        assert_eq!(router.take_restore("main").as_deref(), Some("a"));
+        assert_eq!(router.take_restore("main"), None, "taken once");
+        assert!(!router.take_untitled("doc-1"), "not a new document");
+        // Files opened meanwhile don't land in a window reopening a backup.
+        assert_eq!(
+            router.route("/a.md".into(), &labels(&["main", "doc-1"]), Some("doc-1")),
+            Placement::New("doc-2".into())
+        );
+        // Closing a window that never reopened its backup forgets it.
+        router.forget("doc-1");
+        assert_eq!(router.take_restore("doc-1"), None);
     }
 
     #[test]

@@ -771,6 +771,65 @@
         return handle && typeof handle.createWritable === 'function' ? 'save' : 'download';
     }
 
+    // ------------------------------------------------------------------
+    // Unsaved work kept across quits and crashes
+    // ------------------------------------------------------------------
+
+    /** How long after a change its document's backup is written: at most this much typing is lost. */
+    const BACKUP_DELAY_MS = 1000;
+
+    /**
+     * A short fingerprint of `text`, to tell whether a file changed since editing started: its
+     * length in UTF-8 bytes and its 32-bit FNV-1a hash, as "<length>:<hash in hex>". The desktop
+     * app computes the same (backups.rs).
+     */
+    function fingerprint(text) {
+        const bytes = new TextEncoder().encode(text);
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < bytes.length; i++) {
+            hash = Math.imul(hash ^ bytes[i], 0x01000193);
+        }
+        return `${bytes.length}:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    /**
+     * What a backup's file is like now. backup: { file, path?, fingerprint } (`file`, or a
+     * desktop `path`, says it had one); current: the file's content now, or null when it's gone.
+     * 'untitled' (it never had a file), 'missing', 'unchanged' or 'changed' (since editing
+     * started).
+     */
+    function backupStatus(backup, current) {
+        if (!backup.file && !backup.path) return 'untitled';
+        if (current === null || current === undefined) return 'missing';
+        return fingerprint(current) === backup.fingerprint ? 'unchanged' : 'changed';
+    }
+
+    /**
+     * How a backup reopens, given its status (backupStatus, or 'unreachable': the file can't be
+     * opened from here, such as a browser that refused permission):
+     *   { kind: 'untitled', title, text, missing } - an untitled document. One whose file is gone
+     *     or can't be opened is titled after the file; `missing` asks for a note saying it was
+     *     moved or deleted.
+     *   { kind: 'file', text, changed } - the file, with the backup's text as unsaved edits;
+     *     `changed` shows the "changed on disk" banner.
+     */
+    function restorePlan(backup, status) {
+        const text = typeof backup.text === 'string' ? backup.text : '';
+        if (status === 'unchanged' || status === 'changed') {
+            return { kind: 'file', text, changed: status === 'changed' };
+        }
+        if (status === 'untitled') {
+            return { kind: 'untitled', title: backup.title || UNTITLED_TITLE, text, missing: false };
+        }
+        const name = backup.name || (backup.path ? basename(backup.path) : '') || backup.title || UNTITLED_TITLE;
+        return { kind: 'untitled', title: name, text, missing: status === 'missing' };
+    }
+
+    /** The drop zone's offer to reopen `count` backups (web). */
+    function restoreLabel(count) {
+        return count === 1 ? 'Restore 1 unsaved document' : `Restore ${count} unsaved documents`;
+    }
+
     /** How many recent saves are remembered, so their echo from the file watch is recognised. */
     const MAX_WRITTEN = 4;
 
@@ -793,6 +852,9 @@
      *   { type: 'reload' } - the banner's Reload: take the file, drop the changes.
      *   { type: 'keepMine', text } - the banner's Keep mine: the next save overwrites the file.
      *   { type: 'revert' } - drop the changes.
+     *   { type: 'restore', text, changed } - unsaved work reopened after a relaunch: the editor
+     *     holds text (the file's content, as of 'open', is what it's unsaved against). `changed`:
+     *     the file changed on disk since the work was done, which the banner asks about.
      * Returns { state, apply }: apply is text to put in the editor, or null.
      */
     function editReducer(state, event) {
@@ -848,6 +910,11 @@
                 next.conflict = null;
                 next.dirty = event.text !== next.base;
                 break;
+            case 'restore':
+                next.dirty = event.text !== next.base;
+                next.conflict = event.changed && next.dirty ? next.base : null;
+                apply = event.text === next.base ? null : event.text;
+                break;
             case 'revert':
                 // With a change on disk too, revert to that: it's what the file holds now.
                 if (next.conflict !== null) next.base = next.conflict;
@@ -863,6 +930,11 @@
         UNTITLED_TITLE,
         UNTITLED_FILE_NAME,
         saveAction,
+        BACKUP_DELAY_MS,
+        fingerprint,
+        backupStatus,
+        restorePlan,
+        restoreLabel,
         editorShortcut,
         countWords,
         formatWordCount,

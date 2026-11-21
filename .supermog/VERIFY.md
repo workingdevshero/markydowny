@@ -197,6 +197,32 @@ document titled *Untitled* straight in the editor (no file behind it yet).
 - **macOS app.** The same, with ⌘N opening a new tab (above New Tab in the File menu) and the
   Save panel's own *Replace* prompt the only way an existing file is replaced.
 
+### Unsaved work is kept (website)
+
+Every document with unsaved changes has a backup in IndexedDB (database `markydowny`, store
+`backups`), written about a second after a change and removed once nothing is unsaved (Save,
+Revert, or *Discard* when asked). The drop zone offers them back with **Restore N unsaved
+documents** (`#restoreButton`), hidden while there are none.
+
+- **Chromium, untitled.** *New file*, type a line, wait two seconds, then close the tab anyway
+  (accept the `beforeunload` prompt; `browser_close` or navigating away with the prompt
+  accepted). Open the page again: the drop zone shows *Restore 1 unsaved document*. Click it:
+  the editor opens titled *Untitled* with the line, marked unsaved (•). Ctrl+S still asks where
+  to save (stand in `showSaveFilePicker` as in *New file*). Once saved, reload: nothing is
+  offered.
+- **Chromium, a file.** Open a file through an Origin Private File System handle
+  (`MarkyApp.openFileHandle`, as in *Live reload*), edit it, wait two seconds, reload and accept
+  the prompt. *Restore* reopens that file (titled by it, live) with the edit unsaved. Write the
+  file from `browser_evaluate` before restoring and the *This file changed on disk* banner shows
+  instead; *Keep mine* then Ctrl+S writes the edit.
+- **Two documents.** Leave unsaved work in two tabs, close both, open the page: *Restore 2
+  unsaved documents* lists both (title and time); picking one restores it, and *Open another*
+  comes back to *Restore 1 unsaved document*. A tab that's still open and editing isn't offered
+  in another tab.
+- **Discard.** Type, then *Open another* and choose to discard: reloading offers nothing.
+- **No storage.** With `window.indexedDB` throwing (an init script defining a getter that
+  throws), editing and saving work as before and nothing is offered.
+
 ### Formatting toolbar
 
 While editing, a toolbar sticks under the top bar (`role="toolbar"`, `#formatToolbar`): a block
@@ -327,6 +353,22 @@ What differs from the browser:
   TextEdit, open it here, then delete or rename it in Finder and pick it: it should say "*name*
   was moved or deleted" and leave the list, with no broken window. **Clear Menu** empties it and
   is then disabled. The list is in `recent.json` in the app's config folder.
+- **Unsaved work is kept.** Backups are `<id>.json` files in `backups/` beside `recent.json`.
+  You can't `kill -9` from the round, but `desktop_*` force quit (on macOS, ⌥⌘Esc's Force
+  Quit) does the same: the app gets no chance to tidy up.
+  - Type in a new untitled document (File > New) and in an open file, wait two seconds, force
+    quit, and relaunch: both come back, in the editor and unsaved (•), the untitled one titled
+    *Untitled*; its ⌘S still shows the Save panel.
+  - With unsaved changes, ⌘Q (File > Quit on Linux) quits at once, with no prompt, even straight
+    after typing. Relaunch: the changes are back.
+  - Close a window or tab with unsaved changes and choose **Discard**: relaunch, and nothing
+    comes back. **Cancel** keeps the window.
+  - Edit a file, quit, change the file in another editor (TextEdit), relaunch: the file reopens
+    with your edit and the *This file changed on disk* banner. *Reload* takes the file; *Keep
+    mine* then ⌘S writes your version. Save stays disabled until you choose.
+  - Edit a file, quit, delete or rename the file in Finder, relaunch: it comes back as an
+    untitled document named after the file, with the *This file was deleted or moved* note.
+  - Saving, or Revert, removes the backup: relaunch, and the document doesn't come back.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
 - **Links** open in the default browser, not in the app.

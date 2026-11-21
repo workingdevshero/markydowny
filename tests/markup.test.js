@@ -63,7 +63,9 @@ test('the file selector has an "Open all as tabs" button, hidden until the deskt
 
 test('only desktop drops offer "Open all as tabs", which opens every file through the app', () => {
     const calls = [...app.matchAll(/showFileSelector\(/g)];
-    assert.equal(calls.length, 3, 'expected the definition plus the desktop and web callers');
+    assert.equal(calls.length, 4, 'expected the definition plus the desktop and web callers, and the web\'s unsaved documents');
+    const restore = app.match(/function offerRestore[\s\S]*?\n {4}}\n/)[0];
+    assert.match(restore, /showFileSelector\([\s\S]*\}\)\), undefined, \{/, 'unsaved documents are never opened all at once');
     const desktopDrop = app.match(/async function handleDesktopDrop[\s\S]*?\n {4}}\n/)[0];
     assert.match(desktopDrop, /openAllAsTabs\(entries\.map\(entry => entry\.path\)\)/);
     const webFolder = app.match(/async function readFolder[\s\S]*?\n {4}}\n/)[0];
@@ -157,7 +159,7 @@ test('CodeMirror is loaded only when editing starts, never by the page itself', 
     const start = app.match(/async function startEditing[\s\S]*?\n {4}}\n/)[0];
     assert.match(start, /await loadCodeMirror\(\)/);
     const newDocument = app.match(/async function newDocument[\s\S]*?\n {4}}\n/)[0];
-    assert.match(newDocument, /await loadCodeMirror\(\)[\s\S]*await startEditing\(\)/);
+    assert.match(newDocument, /await loadCodeMirror\(\)[\s\S]*await startEditing\(/);
 });
 
 test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
@@ -298,7 +300,7 @@ test('the drop zone offers New file beside Choose File, which starts an untitled
     assert.ok(newDocument.indexOf('await loadCodeMirror()') < newDocument.indexOf('await leaveEditor()'), 'the editor loads (and can fail) before unsaved changes go');
     assert.ok(newDocument.indexOf('await leaveEditor()') < newDocument.indexOf('renderMarkdown('));
     assert.match(newDocument, /kind: 'untitled'/);
-    assert.match(newDocument, /await startEditing\(\)/);
+    assert.match(newDocument, /await startEditing\(restore \? [^\n]* : null\)/);
     // File > New reaches the page as a pending untitled document.
     assert.match(app, /if \(pending\.untitled\) \{\s*\/\/ File > New\.[^\n]*\s*if \(!\(await newDocument\(\)\) && !currentSource\) showDropZone\(\);/);
 });
