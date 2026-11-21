@@ -68,7 +68,7 @@ test('a file the browser can\'t reopen becomes untitled, named after the file, w
 test('a reopened backup is unsaved against the file, and changed on disk asks first', () => {
     const open = core.editReducer(null, { type: 'open', content: 'on disk' }).state;
     const unchanged = core.editReducer(open, { type: 'restore', text: 'mine', changed: false });
-    assert.deepEqual(unchanged.state, { base: 'on disk', dirty: true, conflict: null, written: [] });
+    assert.deepEqual(unchanged.state, { base: 'on disk', dirty: true, conflict: null, restored: false, written: [] });
     assert.equal(unchanged.apply, 'mine');
 
     const changed = core.editReducer(open, { type: 'restore', text: 'mine', changed: true }).state;
@@ -79,12 +79,43 @@ test('a reopened backup is unsaved against the file, and changed on disk asks fi
     assert.equal(reloaded.apply, 'on disk');
     assert.equal(reloaded.state.dirty, false);
     const kept = core.editReducer(changed, { type: 'keepMine', text: 'mine' }).state;
-    assert.deepEqual(kept, { base: 'on disk', dirty: true, conflict: null, written: [] });
+    assert.deepEqual(kept, { base: 'on disk', dirty: true, conflict: null, restored: false, written: [] });
 
     // A backup that matches the file has nothing unsaved, and nothing to ask about.
     const same = core.editReducer(open, { type: 'restore', text: 'on disk', changed: true });
-    assert.deepEqual(same.state, { base: 'on disk', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(same.state, { base: 'on disk', dirty: false, conflict: null, restored: false, written: [] });
     assert.equal(same.apply, null);
+});
+
+test('a restored banner stays up until it is answered, even if the file goes back to how it was', () => {
+    // Edited against 'before'; the file held 'on disk' at restore, then changed and changed back.
+    const open = core.editReducer(null, { type: 'open', content: 'on disk' }).state;
+    let state = core.editReducer(open, { type: 'restore', text: 'mine', changed: true }).state;
+    assert.equal(state.restored, true);
+    state = core.editReducer(state, { type: 'disk', content: 'someone else', text: 'mine' }).state;
+    assert.equal(state.conflict, 'someone else');
+    state = core.editReducer(state, { type: 'disk', content: 'on disk', text: 'mine' }).state;
+    assert.equal(state.conflict, 'on disk', 'still asks: the work wasn\'t done against this either');
+    assert.equal(state.dirty, true);
+    // Answering it makes it an ordinary edit again, where going back to base clears the banner.
+    const kept = core.editReducer(state, { type: 'keepMine', text: 'mine' }).state;
+    assert.deepEqual(kept, { base: 'on disk', dirty: true, conflict: null, restored: false, written: [] });
+    const reloaded = core.editReducer(state, { type: 'reload' }).state;
+    assert.equal(reloaded.restored, false);
+    // An ordinary conflict still clears when the file goes back.
+    let plain = core.editReducer(open, { type: 'edit', text: 'mine' }).state;
+    plain = core.editReducer(plain, { type: 'disk', content: 'theirs', text: 'mine' }).state;
+    plain = core.editReducer(plain, { type: 'disk', content: 'on disk', text: 'mine' }).state;
+    assert.equal(plain.conflict, null);
+});
+
+test('an emptied document whose file is gone stays unsaved when it reopens', () => {
+    const open = core.editReducer(null, { type: 'open', content: '' }).state;
+    const restored = core.editReducer(open, { type: 'restore', text: '', changed: false, unsaved: true });
+    assert.equal(restored.state.dirty, true);
+    assert.equal(restored.apply, null);
+    assert.match(fn('newDocument'), /changed: false, unsaved: true,/);
+    assert.match(fn('startEditing'), /unsaved: Boolean\(restore\.unsaved\)/);
 });
 
 test('the drop zone counts the unsaved documents it offers', () => {
@@ -143,10 +174,23 @@ test('the drop zone offers to restore, after New file, hidden until there is som
     assert.match(html, /\.restore-button\[hidden\]\s*\{\s*display: none;/);
     assert.match(fn('showDropZone'), /refreshRestoreOffer\(\);/);
     // In Chromium, reopening the file asks the browser for permission again.
-    const restore = fn('restoreWebBackup');
+    const restore = fn('reopenWebBackup');
     assert.match(restore, /queryPermission\(mode\)/);
     assert.match(restore, /requestPermission\(mode\)/);
     assert.match(restore, /err\.name === 'NotFoundError'/);
+});
+
+test('a web restore claims the backup and checks it is still kept before reopening it', () => {
+    const restore = fn('restoreWebBackup');
+    const claim = restore.indexOf('await claimBackupLock(offered.id)');
+    const get = restore.indexOf('await backupStore.get(offered.id)');
+    assert.ok(claim > 0 && claim < get, 'claimed, then read again');
+    assert.ok(get < restore.indexOf('reopenWebBackup('));
+    assert.match(restore, /if \(!backup\) \{\s*if \(release\) release\(\);\s*await refreshRestoreOffer\(\);/);
+    // Not reopened: let go of it, so it's offered again.
+    assert.match(restore, /if \(!lock\.taken\) release\(\);/);
+    assert.match(fn('claimBackupLock'), /navigator\.locks\.request\(BACKUP_LOCK \+ id, \{ ifAvailable: true \}/);
+    assert.match(fn('startEditing'), /editing = session;\s*if \(restore && restore\.lock\) restore\.lock\.taken = true;/);
 });
 
 test('the desktop app reopens backups at launch and keeps them on Quit without asking', () => {
@@ -159,11 +203,19 @@ test('the desktop app reopens backups at launch and keeps them on Quit without a
     assert.match(app, /listen\('flush-backups', async \(\) => \{\s*if \(editing\) await writeBackup\(editing\);\s*invoke\('backups_flushed'\)/);
     assert.match(lib, /QUIT_MENU_ID[\s\S]*?\.accelerator\("CmdOrCtrl\+Q"\)/);
     assert.match(lib, /app\.emit\(FLUSH_EVENT, \(\)\)/);
+    // Quitting from the Dock or logging out waits for the backups too.
+    assert.match(lib, /sel!\(applicationShouldTerminate:\)/);
+    assert.match(lib, /flush_backups\(&handle, \|handle\| \{\s*let _ = handle\.run_on_main_thread\(app_terminate::reply\);/);
+    assert.match(lib, /tabs::native::add_window_menu_items\(\);\s*install_terminate_handler\(handle\);/);
 });
 
 test('a restored file is checked against the file after live reload caught up with it', () => {
     const restore = fn('restoreDesktopBackup');
     assert.ok(restore.indexOf('await showDesktopDocument(doc)') < restore.indexOf('core.backupStatus(backup, currentSource.markdown)'));
+    // Caught up means rendered: the watch waits for the catch-up's render.
+    assert.match(fn('watchDesktopDocument'), /await onDocumentChanged\(now\);/);
+    const changed = fn('onDocumentChanged');
+    assert.equal((changed.match(/await renderMarkdown\(/g) || []).length, 2);
     // Saving waits for the banner's answer, as it would after any change on disk.
     assert.match(fn('saveDocument'), /if \(session\.state\.conflict !== null\) return;/);
 });

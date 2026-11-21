@@ -352,7 +352,8 @@
     /**
      * File > New and the drop zone's New file: an empty, untitled document, straight in the
      * editor. Its first save asks where to put it (writeSession). Resolves to whether it opened.
-     * `restore` ({ backup, plan }: core.restorePlan's 'untitled') reopens unsaved work as one.
+     * `restore` ({ backup, plan, lock }: core.restorePlan's 'untitled', and on the web its
+     * claimed lock) reopens unsaved work as one.
      */
     async function newDocument(restore = null) {
         // The editor loads before anything unsaved is let go: loading it is what can fail.
@@ -377,7 +378,8 @@
         const source = { kind: 'untitled', dir: '', title: restore ? restore.plan.title : core.UNTITLED_TITLE };
         await renderMarkdown('', source);
         if (currentSource !== source) return true;
-        await startEditing(restore ? { id: restore.backup.id, text: restore.plan.text, changed: false } : null);
+        // Unsaved even when it's empty: a file emptied before it went is still a change to save.
+        await startEditing(restore ? { id: restore.backup.id, text: restore.plan.text, changed: false, unsaved: true, lock: restore.lock } : null);
         // Its file was moved or deleted since: say so.
         if (restore && restore.plan.missing && currentSource === source) showMissingNotice();
         return true;
@@ -565,7 +567,9 @@
             const now = await invoke('watch_document', { path, generation });
             if (generation !== watchGeneration || !isShowingPath(path)) return;
             if (now) {
-                onDocumentChanged(now);
+                // Rendered before this resolves, so what's on screen (currentSource.markdown) is
+                // the file as it is now.
+                await onDocumentChanged(now);
             } else {
                 showMissingNotice();
             }
@@ -580,9 +584,9 @@
 
     /**
      * A watched document changed. In a followed folder, a change to another file switches to
-     * it (highlighting its edit against the content it had before).
+     * it (highlighting its edit against the content it had before). Resolves once it's shown.
      */
-    function onDocumentChanged(doc) {
+    async function onDocumentChanged(doc) {
         if (!currentSource || currentSource.kind !== 'desktop') return;
         if (doc.path !== currentSource.path) {
             if (isFollowingFolder() && isInFolder(doc.path)) {
@@ -599,11 +603,11 @@
             // Already showing this content, but switched to without knowing what changed
             // (opened while following): the watch's report still has the edit to highlight.
             if (currentSource.unhighlighted && typeof doc.previous === 'string' && doc.previous !== doc.content) {
-                renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true, previous: doc.previous });
+                await renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true, previous: doc.previous });
             }
             return;
         }
-        renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true });
+        await renderMarkdown(doc.content, { ...currentSource, unhighlighted: false }, { reload: true });
     }
 
     function onDocumentMissing(payload) {
@@ -1643,9 +1647,11 @@
 
     /**
      * Edit: swaps the rendered view for the markdown, with the cursor where the reader was.
-     * `restore` ({ id, text, changed, fingerprint }) reopens unsaved work kept in the backup
-     * `id`: the editor starts with its text, unsaved against the document on screen, and with
-     * the "changed on disk" banner when `changed`.
+     * `restore` ({ id, text, changed, unsaved, fingerprint, lock }) reopens unsaved work kept
+     * in the backup `id`: the editor starts with its text, unsaved against the document on
+     * screen (`unsaved`: even when it's the same), and with the "changed on disk" banner when
+     * `changed`. `lock` ({ release, taken }, web): the backup's lock, already claimed, which the
+     * editor takes over (`taken`) once it's open.
      */
     async function startEditing(restore = null) {
         if (editing || !currentSource || typeof currentSource.markdown !== 'string') return;
@@ -1668,17 +1674,20 @@
             const separator = core.lineSeparator(text);
             const session = {
                 cm, separator, view: null, state: null, saving: null, words: null,
-                backup: newBackup(restore ? restore.id : null),
+                backup: newBackup(restore ? restore.id : null, restore && restore.lock ? restore.lock.release : null),
             };
             session.state = core.editReducer(null, { type: 'open', content: currentSource.markdown }).state;
             if (restore) {
-                session.state = core.editReducer(session.state, { type: 'restore', text, changed: restore.changed }).state;
+                session.state = core.editReducer(session.state, {
+                    type: 'restore', text, changed: restore.changed, unsaved: Boolean(restore.unsaved),
+                }).state;
                 // Until the banner is answered, a backup still says the file changed since.
                 if (session.state.conflict !== null) session.backup.keptFingerprint = restore.fingerprint || null;
             }
             editorHost.replaceChildren();
             session.view = cm.createEditor(editorHost, text, editorOptions(session));
             editing = session;
+            if (restore && restore.lock) restore.lock.taken = true;
             setUpToolbar();
             renderWordCount();
 
@@ -2253,9 +2262,10 @@
      * waiting), queue (writes and removals, in order), source (the document it's of),
      * fingerprint ({ base, value }: of what the editor's changes are against), keptFingerprint
      * (a restored backup's, while its banner is up), release (web: lets go of its lock) }.
-     * `id` reopens a backup kept before; otherwise it's a new one.
+     * `id` reopens a backup kept before, with `release` its lock's (claimed by claimBackupLock);
+     * otherwise it's a new one.
      */
-    function newBackup(id) {
+    function newBackup(id, release = null) {
         return {
             id: id || newBackupId(),
             stored: Boolean(id),
@@ -2264,7 +2274,7 @@
             source: null,
             fingerprint: null,
             keptFingerprint: null,
-            release: id ? holdBackupLock(id) : null,
+            release: id ? release || holdBackupLock(id) : null,
         };
     }
 
@@ -2371,6 +2381,28 @@
         return release;
     }
 
+    /**
+     * Web: takes the lock of a backup offered for restoring, unless another tab holds it (it
+     * restored the backup first). Resolves to its release, or null when it's taken.
+     */
+    function claimBackupLock(id) {
+        if (isDesktop || !navigator.locks) return Promise.resolve(() => {});
+        return new Promise(resolve => {
+            let release;
+            const held = new Promise(done => {
+                release = done;
+            });
+            navigator.locks.request(BACKUP_LOCK + id, { ifAvailable: true }, (lock) => {
+                if (!lock) {
+                    resolve(null);
+                    return null;
+                }
+                resolve(release);
+                return held;
+            }).catch(() => resolve(null));
+        });
+    }
+
     /** Lets go of the session's lock once its backup's writes are done. */
     function releaseBackupLock(session) {
         const release = session.backup.release;
@@ -2435,6 +2467,7 @@
                 return run('readwrite', table => table.put({ ...record, handle: null }));
             }),
             remove: (id) => run('readwrite', table => table.delete(id)),
+            get: (id) => run('readonly', table => table.get(id)),
             list: () => run('readonly', table => table.getAll()),
         };
     }
@@ -2483,8 +2516,36 @@
      * browser has permission again; refused, or in another browser, it's an untitled document
      * named after the file.
      */
-    async function restoreWebBackup(backup) {
-        restoreOffer = restoreOffer.filter(other => other !== backup);
+    async function restoreWebBackup(offered) {
+        restoreOffer = restoreOffer.filter(other => other !== offered);
+        // Another tab may have restored it since it was offered, or saved or discarded it: only
+        // the tab holding its lock touches it, and only while it's still kept.
+        const release = await claimBackupLock(offered.id);
+        let backup = null;
+        if (release) {
+            try {
+                backup = await backupStore.get(offered.id);
+            } catch (err) {
+                console.error('Could not reopen unsaved work:', err);
+            }
+        }
+        if (!backup) {
+            if (release) release();
+            await refreshRestoreOffer();
+            alert('These unsaved changes were already restored in another tab, or saved or discarded there.');
+            return;
+        }
+        const lock = { release, taken: false };
+        try {
+            await reopenWebBackup(backup, lock);
+        } finally {
+            // Not reopened (a refused open, or the reader kept what they had): it stays on offer.
+            if (!lock.taken) release();
+        }
+    }
+
+    /** restoreWebBackup, once `backup` is known to be kept and its `lock` is held. */
+    async function reopenWebBackup(backup, lock) {
         let status = backup.file ? 'unreachable' : 'untitled';
         let show = null;
         if (backup.handle) {
@@ -2509,10 +2570,10 @@
             if (!(await leaveEditor())) return;
             await show();
             if (!currentSource || currentSource.handle !== backup.handle) return;
-            await editRestored(backup, core.restorePlan(backup, core.backupStatus(backup, currentSource.markdown)));
+            await editRestored(backup, core.restorePlan(backup, core.backupStatus(backup, currentSource.markdown)), lock);
             return;
         }
-        await newDocument({ backup, plan: core.restorePlan(backup, status) });
+        await newDocument({ backup, plan: core.restorePlan(backup, status), lock });
     }
 
     /**
@@ -2537,9 +2598,9 @@
     }
 
     /** Opens the document on screen in the editor with a backup's text (a 'file' plan). */
-    async function editRestored(backup, plan) {
+    async function editRestored(backup, plan, lock = null) {
         try {
-            await startEditing({ id: backup.id, text: plan.text, changed: plan.changed, fingerprint: backup.fingerprint });
+            await startEditing({ id: backup.id, text: plan.text, changed: plan.changed, fingerprint: backup.fingerprint, lock });
         } catch (err) {
             console.error('Could not reopen unsaved work:', err);
             alert(`Could not open the editor: ${err && err.message ? err.message : err}`);

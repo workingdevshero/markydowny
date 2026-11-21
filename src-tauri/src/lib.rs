@@ -1065,11 +1065,18 @@ fn restore_backups(app: &AppHandle) {
 /// (or [`QUIT_FLUSH_TIMEOUT`]), then quits. Nothing asks about unsaved changes: they come back
 /// at the next launch.
 fn quit(app: &AppHandle) {
+    flush_backups(app, |handle| handle.exit(0));
+}
+
+/// Asks every window to write its unsaved work to its backup, then calls `then` once they all
+/// have, or after [`QUIT_FLUSH_TIMEOUT`]. Returns false, and does nothing, while a flush is
+/// already under way.
+fn flush_backups(app: &AppHandle, then: impl FnOnce(&AppHandle) + Send + 'static) -> bool {
     let state = app.state::<AppState>();
     {
         let mut flushing = state.flushing.lock().unwrap();
         if flushing.is_some() {
-            return;
+            return false;
         }
         *flushing = Some(app.webview_windows().keys().cloned().collect());
     }
@@ -1090,8 +1097,90 @@ fn quit(app: &AppHandle) {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        handle.exit(0);
+        *handle.state::<AppState>().flushing.lock().unwrap() = None;
+        then(&handle);
     });
+    true
+}
+
+/// Quitting through AppKit rather than our ⌘Q (the Dock's Quit, logging out, restarting): AppKit
+/// waits while the windows write their backups, as Quit does, then terminates.
+#[cfg(target_os = "macos")]
+fn install_terminate_handler(app: &AppHandle) {
+    let handle = app.clone();
+    app_terminate::install(move || {
+        flush_backups(&handle, |handle| {
+            let _ = handle.run_on_main_thread(app_terminate::reply);
+        })
+    });
+}
+
+#[cfg(target_os = "macos")]
+mod app_terminate {
+    //! `applicationShouldTerminate:` on tao's app delegate, which doesn't answer it. Main thread
+    //! only.
+
+    use std::sync::OnceLock;
+
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use objc2::{sel, MainThreadMarker};
+    use objc2_app_kit::{NSApp, NSApplicationTerminateReply};
+
+    type ShouldTerminate = unsafe extern "C-unwind" fn(
+        *mut AnyObject,
+        Sel,
+        *mut AnyObject,
+    ) -> NSApplicationTerminateReply;
+
+    /// Starts what has to happen before terminating; false: terminate now.
+    static ON_TERMINATE: OnceLock<Box<dyn Fn() -> bool + Send + Sync>> = OnceLock::new();
+
+    /// Answers AppKit's "should the app terminate?" with "later" while `action` (returning true)
+    /// finishes; it then calls [`reply`].
+    pub fn install(action: impl Fn() -> bool + Send + Sync + 'static) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        if ON_TERMINATE.set(Box::new(action)).is_err() {
+            return;
+        }
+
+        unsafe extern "C-unwind" fn should_terminate(
+            _: *mut AnyObject,
+            _: Sel,
+            _: *mut AnyObject,
+        ) -> NSApplicationTerminateReply {
+            match ON_TERMINATE.get() {
+                Some(action) if action() => NSApplicationTerminateReply::TerminateLater,
+                _ => NSApplicationTerminateReply::TerminateNow,
+            }
+        }
+
+        let Some(delegate) = NSApp(mtm).delegate() else {
+            return;
+        };
+        let object: &AnyObject = AsRef::<AnyObject>::as_ref(&*delegate);
+        let class: &AnyClass = object.class();
+        // SAFETY: the function matches `applicationShouldTerminate:`'s `Q@:@` signature
+        // (NSApplicationTerminateReply is an NSUInteger), and the delegate's class lives for the
+        // whole process. class_addMethod leaves a class that already answers it alone.
+        unsafe {
+            let imp: Imp = std::mem::transmute(should_terminate as ShouldTerminate);
+            objc2::ffi::class_addMethod(
+                class as *const AnyClass as *mut AnyClass,
+                sel!(applicationShouldTerminate:),
+                imp,
+                c"Q@:@".as_ptr(),
+            );
+        }
+    }
+
+    /// The windows have kept their unsaved work: AppKit can terminate.
+    pub fn reply() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApp(mtm).replyToApplicationShouldTerminate(true);
+        }
+    }
 }
 
 /// Puts `paths` at the top of File > Open Recent, the first one topmost.
@@ -1267,7 +1356,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// and Finder bring a window back. Only an exit the user didn't ask for by quitting reaches
 /// here without a code (the last window closing), and an exit the app asks for itself
 /// (`AppHandle::exit`, which has a code: Quit, once the windows have kept their unsaved work)
-/// still goes through. Quitting from the Dock or logging out terminates through AppKit.
+/// still goes through. Quitting from the Dock or logging out terminates through AppKit, which
+/// waits for the windows' backups too (`install_terminate_handler`).
 fn keep_running_without_windows(on_macos: bool, code: Option<i32>) -> bool {
     on_macos && code.is_none()
 }
@@ -1347,6 +1437,7 @@ pub fn run() {
                 let button_handle = handle.clone();
                 tabs::native::install_new_tab_button(move || new_tab(&button_handle));
                 tabs::native::add_window_menu_items();
+                install_terminate_handler(handle);
             }
             // The main window exists now, so files from the launch can fill it.
             let mut paths = cli_paths();

@@ -835,11 +835,14 @@
 
     /**
      * Unsaved changes and conflicts with the file on disk, as a reducer.
-     * state: { base, dirty, conflict, written }
+     * state: { base, dirty, conflict, restored, written }
      *   base: the file's content the editor's changes are against (what's on disk, as far as
      *     the page knows). Saving checks the file still has it.
      *   dirty: the editor's text differs from base.
      *   conflict: content that arrived on disk while there were unsaved changes, or null.
+     *   restored: the conflict is a restored backup's (its work was done against an older
+     *     version of the file), so it stays until it's answered, even if the file goes back to
+     *     base.
      *   written: what this page saved recently, so a save coming back through the file watch
      *     isn't taken for someone else's change.
      *
@@ -852,15 +855,17 @@
      *   { type: 'reload' } - the banner's Reload: take the file, drop the changes.
      *   { type: 'keepMine', text } - the banner's Keep mine: the next save overwrites the file.
      *   { type: 'revert' } - drop the changes.
-     *   { type: 'restore', text, changed } - unsaved work reopened after a relaunch: the editor
-     *     holds text (the file's content, as of 'open', is what it's unsaved against). `changed`:
-     *     the file changed on disk since the work was done, which the banner asks about.
+     *   { type: 'restore', text, changed, unsaved } - unsaved work reopened after a relaunch: the
+     *     editor holds text (the file's content, as of 'open', is what it's unsaved against).
+     *     `changed`: the file changed on disk since the work was done, which the banner asks
+     *     about until it's answered. `unsaved`: it counts as unsaved even when text is the same
+     *     (an emptied file that's gone, reopened as an empty untitled document).
      * Returns { state, apply }: apply is text to put in the editor, or null.
      */
     function editReducer(state, event) {
         const next = state
-            ? { base: state.base, dirty: state.dirty, conflict: state.conflict, written: state.written }
-            : { base: '', dirty: false, conflict: null, written: [] };
+            ? { base: state.base, dirty: state.dirty, conflict: state.conflict, restored: state.restored, written: state.written }
+            : { base: '', dirty: false, conflict: null, restored: false, written: [] };
         let apply = null;
         switch (event.type) {
             case 'open':
@@ -874,7 +879,11 @@
                 break;
             case 'disk':
             case 'saveConflict':
-                if (event.content === next.base) {
+                if (event.content === next.base && next.restored) {
+                    // Back to what the file held at restore, which still isn't what the work
+                    // was done against.
+                    next.conflict = event.content;
+                } else if (event.content === next.base) {
                     // Back to what the editor started from: nothing to choose between.
                     next.conflict = null;
                 } else if (event.type === 'disk' && next.written.includes(event.content)) {
@@ -911,8 +920,9 @@
                 next.dirty = event.text !== next.base;
                 break;
             case 'restore':
-                next.dirty = event.text !== next.base;
+                next.dirty = Boolean(event.unsaved) || event.text !== next.base;
                 next.conflict = event.changed && next.dirty ? next.base : null;
+                next.restored = next.conflict !== null;
                 apply = event.text === next.base ? null : event.text;
                 break;
             case 'revert':
@@ -923,6 +933,8 @@
                 next.conflict = null;
                 break;
         }
+        // Answered (Reload, Keep mine, Revert, a save) or gone: an ordinary state again.
+        if (next.conflict === null) next.restored = false;
         return { state: next, apply };
     }
 

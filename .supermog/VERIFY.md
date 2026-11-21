@@ -219,6 +219,9 @@ documents** (`#restoreButton`), hidden while there are none.
   unsaved documents* lists both (title and time); picking one restores it, and *Open another*
   comes back to *Restore 1 unsaved document*. A tab that's still open and editing isn't offered
   in another tab.
+- **Two tabs, one backup.** With one backup on offer in two tabs, restore it in the first; then
+  *Restore* in the second says it was already restored and offers nothing. Same after the first
+  tab saves or reverts it.
 - **Discard.** Type, then *Open another* and choose to discard: reloading offers nothing.
 - **No storage.** With `window.indexedDB` throwing (an init script defining a getter that
   throws), editing and saving work as before and nothing is offered.
@@ -360,7 +363,8 @@ What differs from the browser:
     quit, and relaunch: both come back, in the editor and unsaved (•), the untitled one titled
     *Untitled*; its ⌘S still shows the Save panel.
   - With unsaved changes, ⌘Q (File > Quit on Linux) quits at once, with no prompt, even straight
-    after typing. Relaunch: the changes are back.
+    after typing. Relaunch: the changes are back. On macOS, the Dock icon's **Quit** (and logging
+    out) does the same straight after typing: AppKit waits for the backups before terminating.
   - Close a window or tab with unsaved changes and choose **Discard**: relaunch, and nothing
     comes back. **Cancel** keeps the window.
   - Edit a file, quit, change the file in another editor (TextEdit), relaunch: the file reopens
@@ -368,6 +372,8 @@ What differs from the browser:
     mine* then ⌘S writes your version. Save stays disabled until you choose.
   - Edit a file, quit, delete or rename the file in Finder, relaunch: it comes back as an
     untitled document named after the file, with the *This file was deleted or moved* note.
+    Do it with the file emptied (select all, delete): it comes back empty, still unsaved, and
+    ⌘S shows the Save panel.
   - Saving, or Revert, removes the backup: relaunch, and the document doesn't come back.
 - **Staying open (macOS only).** Closing the last window leaves the app running; clicking its
   Dock icon brings back an empty window. ⌘Q quits. On Linux, closing the last window quits.
