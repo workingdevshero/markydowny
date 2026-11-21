@@ -27,6 +27,10 @@ param([switch]$PrintPath)
 # or not, because with Stop a native program's stderr (cargo's progress) can become a
 # terminating error when the output is redirected. Native programs are checked with Assert-Exit.
 $ErrorActionPreference = "Continue"
+# Continue lets a terminating error end only its own statement: a failed download, or a program
+# that isn't there (which leaves $LASTEXITCODE at the last program's 0, so Assert-Exit passes).
+# Any terminating error ends the build instead.
+trap { Fail "line $($_.InvocationInfo.ScriptLineNumber): $_" }
 # Invoke-WebRequest is many times slower with its progress bar.
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -53,7 +57,8 @@ function Test-Command($name) { [bool](Get-Command $name -ErrorAction SilentlyCon
 function Add-Path($dir) { $env:PATH = "$dir;$env:PATH" }
 function Get-File($url, $file) {
     Log "Downloading $url..."
-    Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing -ErrorAction Stop
+    try { Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing -ErrorAction Stop }
+    catch { Fail "downloading $url failed: $_" }
 }
 # Unpacks a .zip with Windows' bsdtar, much faster than Expand-Archive on Node's thousands of files.
 function Expand-Zip($zip, $dest) {
@@ -144,7 +149,8 @@ Pop-Location
 # --- Node -----------------------------------------------------------------------------------
 
 $nodeMajor = 0
-if (Test-Command node) { $nodeMajor = [int](& node -p "process.versions.node.split('.')[0]") }
+# -as, not a cast: a Node that prints no version is replaced rather than ending the build.
+if (Test-Command node) { $nodeMajor = (& node -p "process.versions.node.split('.')[0]") -as [int] }
 if ($nodeMajor -lt 20) {
     $nodeDir = Join-Path $cache "node-v$NODE_VERSION-win-x64"
     if (-not (Test-Path (Join-Path $nodeDir "node.exe"))) {

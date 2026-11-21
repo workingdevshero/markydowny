@@ -140,6 +140,10 @@ test('build-desktop.ps1 checks every native step, and installs the versions buil
         const next = source.slice(at).split('\n')[1];
         assert.match(next, /^\s*Assert-Exit /, `${step} is not followed by Assert-Exit`);
     }
+    // A program that can't start, or a failed download, ends only its statement under Continue,
+    // and Assert-Exit would then read the previous program's exit code.
+    assert.match(source, /^trap \{ Fail /m);
+    assert.match(source, /try \{ Invoke-WebRequest .*\}\n\s*catch \{ Fail /);
     // Stop would turn cargo's stderr into a terminating error when the output is redirected.
     assert.match(source, /^\$ErrorActionPreference = "Continue"$/m);
     assert.match(source, /^\$ProgressPreference = "SilentlyContinue"$/m);
