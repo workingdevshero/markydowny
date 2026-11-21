@@ -145,7 +145,7 @@ function run(events, state = null) {
 
 test('editing marks unsaved changes, and undoing back to the file clears them', () => {
     const { state } = run([{ type: 'open', content: 'a' }]);
-    assert.deepEqual(state, { base: 'a', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(state, { base: 'a', dirty: false, conflict: null, restored: false, written: [] });
     assert.equal(run([{ type: 'edit', text: 'ab' }], state).state.dirty, true);
     assert.equal(run([{ type: 'edit', text: 'ab' }, { type: 'edit', text: 'a' }], state).state.dirty, false);
 });
@@ -194,7 +194,7 @@ test('a change on disk with nothing unsaved goes straight into the editor', () =
         { type: 'disk', content: 'a2', text: 'a' },
     ]);
     assert.equal(applied[1], 'a2');
-    assert.deepEqual(state, { base: 'a2', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(state, { base: 'a2', dirty: false, conflict: null, restored: false, written: [] });
 });
 
 test('a change on disk with unsaved changes asks: Reload takes the file', () => {
@@ -210,7 +210,7 @@ test('a change on disk with unsaved changes asks: Reload takes the file', () => 
 
     const { state, applied } = run([{ type: 'reload' }], opened.state);
     assert.equal(applied[0], 'theirs');
-    assert.deepEqual(state, { base: 'theirs', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(state, { base: 'theirs', dirty: false, conflict: null, restored: false, written: [] });
 });
 
 test('Keep mine keeps the editor as it is, and the next save is checked against the new file', () => {
@@ -222,7 +222,7 @@ test('Keep mine keeps the editor as it is, and the next save is checked against 
     const { state, applied } = run([{ type: 'keepMine', text: 'mine' }], opened.state);
     assert.equal(applied[0], null);
     // The save that follows expects the file to hold "theirs", and overwrites it.
-    assert.deepEqual(state, { base: 'theirs', dirty: true, conflict: null, written: [] });
+    assert.deepEqual(state, { base: 'theirs', dirty: true, conflict: null, restored: false, written: [] });
 });
 
 test('a later change on disk while the banner is up replaces what Reload would load', () => {
@@ -254,7 +254,7 @@ test('a change on disk that matches the editor settles everything', () => {
         { type: 'edit', text: 'same' },
         { type: 'disk', content: 'same', text: 'same' },
     ]);
-    assert.deepEqual(state, { base: 'same', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(state, { base: 'same', dirty: false, conflict: null, restored: false, written: [] });
 });
 
 test('Revert restores the saved content, or the file as it is now after a conflict', () => {
@@ -273,7 +273,7 @@ test('Revert restores the saved content, or the file as it is now after a confli
         { type: 'revert' },
     ]);
     assert.equal(result.applied[3], 'theirs');
-    assert.deepEqual(result.state, { base: 'theirs', dirty: false, conflict: null, written: [] });
+    assert.deepEqual(result.state, { base: 'theirs', dirty: false, conflict: null, restored: false, written: [] });
 
     // Nothing to revert: the editor is left alone.
     result = run([{ type: 'open', content: 'saved' }, { type: 'revert' }]);

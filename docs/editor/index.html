@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/editor.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
     <title>Editor · Markydowny docs</title>
-    <meta name="description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, and handle changes made on disk while you edit.">
+    <meta name="description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
     <link rel="canonical" href="https://markydowny.com/docs/editor/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/editor/">
     <meta property="og:title" content="Editor · Markydowny docs">
-    <meta property="og:description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, and handle changes made on disk while you edit.">
+    <meta property="og:description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -75,7 +75,7 @@
 </tr>
 </tbody></table>
 <p>Cancel and the document stays open and unsaved. Once it&#39;s saved it&#39;s a file like any other: the title becomes the file&#39;s name, later saves write it in place, and it live-reloads. In the app it&#39;s also added to <strong>File &gt; Open Recent</strong>. An existing file is only replaced if you say so when the Save panel asks.</p>
-<p>Closing an untitled document you&#39;ve typed in asks first, as for any unsaved changes; one you never typed in closes without asking. You can have several untitled documents open at once.</p>
+<p>Closing the window or tab of an untitled document you&#39;ve typed in asks first, as for any unsaved changes; one you never typed in closes without asking. Quitting the app doesn&#39;t ask: the document comes back, still <em>Untitled</em>, the next time you open Markydowny (see <a href="#unsaved-work-is-kept">Unsaved work is kept</a>). You can have several untitled documents open at once.</p>
 <h2 id="save"><a class="heading-anchor" href="#save" aria-label="Link to this section">#</a>Save</h2>
 <p>Press <kbd>⌘S</kbd> (<kbd>Ctrl+S</kbd>) or click <strong>Save</strong>. Save is only enabled while there&#39;s something to save.</p>
 <p>Where the file goes depends on how you opened it:</p>
@@ -116,7 +116,42 @@
 <h2 id="revert"><a class="heading-anchor" href="#revert" aria-label="Link to this section">#</a>Revert</h2>
 <p><strong>Revert</strong> throws away your unsaved changes and puts the editor back to the last saved text.</p>
 <h2 id="unsaved-changes"><a class="heading-anchor" href="#unsaved-changes" aria-label="Link to this section">#</a>Unsaved changes</h2>
-<p>While you have unsaved changes, the document&#39;s title starts with a dot (•). Markydowny asks before anything would throw them away: <strong>Done</strong>, <strong>Open another</strong>, dropping another file, or closing the window or tab.</p>
+<p>While you have unsaved changes, the document&#39;s title starts with a dot (•). Markydowny asks before anything would throw them away: <strong>Done</strong>, <strong>Open another</strong>, dropping another file, or closing the window or tab. Quitting the app doesn&#39;t ask, because your changes are kept for next time.</p>
+<h2 id="unsaved-work-is-kept"><a class="heading-anchor" href="#unsaved-work-is-kept" aria-label="Link to this section">#</a>Unsaved work is kept</h2>
+<p>You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only <strong>Save</strong> (<kbd>⌘S</kbd>) ever writes to your files: the backup is a copy on the side, never the file itself.</p>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Where backups go</th>
+<th>When they come back</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>The Mac app</td>
+<td>A <code>backups</code> folder in <code>~/Library/Application Support/com.workingdevshero.markydowny</code></td>
+<td>The next launch reopens each one in its own tab</td>
+</tr>
+<tr>
+<td>The Linux app</td>
+<td>A <code>backups</code> folder in <code>~/.config/com.workingdevshero.markydowny</code></td>
+<td>The next launch reopens each one in its own window</td>
+</tr>
+<tr>
+<td>The web</td>
+<td>The browser&#39;s storage for markydowny.com (IndexedDB)</td>
+<td>On your next visit, the drop zone offers <strong>Restore 2 unsaved documents</strong></td>
+</tr>
+</tbody></table>
+<p>A document comes back in the editor, still unsaved:</p>
+<ul>
+<li><strong>An untitled document</strong> is still <em>Untitled</em>, and its first save still asks where to put it.</li>
+<li><strong>A document with a file</strong> reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the <a href="#changed-on-disk"><em>This file changed on disk</em></a> banner asks which to keep, so neither version is lost. If the file now holds exactly your changes, there&#39;s nothing to choose between, so it opens saved.</li>
+<li><strong>A file that was moved or deleted</strong> comes back as an untitled document named after it, with a note saying the file was moved or deleted. The note comes back each time it&#39;s restored, until you save it somewhere.</li>
+</ul>
+<p>In the app, quitting (<kbd>⌘Q</kbd>, or logging out) doesn&#39;t ask about unsaved changes, and even a crash or a force quit loses at most the last second of typing. Closing a window or tab still asks, since that&#39;s how you say you&#39;re done with a document: <strong>Discard</strong> there throws the backup away too.</p>
+<p>On the web, reloading or closing a tab with unsaved changes still asks first. Close it anyway and the backup stays. In Chrome, Edge and other Chromium browsers, restoring a document you opened with <strong>Choose File</strong> or by dropping it reopens the file itself, after the browser asks for permission again. In Safari and Firefox, or if you refuse, it comes back as an untitled document named after the file. In a private window, or with site data blocked, the browser may keep nothing: editing works as before, without backups.</p>
+<p>A backup stays until you&#39;ve restored it and saved or discarded the changes. There&#39;s no expiry.</p>
 <h2 id="changed-on-disk"><a class="heading-anchor" href="#changed-on-disk" aria-label="Link to this section">#</a>Changed on disk</h2>
 <p>Markydowny keeps watching the file while you edit (in the app, and in Chromium browsers; see <a href="/docs/live-reload/#browser-support">Live reload</a>).</p>
 <ul>

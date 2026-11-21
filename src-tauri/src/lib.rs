@@ -13,9 +13,11 @@
 //!   (`save.rs`);
 //! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
 //! * File > Open Recent, kept across launches (`recent.rs`);
+//! * unsaved work kept across quits and crashes, and reopened at the next launch (`backups.rs`);
 //! * `markydowny markychecky task|end`, markychecky's hook, run before any of the above starts
 //!   (`markychecky.rs`).
 
+mod backups;
 #[cfg(test)]
 mod bundled_helpers;
 mod crash_reporting;
@@ -30,7 +32,7 @@ mod watch;
 
 pub use crash_reporting::start as start_crash_reporting;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -56,6 +58,14 @@ const NEW_TAB_MENU_ID: &str = "new-tab";
 const RECENT_MENU_PREFIX: &str = "open-recent:";
 const CLEAR_RECENT_MENU_ID: &str = "clear-recent";
 const RECENT_FILE: &str = "recent.json";
+/// Where unsaved work is kept, beside `RECENT_FILE`.
+const BACKUPS_DIR: &str = "backups";
+/// Quit (⌘Q), which writes every window's unsaved work to its backup first.
+const QUIT_MENU_ID: &str = "quit";
+/// Asks every window to write its unsaved work to its backup now.
+const FLUSH_EVENT: &str = "flush-backups";
+/// How long Quit waits for the windows to write their backups.
+const QUIT_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 const PENDING_EVENT: &str = "document-pending";
 const CHANGED_EVENT: &str = "document-changed";
 const MISSING_EVENT: &str = "document-missing";
@@ -80,6 +90,8 @@ struct AppState {
     /// File > Open Recent, and the submenu that shows it.
     recent: Mutex<RecentList>,
     recent_menu: Mutex<Option<Submenu<tauri::Wry>>>,
+    /// While quitting: the windows still writing their backups.
+    flushing: Mutex<Option<HashSet<String>>>,
 }
 
 /// Returned by a watch request that a newer one replaced before it finished.
@@ -161,14 +173,25 @@ struct MissingPayload {
     path: String,
 }
 
-/// What `take_pending_document` hands a window: a document, a folder to choose from, or a new,
-/// untitled document to start (File > New).
+/// What `take_pending_document` hands a window: a document, a folder to choose from, a new,
+/// untitled document to start (File > New), or unsaved work to reopen.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum Pending {
     Document(Document),
     Folder { folder: String },
     Untitled { untitled: bool },
+    Restore { restore: Restore },
+}
+
+/// A backup of unsaved work to reopen: the backup, whether its file changed on disk since
+/// editing started, and the file as it is now (when it's still there).
+#[derive(Debug, Serialize)]
+struct Restore {
+    #[serde(flatten)]
+    backup: backups::Backup,
+    status: backups::Status,
+    document: Option<Document>,
 }
 
 /// Result of `watch_folder`.
@@ -197,13 +220,36 @@ fn take_pending_document(
     window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<Pending>, String> {
-    let pending = {
+    let (pending, restore) = {
         let mut router = state.router.lock().unwrap();
         if router.take_untitled(window.label()) {
             return Ok(Some(Pending::Untitled { untitled: true }));
         }
-        router.take_pending(window.label())
+        (
+            router.take_pending(window.label()),
+            router.take_restore(window.label()),
+        )
     };
+    if let Some(id) = restore {
+        let store = backup_store(window.app_handle()).ok_or("No backups folder")?;
+        let backup = store
+            .load(&id)
+            .map_err(|e| format!("Can't reopen unsaved work: {e}"))?;
+        let status = backups::status(&backup, read_text);
+        let document = match (&backup.path, status) {
+            (Some(path), backups::Status::Unchanged | backups::Status::Changed) => {
+                read_document_at(path).ok()
+            }
+            _ => None,
+        };
+        return Ok(Some(Pending::Restore {
+            restore: Restore {
+                backup,
+                status,
+                document,
+            },
+        }));
+    }
     match pending {
         Some(path) if path.is_dir() => Ok(Some(Pending::Folder {
             folder: path.to_string_lossy().into_owned(),
@@ -452,6 +498,56 @@ fn confirm_discard(app: AppHandle, name: Option<String>) -> bool {
             "Cancel".to_string(),
         ))
         .blocking_show()
+}
+
+/// Keeps the calling window's unsaved work in its backup `id`, replacing what was kept before:
+/// the editor's `text`, the document's file (`None` while untitled), the fingerprint of what
+/// the file held when editing started, and whether it's untitled because its file went
+/// (`missing`). Never writes the document itself.
+#[tauri::command(async)]
+fn write_backup(
+    app: AppHandle,
+    id: String,
+    text: String,
+    path: Option<String>,
+    title: String,
+    fingerprint: Option<String>,
+    missing: Option<bool>,
+) -> Result<(), String> {
+    let store = backup_store(&app).ok_or("No backups folder")?;
+    let backup = backups::Backup {
+        id,
+        text,
+        path: path.filter(|p| !p.is_empty()).map(PathBuf::from),
+        title,
+        fingerprint,
+        missing: missing.unwrap_or(false),
+        saved_at: backups::now_millis(),
+    };
+    store.write(&backup).map_err(|e| {
+        let message = format!("Can't keep unsaved work: {e}");
+        eprintln!("{message}");
+        message
+    })
+}
+
+/// Removes the backup `id`: its document has nothing unsaved any more.
+#[tauri::command(async)]
+fn remove_backup(app: AppHandle, id: String) -> Result<(), String> {
+    let store = backup_store(&app).ok_or("No backups folder")?;
+    store.remove(&id).map_err(|e| {
+        let message = format!("Can't remove unsaved work: {e}");
+        eprintln!("{message}");
+        message
+    })
+}
+
+/// Quitting: the calling window has written its backup (`FLUSH_EVENT`).
+#[tauri::command]
+fn backups_flushed(window: WebviewWindow, state: State<'_, AppState>) {
+    if let Some(waiting) = state.flushing.lock().unwrap().as_mut() {
+        waiting.remove(window.label());
+    }
 }
 
 /// Insert image: picks an image with the Open panel, starting in the folder of the calling
@@ -913,6 +1009,183 @@ fn recent_file(app: &AppHandle) -> Option<PathBuf> {
         .map(|dir| dir.join(RECENT_FILE))
 }
 
+/// Where unsaved work is kept: beside File > Open Recent's list.
+fn backup_store(app: &AppHandle) -> Option<backups::BackupStore> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| backups::BackupStore::new(dir.join(BACKUPS_DIR)))
+}
+
+/// At launch: reopens every backup of unsaved work, oldest first, each in a window (tab) of its
+/// own: the main window while it's idle, then new tabs beside it.
+fn restore_backups(app: &AppHandle) {
+    let Some(store) = backup_store(app) else {
+        return;
+    };
+    let ids: Vec<String> = store.list().into_iter().map(|b| b.id).collect();
+    if ids.is_empty() {
+        return;
+    }
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        let mut previous = front_window(&handle);
+        let mut first = None;
+        for id in ids {
+            let windows = window_labels(&handle);
+            let placement =
+                state
+                    .router
+                    .lock()
+                    .unwrap()
+                    .route_restore(&id, &windows, Some(MAIN_WINDOW));
+            let label = match placement {
+                Placement::Existing(label) => {
+                    let _ = handle.emit_to(label.as_str(), PENDING_EVENT, ());
+                    label
+                }
+                Placement::New(label) => {
+                    if let Err(err) = create_document_window(&handle, &label, previous.as_deref()) {
+                        eprintln!("failed to open window {label}: {err}");
+                        state.router.lock().unwrap().forget(&label);
+                        continue;
+                    }
+                    label
+                }
+                Placement::Showing(_) | Placement::InFolder(_) => continue,
+            };
+            first.get_or_insert_with(|| label.clone());
+            previous = Some(label);
+        }
+        if let Some(window) = first.and_then(|l| handle.get_webview_window(&l)) {
+            bring_forward(&window);
+        }
+    });
+}
+
+/// Quit (⌘Q): asks every window to write its unsaved work to its backup, waits until they have
+/// (or [`QUIT_FLUSH_TIMEOUT`]), then quits. Nothing asks about unsaved changes: they come back
+/// at the next launch.
+fn quit(app: &AppHandle) {
+    flush_backups(app, |handle| handle.exit(0));
+}
+
+/// Asks every window to write its unsaved work to its backup, then calls `then` once they all
+/// have, or after [`QUIT_FLUSH_TIMEOUT`]. Returns false, and does nothing, while a flush is
+/// already under way.
+fn flush_backups(app: &AppHandle, then: impl FnOnce(&AppHandle) + Send + 'static) -> bool {
+    let state = app.state::<AppState>();
+    {
+        let mut flushing = state.flushing.lock().unwrap();
+        if flushing.is_some() {
+            return false;
+        }
+        *flushing = Some(app.webview_windows().keys().cloned().collect());
+    }
+    let _ = app.emit(FLUSH_EVENT, ());
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        while started.elapsed() < QUIT_FLUSH_TIMEOUT {
+            let done = handle
+                .state::<AppState>()
+                .flushing
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_none_or(HashSet::is_empty);
+            if done {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        *handle.state::<AppState>().flushing.lock().unwrap() = None;
+        then(&handle);
+    });
+    true
+}
+
+/// Quitting through AppKit rather than our ⌘Q (the Dock's Quit, logging out, restarting): AppKit
+/// waits while the windows write their backups, as Quit does, then terminates.
+#[cfg(target_os = "macos")]
+fn install_terminate_handler(app: &AppHandle) {
+    let handle = app.clone();
+    app_terminate::install(move || {
+        flush_backups(&handle, |handle| {
+            let _ = handle.run_on_main_thread(app_terminate::reply);
+        })
+    });
+}
+
+#[cfg(target_os = "macos")]
+mod app_terminate {
+    //! `applicationShouldTerminate:` on tao's app delegate, which doesn't answer it. Main thread
+    //! only.
+
+    use std::sync::OnceLock;
+
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use objc2::{sel, MainThreadMarker};
+    use objc2_app_kit::{NSApp, NSApplicationTerminateReply};
+
+    type ShouldTerminate = unsafe extern "C-unwind" fn(
+        *mut AnyObject,
+        Sel,
+        *mut AnyObject,
+    ) -> NSApplicationTerminateReply;
+
+    /// Starts what has to happen before terminating; false: terminate now.
+    static ON_TERMINATE: OnceLock<Box<dyn Fn() -> bool + Send + Sync>> = OnceLock::new();
+
+    /// Answers AppKit's "should the app terminate?" with "later" while `action` (returning true)
+    /// finishes; it then calls [`reply`].
+    pub fn install(action: impl Fn() -> bool + Send + Sync + 'static) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        if ON_TERMINATE.set(Box::new(action)).is_err() {
+            return;
+        }
+
+        unsafe extern "C-unwind" fn should_terminate(
+            _: *mut AnyObject,
+            _: Sel,
+            _: *mut AnyObject,
+        ) -> NSApplicationTerminateReply {
+            match ON_TERMINATE.get() {
+                Some(action) if action() => NSApplicationTerminateReply::TerminateLater,
+                _ => NSApplicationTerminateReply::TerminateNow,
+            }
+        }
+
+        let Some(delegate) = NSApp(mtm).delegate() else {
+            return;
+        };
+        let object: &AnyObject = AsRef::<AnyObject>::as_ref(&*delegate);
+        let class: &AnyClass = object.class();
+        // SAFETY: the function matches `applicationShouldTerminate:`'s `Q@:@` signature
+        // (NSApplicationTerminateReply is an NSUInteger), and the delegate's class lives for the
+        // whole process. class_addMethod leaves a class that already answers it alone.
+        unsafe {
+            let imp: Imp = std::mem::transmute(should_terminate as ShouldTerminate);
+            objc2::ffi::class_addMethod(
+                class as *const AnyClass as *mut AnyClass,
+                sel!(applicationShouldTerminate:),
+                imp,
+                c"Q@:@".as_ptr(),
+            );
+        }
+    }
+
+    /// The windows have kept their unsaved work: AppKit can terminate.
+    pub fn reply() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApp(mtm).replyToApplicationShouldTerminate(true);
+        }
+    }
+}
+
 /// Puts `paths` at the top of File > Open Recent, the first one topmost.
 fn note_recent(app: &AppHandle, paths: Vec<PathBuf>) {
     update_recent(app, move |list| {
@@ -1023,10 +1296,25 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
     let recent = Submenu::new(app, "Open Recent", true)?;
+    let quit = MenuItemBuilder::with_id(QUIT_MENU_ID, format!("Quit {}", app.package_info().name))
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
     let state = app.state::<AppState>();
     let list = state.recent.lock().unwrap().clone();
     fill_recent_menu(app, &recent, &list)?;
     *state.recent_menu.lock().unwrap() = Some(recent.clone());
+    // The app menu's Quit (its last item, after Hide Others) is ours, so it can keep unsaved
+    // work before quitting.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+            let items = app_menu.items()?;
+            if let Some(MenuItemKind::Predefined(_)) = items.last() {
+                app_menu.remove_at(items.len() - 1)?;
+                app_menu.append(&quit)?;
+            }
+        }
+    }
     let mut has_file_menu = false;
     for item in menu.items()? {
         if let MenuItemKind::Submenu(submenu) = item {
@@ -1041,8 +1329,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             }
         }
     }
-    // Tauri's default menu has no File menu on Linux, so New (Ctrl+N), Open… (Ctrl+O) and Open
-    // Recent get one of their own there. No New Tab: tabs are native macOS tabs.
+    // Tauri's default menu has no File menu on Linux, so New (Ctrl+N), Open… (Ctrl+O), Open
+    // Recent and Quit (Ctrl+Q) get one of their own there. No New Tab: tabs are native macOS tabs.
     if !has_file_menu {
         let file = Submenu::with_items(
             app,
@@ -1054,6 +1342,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 &recent,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::close_window(app, None)?,
+                &quit,
             ],
         )?;
         menu.insert(&file, 0)?;
@@ -1068,8 +1357,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// Whether to stay running when an exit is requested with `code`. Like other Mac document
 /// apps, Markydowny keeps running after its last window closes: the Dock icon, File > Open…
 /// and Finder bring a window back. Only an exit the user didn't ask for by quitting reaches
-/// here without a code (the last window closing; ⌘Q terminates through AppKit), and an exit
-/// the app asks for itself (`AppHandle::exit`, which has a code) still goes through.
+/// here without a code (the last window closing), and an exit the app asks for itself
+/// (`AppHandle::exit`, which has a code: Quit, once the windows have kept their unsaved work)
+/// still goes through. Quitting from the Dock or logging out terminates through AppKit, which
+/// waits for the windows' backups too (`install_terminate_handler`).
 fn keep_running_without_windows(on_macos: bool, code: Option<i32>) -> bool {
     on_macos && code.is_none()
 }
@@ -1103,6 +1394,9 @@ pub fn run() {
             write_document,
             save_new_document,
             confirm_discard,
+            write_backup,
+            remove_backup,
+            backups_flushed,
             choose_image,
             select_tab,
         ])
@@ -1122,6 +1416,8 @@ pub fn run() {
                     open_with_dialog(app, preferred);
                 } else if id == NEW_DOCUMENT_MENU_ID {
                     new_document(app);
+                } else if id == QUIT_MENU_ID {
+                    quit(app);
                 } else if id == NEW_TAB_MENU_ID {
                     new_tab(app);
                 } else if let Some(index) = recent {
@@ -1144,6 +1440,7 @@ pub fn run() {
                 let button_handle = handle.clone();
                 tabs::native::install_new_tab_button(move || new_tab(&button_handle));
                 tabs::native::add_window_menu_items();
+                install_terminate_handler(handle);
             }
             // The main window exists now, so files from the launch can fill it.
             let mut paths = cli_paths();
@@ -1157,6 +1454,9 @@ pub fn run() {
             }
             paths.extend(queued);
             route_paths(handle, paths, Some(MAIN_WINDOW.to_string()));
+            // After the files above (both run on the main thread, in order), so a file opened at
+            // launch takes the main window and unsaved work reopens beside it.
+            restore_backups(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

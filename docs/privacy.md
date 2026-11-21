@@ -16,6 +16,7 @@ description: Markydowny never uploads your files. Documents are read on your dev
 - The exception is a document's own content. The common case is an image in your markdown with a web address (`![](https://…)`), which is loaded from that address, as in any markdown viewer. Raw HTML in the file is rendered too, so it can also load remote resources (HTML images, frames, video) and its inline event handlers (`onerror=…`) run. `<script>` elements in the file don't run. Only open files you trust, or use the Mac app.
 - Live reload and saving use your browser's File System Access API. The browser asks you before the page can write a file, and the permission only covers the file you opened.
 - The page remembers one setting on your device: whether [Follow](live-reload.md#follow-and-resume) is on.
+- While you edit, the page keeps a backup of any document with unsaved changes in your browser's storage for this site (IndexedDB), so you can [restore it](editor.md#unsaved-work-is-kept) after closing the tab. It stays on your device, and goes once you save or discard the changes.
 
 GitHub Pages, which hosts the site, keeps standard web server logs (such as your IP address) when you load the page. That's the only party involved.
 
@@ -23,6 +24,7 @@ GitHub Pages, which hosts the site, keeps standard web server logs (such as your
 
 - The app reads and writes files **on your Mac** and nowhere else. Apart from crash reports (below), it makes no network requests of its own: no analytics, no update checks, no accounts. As on the web, images a document links to by web address are loaded from there. The app's Content Security Policy blocks everything else a document could load or run: scripts, inline event handlers, frames and media.
 - A window may only write the document it shows, and only when you save.
+- Unsaved changes are kept in a `backups` folder of the app's own (in `~/Library/Application Support/com.workingdevshero.markydowny`), readable by your account only, so they [come back after a quit or crash](editor.md#unsaved-work-is-kept). A backup goes once you save or discard the changes.
 - Scripts embedded in a markdown file never run: the app has a strict Content Security Policy.
 - Links to websites open in your browser, not in the app. A link to any other kind of local file is shown in Finder rather than opened, so a document can't trick a click into running a program.
 

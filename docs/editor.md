@@ -2,7 +2,7 @@
 title: Editor
 nav: Editor
 order: 4
-description: Edit the markdown source in Markydowny, save it in place with ⌘S, revert, and handle changes made on disk while you edit.
+description: Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.
 ---
 
 # Editor
@@ -29,7 +29,7 @@ The first save asks where to put it:
 
 Cancel and the document stays open and unsaved. Once it's saved it's a file like any other: the title becomes the file's name, later saves write it in place, and it live-reloads. In the app it's also added to **File > Open Recent**. An existing file is only replaced if you say so when the Save panel asks.
 
-Closing an untitled document you've typed in asks first, as for any unsaved changes; one you never typed in closes without asking. You can have several untitled documents open at once.
+Closing the window or tab of an untitled document you've typed in asks first, as for any unsaved changes; one you never typed in closes without asking. Quitting the app doesn't ask: the document comes back, still *Untitled*, the next time you open Markydowny (see [Unsaved work is kept](#unsaved-work-is-kept)). You can have several untitled documents open at once.
 
 ## Save
 
@@ -71,7 +71,29 @@ While editing, the header shows how many words the document has, and how many ar
 
 ## Unsaved changes
 
-While you have unsaved changes, the document's title starts with a dot (•). Markydowny asks before anything would throw them away: **Done**, **Open another**, dropping another file, or closing the window or tab.
+While you have unsaved changes, the document's title starts with a dot (•). Markydowny asks before anything would throw them away: **Done**, **Open another**, dropping another file, or closing the window or tab. Quitting the app doesn't ask, because your changes are kept for next time.
+
+## Unsaved work is kept
+
+You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only **Save** (<kbd>⌘S</kbd>) ever writes to your files: the backup is a copy on the side, never the file itself.
+
+| Where | Where backups go | When they come back |
+| --- | --- | --- |
+| The Mac app | A `backups` folder in `~/Library/Application Support/com.workingdevshero.markydowny` | The next launch reopens each one in its own tab |
+| The Linux app | A `backups` folder in `~/.config/com.workingdevshero.markydowny` | The next launch reopens each one in its own window |
+| The web | The browser's storage for markydowny.com (IndexedDB) | On your next visit, the drop zone offers **Restore 2 unsaved documents** |
+
+A document comes back in the editor, still unsaved:
+
+- **An untitled document** is still *Untitled*, and its first save still asks where to put it.
+- **A document with a file** reopens that file with your changes as unsaved edits. If the file changed on disk since you started editing, the [*This file changed on disk*](#changed-on-disk) banner asks which to keep, so neither version is lost. If the file now holds exactly your changes, there's nothing to choose between, so it opens saved.
+- **A file that was moved or deleted** comes back as an untitled document named after it, with a note saying the file was moved or deleted. The note comes back each time it's restored, until you save it somewhere.
+
+In the app, quitting (<kbd>⌘Q</kbd>, or logging out) doesn't ask about unsaved changes, and even a crash or a force quit loses at most the last second of typing. Closing a window or tab still asks, since that's how you say you're done with a document: **Discard** there throws the backup away too.
+
+On the web, reloading or closing a tab with unsaved changes still asks first. Close it anyway and the backup stays. In Chrome, Edge and other Chromium browsers, restoring a document you opened with **Choose File** or by dropping it reopens the file itself, after the browser asks for permission again. In Safari and Firefox, or if you refuse, it comes back as an untitled document named after the file. In a private window, or with site data blocked, the browser may keep nothing: editing works as before, without backups.
+
+A backup stays until you've restored it and saved or discarded the changes. There's no expiry.
 
 ## Changed on disk
 
