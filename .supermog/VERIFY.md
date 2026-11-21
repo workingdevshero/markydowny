@@ -314,9 +314,10 @@ Only for a round that has `desktop_*` tools. Otherwise skip this section: the br
 above is the whole job.
 
 The round has already built the app with `scripts/build-desktop.sh`: `Markydowny.app` on macOS
-(bundle id `com.workingdevshero.markydowny`), the `markydowny` binary on Linux. It's a debug
-build with no `BUGSPLAT_DATABASE`, so crash reporting is off and a **Crash Test** menu exists.
-Don't use that menu: it crashes the app on purpose.
+(bundle id `com.workingdevshero.markydowny`), the `markydowny` binary on Linux; on Windows, with
+`scripts\build-desktop.ps1`: `markydowny.exe`. It's a debug build with no `BUGSPLAT_DATABASE`, so
+crash reporting is off and a **Crash Test** menu exists. Don't use that menu: it crashes the app
+on purpose.
 
 The app is the same page as the website, in a native window, with real file paths. *Choose
 File* and File > Open... (⌘O) show the system's Open panel. You have no shell on that machine, so
@@ -381,6 +382,33 @@ What differs from the browser:
 
 macOS-only behaviour (tabs, the Dock, opening files from Finder) can't be seen on Linux. On a
 Linux round, say so rather than reporting it missing.
+
+### On Windows
+
+A Windows round is a fresh Windows 11 VM with a 1280x800 screen. The app is `markydowny.exe`,
+built in debug from scratch, so the build alone takes a long while; there is no installer.
+
+- **Shortcuts are on Control, not Command**: Ctrl+N, Ctrl+O, Ctrl+E, Ctrl+S. Read every ⌘ above
+  as Ctrl. The menu bar is in the window: File, Edit, Window, Help, and the debug build's Crash
+  Test, which you leave alone. Unlike Linux, File is Tauri's own Windows File menu with New, New
+  Tab (Ctrl+T, which opens a window), Open… and Open Recent added, so its Close Window and Quit
+  are Tauri's, not the Ctrl+Q Quit that writes the backups first. Check what Quit does to
+  unsaved work (the two-second backups should still bring it back) and report what you see.
+- **The checkout is at `C:\src`**, unpacked from the pull request (it isn't a git checkout), so
+  `C:\src\README.md` and `C:\src\.supermog\VERIFY.md` exist, and `C:\src` itself is a folder of
+  markdown files to drop or watch. The Open dialog takes a typed path in its *File name* box.
+- **To change a file on disk** while the app shows it, `desktop_launch` with `notepad.exe`, open
+  the same file there (Ctrl+O, type the path), type, Ctrl+S. Where the list above says TextEdit,
+  use Notepad; where it says Finder, use File Explorer.
+- **Crash reporting is off**, and the BugSplat helpers that the installer puts next to the .exe
+  aren't there. The app must start and run without them.
+- **macOS-only, so not on Windows**: native tabs (Merge All Windows, *Open all N as tabs*), the
+  Dock and its Quit, AppKit waiting for backups when logging out, staying open after the last
+  window closes (on Windows, closing the last window quits, as on Linux), and opening
+  files from Finder. Each document gets a window of its own. Say so rather than reporting them
+  missing.
+- What a Windows round can't see: the installers (NSIS and MSI) and what they install, file
+  associations, and crash reports reaching BugSplat. The release workflow checks the installers.
 
 ## Docs
 

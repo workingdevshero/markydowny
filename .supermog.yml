@@ -2,18 +2,18 @@
 #
 # The website is a static page at the repository root (GitHub Pages serves main from /), so
 # verification serves the checkout over HTTP and drives it in a real browser. The desktop app is
-# built and driven on a desktop of the round's own, Linux or macOS (`desktop` below); its Rust is
-# also covered by CI (.github/workflows/ci.yml), which is supermog's check gate.
+# built and driven on a desktop of the round's own, Linux, macOS or Windows (`desktop` below); its
+# Rust is also covered by CI (.github/workflows/ci.yml), which is supermog's check gate.
 verify:
   # In a dot-directory so GitHub Pages' Jekyll build doesn't publish it as a page.
   notes: .supermog/VERIFY.md
   # What a round can see change: the website's files in a browser, and the desktop app's. Tests and
   # CI change neither.
-  paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico", "src-tauri/**", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
+  paths: ["index.html", "js/**", "docs/**", "*.svg", "*.png", "favicon.ico", "src-tauri/**", "scripts/build-desktop.sh", "scripts/build-desktop.ps1", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
   evidence: both
   # The desktop app, built from the pull request and driven on a desktop of the round's own. A
   # round drives one platform. `build` prints the built artifact's path as its last line: the
-  # .app on macOS, the binary on Linux.
+  # .app on macOS, the binary on Linux, markydowny.exe on Windows.
   desktop:
     # macOS VMs are scarce, so `paths` names only what a Mac alone can show: native tabs. Every
     # other desktop pull request goes to Linux. To see anything else on a Mac (the menu bar, the
@@ -29,6 +29,14 @@ verify:
       build: scripts/build-desktop.sh
       dockerfile: .supermog/desktop-linux.Dockerfile
       paths: ["src-tauri/**", "js/**", "index.html", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
+    # A fresh Windows 11 VM each round, with the MSVC Build Tools and WebView2 and nothing else:
+    # the script installs Rust, Node, CMake and Ninja, and builds from scratch, which is slow.
+    # The box runs one at a time, so `paths` names only what Windows alone can show: its build
+    # script and its Tauri config. To see anything else on Windows, ask for a Windows round by
+    # name in a comment on the pull request.
+    windows:
+      build: .\scripts\build-desktop.ps1
+      paths: ["scripts/build-desktop.ps1", "src-tauri/tauri.windows.conf.json"]
 
 # supermog builds and maintains this repo's GitHub Actions workflows too (the release workflow,
 # #33), so its jobs need `workflows: write`. It's off by default because most jobs never touch

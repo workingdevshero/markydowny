@@ -87,9 +87,9 @@ test("supermog's Linux desktop round runs this script in an image that has the s
 test('a pull request that changes the desktop app is one a round verifies', () => {
     const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
     const lists = [...config.matchAll(/^\s+paths: (\[.*\])$/gm)].map((m) => JSON.parse(m[1]));
-    // verify.paths, then verify.desktop.macos.paths and verify.desktop.linux.paths. Without
-    // src-tauri in the first, no round runs at all; without it in the last, no desktop is driven.
-    assert.equal(lists.length, 3);
+    // verify.paths, then verify.desktop.macos.paths, .linux.paths and .windows.paths. Without
+    // src-tauri in the first, no round runs at all; without it in Linux's, no desktop is driven.
+    assert.equal(lists.length, 4);
     const [verify, , linux] = lists;
     for (const list of [verify, linux]) assert.ok(list.includes('src-tauri/**'));
 });
@@ -109,4 +109,63 @@ test("supermog's macOS desktop round builds with this script and launches the ap
         assert.ok(file.startsWith('src-tauri/'), `${file} is outside src-tauri/, which verify.paths does not cover`);
         assert.ok(fs.existsSync(path.join(root, file)), `${file} does not exist`);
     }
+});
+
+const psScript = path.join(root, 'scripts', 'build-desktop.ps1');
+
+test('build-desktop.ps1 is plain ASCII, which Windows PowerShell 5.1 needs', () => {
+    // Without a byte-order mark, PowerShell 5.1 reads a .ps1 as the ANSI code page.
+    const source = fs.readFileSync(psScript, 'utf8');
+    const offending = [...source].findIndex(ch => ch.charCodeAt(0) > 127);
+    assert.equal(offending, -1, `non-ASCII character at offset ${offending}`);
+});
+
+test("build-desktop.ps1 builds the .exe Tauri names and prints its path last", () => {
+    const source = fs.readFileSync(psScript, 'utf8');
+    const cargo = fs.readFileSync(path.join(root, 'src-tauri', 'Cargo.toml'), 'utf8');
+    const crate = cargo.match(/^name = "([^"]+)"/m)[1];
+    assert.match(source, new RegExp(`"src-tauri\\\\target\\\\debug\\\\${crate}\\.exe"`));
+    assert.match(source, /npx tauri build --debug --no-bundle\n/);
+    // Nothing is printed after the path: the round launches whatever the last line names.
+    const tail = source.trimEnd().split('\n').slice(-2);
+    assert.deepEqual(tail, ['Write-Output $artifact', 'exit 0']);
+});
+
+test('build-desktop.ps1 checks every native step, and installs the versions build-desktop.sh does', () => {
+    const source = fs.readFileSync(psScript, 'utf8');
+    // A failed step has to end the build: only the last program's exit code reaches the round.
+    for (const step of ['& npm ci', '& npx tauri build', '& $rustupInit', '& cargo --version']) {
+        const at = source.indexOf(step);
+        assert.ok(at >= 0, `${step} is missing`);
+        const next = source.slice(at).split('\n')[1];
+        assert.match(next, /^\s*Assert-Exit /, `${step} is not followed by Assert-Exit`);
+    }
+    // Stop would turn cargo's stderr into a terminating error when the output is redirected.
+    assert.match(source, /^\$ErrorActionPreference = "Continue"$/m);
+    assert.match(source, /^\$ProgressPreference = "SilentlyContinue"$/m);
+    const sh = fs.readFileSync(script, 'utf8');
+    for (const name of ['NODE_VERSION', 'CMAKE_VERSION', 'NINJA_VERSION']) {
+        const version = sh.match(new RegExp(`^${name}=(\\S+)$`, 'm'))[1];
+        assert.match(source, new RegExp(`^\\$${name} = "${version.replace(/\./g, '\\.')}"$`, 'm'), `${name} differs from build-desktop.sh`);
+    }
+});
+
+test("supermog's Windows desktop round builds with build-desktop.ps1 and runs for what only Windows shows", () => {
+    const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
+    const windows = config.slice(config.indexOf('    windows:'));
+    assert.match(windows, /^\s+build: \.\\scripts\\build-desktop\.ps1$/m);
+    const paths = JSON.parse(windows.match(/^\s+paths: (\[.*\])$/m)[1]);
+    assert.ok(paths.includes('scripts/build-desktop.ps1'));
+    for (const file of paths) assert.ok(fs.existsSync(path.join(root, file)), `${file} does not exist`);
+    // verify.paths has to cover them too, or no round runs at all.
+    const verify = JSON.parse(config.match(/^  paths: (\[.*\])$/m)[1]);
+    assert.ok(verify.includes('scripts/build-desktop.ps1'));
+    assert.ok(verify.includes('src-tauri/**'));
+});
+
+test("CI's windows job builds with build-desktop.ps1 in Windows PowerShell, as a round does", () => {
+    const ci = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const job = ci.slice(ci.indexOf('\n  windows:'));
+    assert.match(job, /^\s+shell: powershell$/m);
+    assert.match(job, /^\s+\.\\scripts\\build-desktop\.ps1$/m);
 });
