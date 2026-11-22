@@ -28,8 +28,9 @@ use serde_json::{Map, Value};
 
 /// In the binary so the plugin's launcher can tell a Markydowny that has this mode, with every
 /// command the plugin runs, from an older one: one without the mode would start its window, and
-/// engine 1 has no `notify`, `respond` or `waiting` (`markychecky.sh` greps for it).
-pub const ENGINE_MARKER: &str = "markychecky-hook-engine-2";
+/// engine 1 has no `notify`, `respond` or `waiting`, and engine 2 doesn't name sessions and adds
+/// "waiting for your input" lines (`markychecky.sh` greps for it).
+pub const ENGINE_MARKER: &str = "markychecky-hook-engine-3";
 
 const TITLE: &str =
     "# Markychecky\n\nWhat each Claude Code session is working on. Sessions update their own sections.\n";
@@ -39,19 +40,22 @@ const WAITING_HEADING: &str = "## Waiting on you";
 const ITEM: &str = "<!-- markychecky:item ";
 const NOTIFY: &str = "<!-- markychecky:notify ";
 
-/// The notifications that mean a session is stopped until the user answers, and what clears
-/// each: "tool" ones are a dialog in the middle of a tool call, answered when the call's batch
-/// resolves, whether the user approved or denied it; "prompt" ones are answered by a prompt.
-/// Every other type (a background agent finishing, a sign-in, a quota resume) isn't waiting on you.
-const WAITS: [(&str, &str); 7] = [
+/// The notifications that mean a session is stopped on a question for the user, each a dialog
+/// in the middle of a tool call, answered when the call's batch resolves, whether the user
+/// approved or denied it. Every other type isn't on the board: a session that's only idle,
+/// waiting for its next prompt, isn't something to do (idle_prompt, agent_needs_input,
+/// quota_auto_resume_stale), and nor is a background agent finishing or a sign-in. Items from
+/// before 0.5 may still wait on a "prompt", which a prompt answers.
+const WAITS: [(&str, &str); 4] = [
     ("permission_prompt", "tool"),
     ("worker_permission_prompt", "tool"),
     ("elicitation_dialog", "tool"),
     ("elicitation_url_dialog", "tool"),
-    ("idle_prompt", "prompt"),
-    ("agent_needs_input", "prompt"),
-    ("quota_auto_resume_stale", "prompt"),
 ];
+
+/// The entries in a session's transcript that name it: the name /rename gave it, and the one
+/// Claude Code made up for it. A name given by /rename wins.
+const TITLES: [(&str, &str); 2] = [("custom-title", "customTitle"), ("ai-title", "aiTitle")];
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -192,10 +196,10 @@ fn run(args: &[String]) -> Result<()> {
         } else {
             format!(" agent={agent}")
         };
-        let line = format!(
-            "- {}: {text} {NOTIFY}{session_id}{agent_attr} at={at} -->",
-            one_line(&place(&cwd)),
-        );
+        let place = place(&cwd);
+        let marker = format!("{NOTIFY}{session_id}{agent_attr} at={at} -->");
+        let transcript = transcript_of(event);
+        let ahead = read_name_ahead(load_state(&state_path), &transcript);
         let mut opening = false;
         let created = write_board(
             &board_path,
@@ -210,9 +214,14 @@ fn run(args: &[String]) -> Result<()> {
                 save_flag(&flag_path, &flag)?;
                 let mut state = load_state(&state_path);
                 if first_open(&mut state) {
-                    save_state(&state_path, &state)?;
                     opening = true;
                 }
+                keep_name(&mut state, ahead.as_ref(), &transcript);
+                save_state(&state_path, &state)?;
+                let line = format!(
+                    "- {}: {text} {marker}",
+                    label(&place, &session_name(&state))
+                );
                 let board = without_notify(board, &session_id, Some(&[agent.clone()]));
                 let board = edit_waiting(&board, |mut lines| {
                     lines.push(line);
@@ -238,6 +247,13 @@ fn run(args: &[String]) -> Result<()> {
     } else {
         None
     };
+    // And so is the transcript read.
+    let transcript = transcript_of(event);
+    let ahead = if command == "task" {
+        read_name_ahead(load_state(&state_path), &transcript)
+    } else {
+        None
+    };
     let mut first = false;
     write_board(
         &board_path,
@@ -253,6 +269,7 @@ fn run(args: &[String]) -> Result<()> {
                 }
                 state.insert("place".into(), Value::String(place.clone()));
                 state.insert("repo".into(), Value::String(repo.clone()));
+                keep_name(&mut state, ahead.as_ref(), &transcript);
                 state.remove("ended");
                 None
             } else {
@@ -690,6 +707,188 @@ fn place(cwd: &str) -> String {
     }
 }
 
+/// The transcript_path a hook event gives, or "" without one.
+fn transcript_of(event: &Map<String, Value>) -> String {
+    match event.get("transcript_path") {
+        Some(Value::String(path)) => path.clone(),
+        _ => String::new(),
+    }
+}
+
+/// The session's transcript, for a command that has only its id: Claude Code keeps it as
+/// <session>.jsonl in a folder per project, under ~/.claude/projects (or CLAUDE_CONFIG_DIR).
+/// The first in order, as `sorted(glob.glob(…))` finds it.
+fn find_transcript(session_id: &str) -> String {
+    let config = match std::env::var("CLAUDE_CONFIG_DIR") {
+        Ok(dir) if !dir.is_empty() => dir,
+        _ => format!("{}/.claude", expand_user("~")),
+    };
+    let projects = format!("{}/projects", config.trim_end_matches('/'));
+    let Ok(entries) = fs::read_dir(&projects) else {
+        return String::new();
+    };
+    let mut found: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .map(|name| format!("{projects}/{name}/{session_id}.jsonl"))
+        .filter(|path| fs::symlink_metadata(path).is_ok())
+        .collect();
+    found.sort();
+    found.into_iter().next().unwrap_or_default()
+}
+
+// A transcript is read a chunk at a time, and a line longer than LINE_MAX, which is a tool's
+// output rather than a name, is skipped rather than kept whole.
+const CHUNK: usize = 1 << 20;
+const LINE_MAX: usize = 1 << 20;
+
+fn name_offset(seen: Option<&Map<String, Value>>) -> u64 {
+    seen.and_then(|seen| seen.get("offset"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn read_title(line: &[u8], seen: &mut Map<String, Value>) {
+    let has = |needle: &[u8]| line.windows(needle.len()).any(|w| w == needle);
+    if !has(b"\"custom-title\"") && !has(b"\"ai-title\"") {
+        return;
+    }
+    let Ok(Value::Object(entry)) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
+    for (kind, field) in TITLES {
+        if entry.get("type").and_then(Value::as_str) == Some(kind) {
+            if let Some(Value::String(name)) = entry.get(field) {
+                seen.insert(kind.into(), Value::String(name.clone()));
+            }
+        }
+    }
+}
+
+/// Reads the names in the rest of the file into seen. Returns how much of it was whole lines:
+/// the last may still be being written.
+fn read_titles(file: &mut impl Read, seen: &mut Map<String, Value>) -> io::Result<u64> {
+    let mut chunk = vec![0u8; CHUNK];
+    let (mut read, mut done) = (0u64, 0u64);
+    // The line so far, or None for one too long to name anything.
+    let mut line = Some(Vec::new());
+    loop {
+        let n = match file.read(&mut chunk) {
+            Ok(0) => return Ok(done),
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        let mut pieces = chunk[..n].split(|&b| b == b'\n').peekable();
+        while let Some(piece) = pieces.next() {
+            if let Some(so_far) = line.as_mut() {
+                so_far.extend_from_slice(piece);
+                if so_far.len() > LINE_MAX {
+                    line = None;
+                }
+            }
+            if pieces.peek().is_none() {
+                break;
+            }
+            if let Some(whole) = line.take() {
+                read_title(&whole, seen);
+            }
+            line = Some(Vec::new());
+        }
+        read += n as u64;
+        if let Some(last) = chunk[..n].iter().rposition(|&b| b == b'\n') {
+            done = read - (n - last - 1) as u64;
+        }
+    }
+}
+
+/// Reads the session's name from its transcript into state["name"], from where the last read
+/// stopped, so a long session's transcript isn't read again on every update.
+fn read_name(state: &mut Map<String, Value>, transcript: &str) {
+    let mut seen = match state.get("name") {
+        Some(Value::Object(seen)) => seen.clone(),
+        _ => Map::new(),
+    };
+    let fresh = |path: &str| {
+        let mut seen = Map::new();
+        seen.insert("path".into(), Value::String(path.into()));
+        seen
+    };
+    if !transcript.is_empty() && seen.get("path").and_then(Value::as_str) != Some(transcript) {
+        seen = fresh(transcript);
+    }
+    let path = match seen.get("path") {
+        Some(Value::String(path)) if !path.is_empty() => path.clone(),
+        _ => return,
+    };
+    let mut offset = name_offset(Some(&seen));
+    let done = (|| -> io::Result<u64> {
+        use std::io::{Seek, SeekFrom};
+        let mut file = fs::File::open(&path)?;
+        if offset > file.metadata()?.len() {
+            // A new file in its place: start again.
+            seen = fresh(&path);
+            offset = 0;
+        }
+        file.seek(SeekFrom::Start(offset))?;
+        read_titles(&mut file, &mut seen)
+    })();
+    let Ok(done) = done else {
+        return;
+    };
+    seen.insert("offset".into(), Value::from(offset + done));
+    state.insert("name".into(), Value::Object(seen));
+}
+
+/// read_name, before the board's lock is taken: the first read of a long transcript takes a
+/// while, and every session's hooks wait on the lock. What it read is for keep_name.
+fn read_name_ahead(mut state: Map<String, Value>, transcript: &str) -> Option<Value> {
+    read_name(&mut state, transcript);
+    state.remove("name")
+}
+
+/// Under the lock, takes what read_name_ahead read, unless the state has read further since,
+/// then reads what was written after it, which is a line or two.
+fn keep_name(state: &mut Map<String, Value>, ahead: Option<&Value>, transcript: &str) {
+    let seen = state.get("name").and_then(Value::as_object);
+    let seen_path = seen.and_then(|seen| seen.get("path")).and_then(Value::as_str);
+    let target = Some(transcript)
+        .filter(|path| !path.is_empty())
+        .or(seen_path.filter(|path| !path.is_empty()));
+    if let (Some(Value::Object(ahead)), Some(target)) = (ahead, target) {
+        if ahead.get("path").and_then(Value::as_str) == Some(target)
+            && (seen_path != Some(target) || name_offset(Some(ahead)) >= name_offset(seen))
+        {
+            state.insert("name".into(), Value::Object(ahead.clone()));
+        }
+    }
+    read_name(state, transcript);
+}
+
+/// The name read_name found, on one line, or "" for none.
+fn session_name(state: &Map<String, Value>) -> String {
+    let Some(Value::Object(seen)) = state.get("name") else {
+        return String::new();
+    };
+    TITLES
+        .iter()
+        .filter_map(|(kind, _)| seen.get(*kind).and_then(Value::as_str))
+        .map(one_line)
+        .find(|name| !name.is_empty())
+        .unwrap_or_default()
+}
+
+/// How the board names a session: `repo · branch (name)`, or without the name for none.
+fn label(place: &str, name: &str) -> String {
+    let place = one_line(place);
+    if name.is_empty() {
+        place
+    } else {
+        format!("{place} ({name})")
+    }
+}
+
 /// The start of a code span at `i`: `(?P<ticks>`+).*?(?<!`)(?P=ticks)(?!`)`, with the regex's
 /// backtracking (fewer ticks are tried when the run can't be closed). Returns its end.
 fn code_span_at(c: &[char], i: usize) -> Option<usize> {
@@ -913,7 +1112,7 @@ fn render_section(
     };
     let mut lines = vec![
         format!("{START}{session_id} {meta}-->"),
-        format!("## {}", one_line(&place)),
+        format!("## {}", label(&place, &session_name(state))),
         String::new(),
         format!("**Now:** {now_line}"),
         String::new(),
@@ -1041,10 +1240,14 @@ fn sweep(board: &str, idle_hours: f64, keep: &str, now: i64) -> Result<String> {
     // A notification item whose session never ended (it crashed, say) goes after idle_hours
     // too. Items from `waiting add` have no time on them, and stay until they're removed.
     Ok(keep_lines(&out, |line| {
-        !notify_markers(line)
-            .first()
-            .and_then(|&(_, _, _, at)| parse_iso(at))
-            .is_some_and(|at| at < cutoff)
+        let Some(&(start, _, _, at)) = notify_markers(line).first() else {
+            return true;
+        };
+        // "waiting for your input" lines from before 0.5, which no longer makes them, go now.
+        if line[..start].ends_with(": waiting for your input ") {
+            return false;
+        }
+        !parse_iso(at).is_some_and(|at| at < cutoff)
     }))
 }
 
@@ -1337,10 +1540,8 @@ fn notification_text(event: &Map<String, Value>) -> Result<Option<(String, &'sta
             Some(tool) => format!("needs permission to use {tool}"),
             None => "needs your permission".into(),
         }
-    } else if kind.starts_with("elicitation_") {
-        "has a question for you".into()
     } else {
-        "waiting for your input".into()
+        "has a question for you".into()
     };
     Ok(Some((text, waits)))
 }
@@ -1601,27 +1802,46 @@ fn run_waiting(args: &[String]) -> Result<i32> {
     if action == "add" {
         let cwd = current_dir()?;
         let text = link_refs(&one_line(&text.join(" ")), &github_repo(&cwd));
-        let line = format!("- {}: {text} {marker}", one_line(&place(&cwd)));
+        let place = place(&cwd);
         // The session's state, to open the board on its first write as the hooks do, is in the
         // plugin's data folder, which this command only knows from what SessionStart saved.
         let state_path = settings
             .data
             .as_ref()
             .map(|data| format!("{data}/sessions/{session}.json"));
+        let known = state_path
+            .as_ref()
+            .filter(|path| std::path::Path::new(dirname(path)).is_dir());
+        // The line names the session it's from, which is in its transcript, read before the lock.
+        let state = known.map(|path| load_state(path)).unwrap_or_default();
+        let cached = state
+            .get("name")
+            .and_then(|seen| seen.get("path"))
+            .is_some_and(|path| truthy(Some(path)));
+        let transcript = if cached {
+            String::new()
+        } else {
+            find_transcript(&session)
+        };
+        let ahead = read_name_ahead(state, &transcript);
         let mut opening = false;
-        let shown = line[2..line.len() - marker.len() - 1].to_string();
+        let mut shown = String::new();
         let created = write_board(
             &board,
             |old| {
-                if let Some(state_path) = &state_path {
-                    if std::path::Path::new(dirname(state_path)).is_dir() {
-                        let mut state = load_state(state_path);
-                        if first_open(&mut state) {
-                            save_state(state_path, &state)?;
-                            opening = true;
-                        }
+                let mut state = known.map(|path| load_state(path)).unwrap_or_default();
+                keep_name(&mut state, ahead.as_ref(), &transcript);
+                if let Some(state_path) = known {
+                    if first_open(&mut state) {
+                        opening = true;
                     }
+                    save_state(state_path, &state)?;
                 }
+                let line = format!(
+                    "- {}: {text} {marker}",
+                    label(&place, &session_name(&state))
+                );
+                shown = line[2..line.len() - marker.len() - 1].to_string();
                 Ok(edit_waiting(old, |lines| {
                     if lines.iter().any(|old| old.contains(&marker)) {
                         lines
@@ -2874,6 +3094,72 @@ mod tests {
     }
 
     #[test]
+    fn a_name_is_read_from_the_transcript_where_the_last_read_stopped() {
+        let dir = std::env::temp_dir().join(format!("markychecky-name-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s1.jsonl");
+        let path_text = path.to_string_lossy().into_owned();
+        fs::write(&path, "{\"type\":\"user\",\"x\":\"\\\"ai-title\\\"\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Fir").unwrap();
+        let mut state = Map::new();
+        read_name(&mut state, &path_text);
+        assert_eq!(session_name(&state), "");
+        let first = state["name"]["offset"].as_u64().unwrap();
+        // The half-written line is read once it's whole.
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"st  one\"}\n").unwrap();
+        read_name(&mut state, "");
+        assert_eq!(session_name(&state), "First one");
+        assert!(state["name"]["offset"].as_u64().unwrap() > first);
+        // /rename's name wins over a later made-up one.
+        file.write_all(b"{\"type\":\"custom-title\",\"customTitle\":\"Mine\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Later\"}\n").unwrap();
+        read_name(&mut state, &path_text);
+        assert_eq!(session_name(&state), "Mine");
+        // A shorter file in its place is read from the start.
+        fs::write(&path, "{\"type\":\"ai-title\",\"aiTitle\":\"New\"}\n").unwrap();
+        read_name(&mut state, &path_text);
+        assert_eq!(session_name(&state), "New");
+        // A transcript that's gone leaves the name as it was.
+        fs::remove_dir_all(&dir).unwrap();
+        read_name(&mut state, &path_text);
+        assert_eq!(session_name(&state), "New");
+        assert_eq!(label("widgets · main", "New"), "widgets · main (New)");
+        assert_eq!(label("widgets\n· main", ""), "widgets · main");
+    }
+
+    #[test]
+    fn a_long_transcript_is_read_a_chunk_at_a_time_and_ahead_of_the_lock() {
+        // Names on either side of chunk boundaries, and a line too long to keep, which is skipped
+        // even when it holds a name.
+        let mut text = Vec::new();
+        text.extend(b"{\"type\":\"ai-title\",\"aiTitle\":\"Early\"}\n");
+        text.extend(vec![b'x'; CHUNK - 10]);
+        text.extend(b"\n{\"type\":\"ai-title\",\"aiTitle\":\"Across\"}\n");
+        text.extend(b"{\"type\":\"custom-title\",\"customTitle\":\"Too long\",\"pad\":\"");
+        text.extend(vec![b'y'; LINE_MAX]);
+        text.extend(b"\"}\n{\"type\":\"user\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Half");
+        let mut seen = Map::new();
+        let done = read_titles(&mut io::Cursor::new(&text), &mut seen).unwrap();
+        assert_eq!(seen.get("ai-title"), Some(&json!("Across")));
+        assert_eq!(seen.get("custom-title"), None);
+        assert_eq!(done as usize, text.len() - b"{\"type\":\"ai-title\",\"aiTitle\":\"Half".len());
+
+        // keep_name takes what was read ahead, unless the state has read further since.
+        let ahead = json!({"path": "/t", "offset": 10, "ai-title": "Ahead"});
+        let mut state = Map::new();
+        keep_name(&mut state, Some(&ahead), "/gone/t");
+        assert_eq!(session_name(&state), "", "read ahead from another transcript");
+        let mut state = Map::new();
+        keep_name(&mut state, Some(&ahead), "/t");
+        assert_eq!(session_name(&state), "Ahead");
+        let mut state = obj(json!({"name": {"path": "/t", "offset": 20, "ai-title": "Further"}}));
+        keep_name(&mut state, Some(&ahead), "");
+        assert_eq!(session_name(&state), "Further");
+        let mut state = obj(json!({"name": {"path": "/t", "offset": 5, "ai-title": "Behind"}}));
+        keep_name(&mut state, Some(&ahead), "");
+        assert_eq!(session_name(&state), "Ahead");
+    }
+
+    #[test]
     fn only_notifications_that_wait_on_you_make_a_line() {
         let text = |event: Value| notification_text(&obj(event)).unwrap();
         assert_eq!(
@@ -2891,10 +3177,18 @@ mod tests {
             Some(("has a question for you".into(), "tool"))
         );
         assert_eq!(
-            text(json!({"notification_type": "idle_prompt"})),
-            Some(("waiting for your input".into(), "prompt"))
+            text(json!({"notification_type": "elicitation_dialog"})),
+            Some(("has a question for you".into(), "tool"))
         );
-        for kind in ["agent_completed", "auth_success", "some_new_type"] {
+        // A session that's only idle, waiting for its next prompt, isn't something to do.
+        for kind in [
+            "idle_prompt",
+            "agent_needs_input",
+            "quota_auto_resume_stale",
+            "agent_completed",
+            "auth_success",
+            "some_new_type",
+        ] {
             assert_eq!(
                 text(json!({"notification_type": kind, "message": "permission to use Bash"})),
                 None
@@ -2907,7 +3201,7 @@ mod tests {
         );
         assert_eq!(
             text(json!({"message": "Claude is waiting for your input"})),
-            Some(("waiting for your input".into(), "prompt"))
+            None
         );
     }
 

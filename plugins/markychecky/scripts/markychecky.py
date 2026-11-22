@@ -8,8 +8,8 @@ when the Markydowny app can't run them itself. Each gets the hook's JSON on stdi
                           session's task list and rewrite its section of the board
   markychecky.py end      SessionEnd: mark this session's section idle, and clear its
                           notification item
-  markychecky.py notify   Notification: add or refresh this session's "waiting for your input"
-                          or "needs permission" item in "Waiting on you"
+  markychecky.py notify   Notification: add or refresh this session's "needs permission" or
+                          "has a question for you" item in "Waiting on you"
   markychecky.py respond  UserPromptSubmit and PostToolBatch: clear that item, once the user
                           has answered it
 
@@ -47,6 +47,7 @@ hook exits 0.
 
 import datetime as dt
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -227,6 +228,126 @@ def link_refs(text, repo):
     return REF_RE.sub(link, text)
 
 
+# The entries in a session's transcript that name it: the name /rename gave it, and the one Claude
+# Code made up for it. A name given by /rename wins.
+TITLES = (("custom-title", "customTitle"), ("ai-title", "aiTitle"))
+
+
+def find_transcript(session_id):
+    """The session's transcript, for a command that has only its id: Claude Code keeps it as
+    <session>.jsonl in a folder per project, under ~/.claude/projects (or CLAUDE_CONFIG_DIR)."""
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    pattern = os.path.join(glob.escape(os.path.join(config, "projects")), "*", f"{session_id}.jsonl")
+    found = sorted(glob.glob(pattern))
+    return found[0] if found else ""
+
+
+# A transcript is read a chunk at a time, and a line longer than LINE_MAX, which is a tool's
+# output rather than a name, is skipped rather than kept whole.
+CHUNK = 1 << 20
+LINE_MAX = 1 << 20
+
+
+def name_offset(seen):
+    offset = seen.get("offset")
+    return offset if isinstance(offset, int) and not isinstance(offset, bool) and offset >= 0 else 0
+
+
+def read_title(line, seen):
+    if b'"custom-title"' not in line and b'"ai-title"' not in line:
+        return
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return
+    for kind, field in TITLES:
+        if isinstance(entry, dict) and entry.get("type") == kind and isinstance(entry.get(field), str):
+            seen[kind] = entry[field]
+
+
+def read_titles(f, seen):
+    """Reads the names in the rest of the file into seen. Returns how much of it was whole lines:
+    the last may still be being written."""
+    read = done = 0
+    line, size = [], 0  # the line so far, or None for one too long to name anything
+    while True:
+        chunk = f.read(CHUNK)
+        if not chunk:
+            return done
+        pieces = chunk.split(b"\n")
+        for i, piece in enumerate(pieces):
+            if line is not None:
+                line.append(piece)
+                size += len(piece)
+                if size > LINE_MAX:
+                    line = None
+            if i == len(pieces) - 1:
+                break
+            if line is not None:
+                read_title(b"".join(line), seen)
+            line, size = [], 0
+        read += len(chunk)
+        if len(pieces) > 1:
+            done = read - len(pieces[-1])
+
+
+def read_name(state, transcript):
+    """Reads the session's name from its transcript into state["name"], from where the last read
+    stopped, so a long session's transcript isn't read again on every update."""
+    seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+    if transcript and seen.get("path") != transcript:
+        seen = {"path": transcript}
+    path = seen.get("path")
+    if not isinstance(path, str) or not path:
+        return
+    seen = dict(seen)
+    offset = name_offset(seen)
+    try:
+        with open(path, "rb") as f:
+            if offset > os.fstat(f.fileno()).st_size:  # a new file in its place: start again
+                seen, offset = {"path": path}, 0
+            f.seek(offset)
+            done = read_titles(f, seen)
+    except OSError:
+        return
+    seen["offset"] = offset + done
+    state["name"] = seen
+
+
+def read_name_ahead(state, transcript):
+    """read_name, before the board's lock is taken: the first read of a long transcript takes a
+    while, and every session's hooks wait on the lock. What it read is for keep_name."""
+    read_name(state, transcript)
+    return state.get("name")
+
+
+def keep_name(state, ahead, transcript):
+    """Under the lock, takes what read_name_ahead read, unless the state has read further since,
+    then reads what was written after it, which is a line or two."""
+    seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+    target = transcript or seen.get("path")
+    if (isinstance(ahead, dict) and target and ahead.get("path") == target
+            and (seen.get("path") != target or name_offset(ahead) >= name_offset(seen))):
+        state["name"] = dict(ahead)
+    read_name(state, transcript)
+
+
+def session_name(state):
+    """The name read_name found, on one line, or "" for none."""
+    seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+    for kind, _ in TITLES:
+        name = one_line(seen.get(kind) or "") if isinstance(seen.get(kind), str) else ""
+        if name:
+            return name
+    return ""
+
+
+def label(place_text, name):
+    """How the board names a session: `repo · branch (name)`, or without the name for none."""
+    place_text = one_line(place_text)
+    return f"{place_text} ({name})" if name else place_text
+
+
 def place(cwd):
     """`repo · branch` for a session's working directory, or the folder's name outside git."""
     cwd = cwd or os.getcwd()
@@ -260,7 +381,7 @@ def render_section(session_id, state, ended_at=None):
     meta = f"ended={ended_at.isoformat()} " if ended_at else ""
     lines = [
         START.format(id=session_id, meta=meta),
-        f"## {one_line(state.get('place') or 'Claude Code')}",
+        f"## {label(state.get('place') or 'Claude Code', session_name(state))}",
         "",
         f"**Now:** {now_line}",
         "",
@@ -294,10 +415,14 @@ def sweep(board, idle_hours, keep):
         return match.group(0)
 
     def stale(match):
+        # "waiting for your input" lines from before 0.5, which no longer makes them, go now.
+        marker = NOTIFY_RE.search(match.group(0))
+        if match.group(0)[: marker.start()].endswith(": waiting for your input "):
+            return ""
         # A notification item whose session never ended (it crashed, say) goes after idle_hours
         # too. Items from `waiting add` have no time on them, and stay until they're removed.
         try:
-            if dt.datetime.fromisoformat(NOTIFY_RE.search(match.group(0)).group("at")) < cutoff:
+            if dt.datetime.fromisoformat(marker.group("at")) < cutoff:
                 return ""
         except (ValueError, TypeError):
             pass
@@ -496,18 +621,17 @@ def idle_hours_setting():
         return 24.0
 
 
-# The notifications that mean a session is stopped until the user answers, and what clears
-# each: "tool" ones are a dialog in the middle of a tool call, answered when the call's batch
-# resolves, whether the user approved or denied it; "prompt" ones are answered by a prompt.
-# Every other type (a background agent finishing, a sign-in, a quota resume) isn't waiting on you.
+# The notifications that mean a session is stopped on a question for the user, each a dialog in
+# the middle of a tool call, answered when the call's batch resolves, whether the user approved
+# or denied it. Every other type isn't on the board: a session that's only idle, waiting for its
+# next prompt, isn't something to do (idle_prompt, agent_needs_input, quota_auto_resume_stale),
+# and nor is a background agent finishing or a sign-in. Items from before 0.5 may still wait on
+# a "prompt", which a prompt answers.
 WAITS = {
     "permission_prompt": "tool",
     "worker_permission_prompt": "tool",
     "elicitation_dialog": "tool",
     "elicitation_url_dialog": "tool",
-    "idle_prompt": "prompt",
-    "agent_needs_input": "prompt",
-    "quota_auto_resume_stale": "prompt",
 }
 PERMISSION_RE = re.compile(r"permission to use ([\w-]+)")
 
@@ -524,11 +648,15 @@ def notification_text(event):
         return "", ""
     if kind in ("permission_prompt", "worker_permission_prompt"):
         text = f"needs permission to use {tool.group(1)}" if tool else "needs your permission"
-    elif kind.startswith("elicitation_"):
-        text = "has a question for you"
     else:
-        text = "waiting for your input"
+        text = "has a question for you"
     return text, WAITS[kind]
+
+
+def transcript_of(event):
+    """The transcript_path a hook event gives, or "" without one."""
+    path = event.get("transcript_path")
+    return path if isinstance(path, str) else ""
 
 
 def agent_of(event):
@@ -617,9 +745,10 @@ def run_hook(command, event):
         if not waiting or not text:
             return
         at = now().isoformat()
-        line = f"- {one_line(place(event.get('cwd')))}: {text} " + NOTIFY.format(
-            session=session_id, agent=f" agent={agent}" if agent else "", at=at
-        )
+        where = place(event.get("cwd"))
+        marker = NOTIFY.format(session=session_id, agent=f" agent={agent}" if agent else "", at=at)
+        transcript = transcript_of(event)
+        ahead = read_name_ahead(load_state(state_path), transcript)
         opening = []
 
         def update(board):
@@ -630,8 +759,10 @@ def run_hook(command, event):
             save_flag(flag_path, flag)
             state = load_state(state_path)
             if first_open(state):
-                save_state(state_path, state)
                 opening.append(True)
+            keep_name(state, ahead, transcript)
+            save_state(state_path, state)
+            line = f"- {label(where, session_name(state))}: {text} {marker}"
             board = without_notify(board, session_id, [agent])
             board = edit_waiting(board, lambda lines: lines + [line])
             return sweep(board, idle_hours, session_id)
@@ -644,6 +775,9 @@ def run_hook(command, event):
         return
     # git runs before the lock is taken, so sessions don't queue behind each other's git.
     where = (place(event.get("cwd")), github_repo(event.get("cwd"))) if command == "task" else None
+    # And so is the transcript read.
+    transcript = transcript_of(event)
+    ahead = read_name_ahead(load_state(state_path), transcript) if command == "task" else None
     first = []
 
     def update(board):
@@ -654,6 +788,7 @@ def run_hook(command, event):
             if not apply_event(state, event):
                 return board
             state["place"], state["repo"] = where
+            keep_name(state, ahead, transcript)
             state.pop("ended", None)
             ended = None
         else:
@@ -735,30 +870,41 @@ def run_waiting(args):
     if opts.action == "add":
         cwd = os.getcwd()
         text = link_refs(one_line(" ".join(opts.text)), github_repo(cwd))
-        line = f"- {one_line(place(cwd))}: {text} {marker}"
-
-        def edit(lines):
-            if any(marker in old for old in lines):
-                return [line if marker in old else old for old in lines]
-            return lines + [line]
+        where = place(cwd)
+        shown = []
 
         # The session's state, to open the board on its first write as the hooks do, is in the
         # plugin's data folder, which this command only knows from what SessionStart saved.
         data = settings["data"]
         state_path = os.path.join(data, "sessions", f"{session}.json") if data else None
+        known = state_path and os.path.isdir(os.path.dirname(state_path))
+        # The line names the session it's from, which is in its transcript, read before the lock.
+        state = load_state(state_path) if known else {}
+        seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+        transcript = "" if seen.get("path") else find_transcript(session)
+        ahead = read_name_ahead(state, transcript)
         opening = []
 
         def update(board):
-            if state_path and os.path.isdir(os.path.dirname(state_path)):
-                state = load_state(state_path)
+            state = load_state(state_path) if known else {}
+            keep_name(state, ahead, transcript)
+            if known:
                 if first_open(state):
-                    save_state(state_path, state)
                     opening.append(True)
+                save_state(state_path, state)
+            line = f"- {label(where, session_name(state))}: {text} {marker}"
+            shown[:] = [line[2: -len(marker) - 1]]
+
+            def edit(lines):
+                if any(marker in old for old in lines):
+                    return [line if marker in old else old for old in lines]
+                return lines + [line]
+
             return edit_waiting(board, edit)
 
         if write_board(opts.board, update, data) or opening:
             open_in_markydowny(opts.board, settings["open"])
-        print(f"Added {item_id}: {line[2: -len(marker) - 1]}")
+        print(f"Added {item_id}: {shown[0]}")
         return 0
 
     found = []

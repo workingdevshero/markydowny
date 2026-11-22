@@ -7,9 +7,11 @@
 #      ~/Applications, `markydowny` on PATH (the Linux .deb's /usr/bin/markydowny), or the
 #      AppImage whose path is saved in `markydowny-path`, in the plugin's data folder (by an
 #      installer) or in ~/.cache/markychecky (by the AppImage itself, each time it starts). An app
-#      binary has to have engine 2, the one with every command above (it carries the marker
-#      below): an older Markydowny would open its window, or not know `notify`, `respond` or
-#      `waiting`. An AppImage saves the marker on the line after its path.
+#      binary has to have engine 3, the one that does what this version of the plugin does (it
+#      carries the marker below): an older Markydowny would open its window, not know `notify`,
+#      `respond` or `waiting` (engine 1), or leave out session names and put "waiting for your
+#      input" lines on the board (engine 2). An AppImage saves the marker on the line after its
+#      path.
 #   2. python3 markychecky.py. On a Mac without the Command Line Tools, /usr/bin/python3 is a
 #      stub that asks to install them, so it's used only when `xcode-select -p` succeeds.
 #   3. Neither: a hint, shown to the user once, on how to get one.
@@ -21,7 +23,7 @@
 command=$1
 here=${0%/*}
 data=${CLAUDE_PLUGIN_DATA:-$HOME/.cache/markychecky}
-ENGINE=markychecky-hook-engine-2
+ENGINE=markychecky-hook-engine-3
 
 has_engine() {
     [ -f "$1" ] && [ -x "$1" ] && grep -q -F "$ENGINE" "$1" 2>/dev/null

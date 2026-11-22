@@ -132,14 +132,15 @@ A session's task list holds the steps of what it's doing now. Questions for you,
 
 ## Waiting on you
 
-- markydowny · main: OK to delete the 33 GB `mog-desktop-base` VM?
-- web · pricing: the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
-- api · fix/login: waiting for your input
+- markydowny · main (Disk cleanup): OK to delete the 33 GB `mog-desktop-base` VM?
+- web · pricing (Pricing page): the pricing copy needs your sign-off ([#51](https://github.com/workingdevshero/web/pull/51))
+- api · fix/login (Login bug): needs permission to use Bash
 ```
 
 - **It comes with the board.** markychecky puts `## Waiting on you` at the top of a new board, and adds it to a board that doesn't have one.
 - **Sessions know to use it.** As each session starts, markychecky tells it where the board is and how to add a line when something needs you, and remove it once it's resolved. Sessions do that with markychecky's own commands, which take the same lock as everything else that writes to the board, so no line is lost.
-- **A session that's waiting shows up by itself.** When a session stops for a permission prompt, or sits waiting for your input, a line like `api · fix/login: waiting for your input` appears, and goes as soon as you respond.
+- **A session stopped on a question shows up by itself.** When a session stops for a permission prompt, a line like `api · fix/login (Login bug): needs permission to use Bash` appears, and goes as soon as you answer. A session that has only finished its turn doesn't get one.
+- **Each line says which session it's from.** It starts with the session's repository, branch and name, the same as the heading of the session's section. The name is the one you gave the session with `/rename`, or else the one Claude Code made up for it.
 
 A line a session adds stays when the session ends, until it's resolved and removed. Lines you write there yourself are never changed.
 
