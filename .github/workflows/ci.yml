@@ -77,16 +77,30 @@ jobs:
             src-tauri/target
             .crashpad-cache
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
-      # bugsplat-sys builds BugSplat's native code with CMake and Ninja, and MSVC's compiler,
-      # linker and lib.exe have to be on PATH for that. The steps run in PowerShell, the
-      # default: Git Bash puts its own link.exe ahead of MSVC's.
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Install Ninja
-        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
-      - run: node scripts/build-frontend.mjs
-      # Built without BUGSPLAT_DATABASE, so this build has crash reporting turned off.
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      # scripts/build-desktop.ps1 is what supermog's Windows round builds with, so it builds here
+      # too, in Windows PowerShell 5.1 as there. It loads MSVC's environment (bugsplat-sys needs
+      # its compiler, linker and lib.exe on PATH), fetches Ninja, and builds the debug .exe. The
+      # tests run in the same step, so they keep that environment. Not Git Bash: it puts its own
+      # link.exe ahead of MSVC's.
+      - name: Build with build-desktop.ps1, then test
+        shell: powershell
         env:
           BUGSPLAT_CRASHPAD_CACHE: ${{ github.workspace }}/.crashpad-cache
+        run: |
+          $ErrorActionPreference = 'Continue'
+          .\scripts\build-desktop.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Built without BUGSPLAT_DATABASE, so this build has crash reporting turned off.
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      # A --no-bundle build has no BugSplat helpers next to the .exe. With crash reporting off it
+      # must start without them, as it does in a Windows round.
+      - name: Start the built app
+        shell: powershell
+        run: |
+          $exe = .\scripts\build-desktop.ps1 -PrintPath
+          $app = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 15
+          if ($app.HasExited) { throw "markydowny.exe exited with $($app.ExitCode) within 15 seconds" }
+          Stop-Process -Id $app.Id
+          Write-Output "markydowny.exe started and kept running"
