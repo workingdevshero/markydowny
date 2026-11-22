@@ -199,6 +199,7 @@ fn run(args: &[String]) -> Result<()> {
         let place = place(&cwd);
         let marker = format!("{NOTIFY}{session_id}{agent_attr} at={at} -->");
         let transcript = transcript_of(event);
+        let ahead = read_name_ahead(load_state(&state_path), &transcript);
         let mut opening = false;
         let created = write_board(
             &board_path,
@@ -215,7 +216,7 @@ fn run(args: &[String]) -> Result<()> {
                 if first_open(&mut state) {
                     opening = true;
                 }
-                read_name(&mut state, &transcript);
+                keep_name(&mut state, ahead.as_ref(), &transcript);
                 save_state(&state_path, &state)?;
                 let line = format!(
                     "- {}: {text} {marker}",
@@ -246,7 +247,13 @@ fn run(args: &[String]) -> Result<()> {
     } else {
         None
     };
+    // And so is the transcript read.
     let transcript = transcript_of(event);
+    let ahead = if command == "task" {
+        read_name_ahead(load_state(&state_path), &transcript)
+    } else {
+        None
+    };
     let mut first = false;
     write_board(
         &board_path,
@@ -262,7 +269,7 @@ fn run(args: &[String]) -> Result<()> {
                 }
                 state.insert("place".into(), Value::String(place.clone()));
                 state.insert("repo".into(), Value::String(repo.clone()));
-                read_name(&mut state, &transcript);
+                keep_name(&mut state, ahead.as_ref(), &transcript);
                 state.remove("ended");
                 None
             } else {
@@ -731,6 +738,71 @@ fn find_transcript(session_id: &str) -> String {
     found.into_iter().next().unwrap_or_default()
 }
 
+// A transcript is read a chunk at a time, and a line longer than LINE_MAX, which is a tool's
+// output rather than a name, is skipped rather than kept whole.
+const CHUNK: usize = 1 << 20;
+const LINE_MAX: usize = 1 << 20;
+
+fn name_offset(seen: Option<&Map<String, Value>>) -> u64 {
+    seen.and_then(|seen| seen.get("offset"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn read_title(line: &[u8], seen: &mut Map<String, Value>) {
+    let has = |needle: &[u8]| line.windows(needle.len()).any(|w| w == needle);
+    if !has(b"\"custom-title\"") && !has(b"\"ai-title\"") {
+        return;
+    }
+    let Ok(Value::Object(entry)) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
+    for (kind, field) in TITLES {
+        if entry.get("type").and_then(Value::as_str) == Some(kind) {
+            if let Some(Value::String(name)) = entry.get(field) {
+                seen.insert(kind.into(), Value::String(name.clone()));
+            }
+        }
+    }
+}
+
+/// Reads the names in the rest of the file into seen. Returns how much of it was whole lines:
+/// the last may still be being written.
+fn read_titles(file: &mut impl Read, seen: &mut Map<String, Value>) -> io::Result<u64> {
+    let mut chunk = vec![0u8; CHUNK];
+    let (mut read, mut done) = (0u64, 0u64);
+    // The line so far, or None for one too long to name anything.
+    let mut line = Some(Vec::new());
+    loop {
+        let n = match file.read(&mut chunk) {
+            Ok(0) => return Ok(done),
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        let mut pieces = chunk[..n].split(|&b| b == b'\n').peekable();
+        while let Some(piece) = pieces.next() {
+            if let Some(so_far) = line.as_mut() {
+                so_far.extend_from_slice(piece);
+                if so_far.len() > LINE_MAX {
+                    line = None;
+                }
+            }
+            if pieces.peek().is_none() {
+                break;
+            }
+            if let Some(whole) = line.take() {
+                read_title(&whole, seen);
+            }
+            line = Some(Vec::new());
+        }
+        read += n as u64;
+        if let Some(last) = chunk[..n].iter().rposition(|&b| b == b'\n') {
+            done = read - (n - last - 1) as u64;
+        }
+    }
+}
+
 /// Reads the session's name from its transcript into state["name"], from where the last read
 /// stopped, so a long session's transcript isn't read again on every update.
 fn read_name(state: &mut Map<String, Value>, transcript: &str) {
@@ -750,8 +822,8 @@ fn read_name(state: &mut Map<String, Value>, transcript: &str) {
         Some(Value::String(path)) if !path.is_empty() => path.clone(),
         _ => return,
     };
-    let mut offset = seen.get("offset").and_then(Value::as_u64).unwrap_or(0);
-    let chunk = (|| -> io::Result<Vec<u8>> {
+    let mut offset = name_offset(Some(&seen));
+    let done = (|| -> io::Result<u64> {
         use std::io::{Seek, SeekFrom};
         let mut file = fs::File::open(&path)?;
         if offset > file.metadata()?.len() {
@@ -760,33 +832,38 @@ fn read_name(state: &mut Map<String, Value>, transcript: &str) {
             offset = 0;
         }
         file.seek(SeekFrom::Start(offset))?;
-        let mut chunk = Vec::new();
-        file.read_to_end(&mut chunk)?;
-        Ok(chunk)
+        read_titles(&mut file, &mut seen)
     })();
-    let Ok(chunk) = chunk else {
+    let Ok(done) = done else {
         return;
     };
-    // Whole lines only: the last may still be being written.
-    let done = chunk.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    let has = |line: &[u8], needle: &[u8]| line.windows(needle.len()).any(|w| w == needle);
-    for line in chunk[..done].split(|&b| b == b'\n') {
-        if !has(line, b"\"custom-title\"") && !has(line, b"\"ai-title\"") {
-            continue;
-        }
-        let Ok(Value::Object(entry)) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        for (kind, field) in TITLES {
-            if entry.get("type").and_then(Value::as_str) == Some(kind) {
-                if let Some(Value::String(name)) = entry.get(field) {
-                    seen.insert(kind.into(), Value::String(name.clone()));
-                }
-            }
+    seen.insert("offset".into(), Value::from(offset + done));
+    state.insert("name".into(), Value::Object(seen));
+}
+
+/// read_name, before the board's lock is taken: the first read of a long transcript takes a
+/// while, and every session's hooks wait on the lock. What it read is for keep_name.
+fn read_name_ahead(mut state: Map<String, Value>, transcript: &str) -> Option<Value> {
+    read_name(&mut state, transcript);
+    state.remove("name")
+}
+
+/// Under the lock, takes what read_name_ahead read, unless the state has read further since,
+/// then reads what was written after it, which is a line or two.
+fn keep_name(state: &mut Map<String, Value>, ahead: Option<&Value>, transcript: &str) {
+    let seen = state.get("name").and_then(Value::as_object);
+    let seen_path = seen.and_then(|seen| seen.get("path")).and_then(Value::as_str);
+    let target = Some(transcript)
+        .filter(|path| !path.is_empty())
+        .or(seen_path.filter(|path| !path.is_empty()));
+    if let (Some(Value::Object(ahead)), Some(target)) = (ahead, target) {
+        if ahead.get("path").and_then(Value::as_str) == Some(target)
+            && (seen_path != Some(target) || name_offset(Some(ahead)) >= name_offset(seen))
+        {
+            state.insert("name".into(), Value::Object(ahead.clone()));
         }
     }
-    seen.insert("offset".into(), Value::from(offset + done as u64));
-    state.insert("name".into(), Value::Object(seen));
+    read_name(state, transcript);
 }
 
 /// The name read_name found, on one line, or "" for none.
@@ -1732,26 +1809,28 @@ fn run_waiting(args: &[String]) -> Result<i32> {
             .data
             .as_ref()
             .map(|data| format!("{data}/sessions/{session}.json"));
+        let known = state_path
+            .as_ref()
+            .filter(|path| std::path::Path::new(dirname(path)).is_dir());
+        // The line names the session it's from, which is in its transcript, read before the lock.
+        let state = known.map(|path| load_state(path)).unwrap_or_default();
+        let cached = state
+            .get("name")
+            .and_then(|seen| seen.get("path"))
+            .is_some_and(|path| truthy(Some(path)));
+        let transcript = if cached {
+            String::new()
+        } else {
+            find_transcript(&session)
+        };
+        let ahead = read_name_ahead(state, &transcript);
         let mut opening = false;
         let mut shown = String::new();
         let created = write_board(
             &board,
             |old| {
-                // The line names the session it's from, which is in its transcript.
-                let known = state_path
-                    .as_ref()
-                    .filter(|path| std::path::Path::new(dirname(path)).is_dir());
                 let mut state = known.map(|path| load_state(path)).unwrap_or_default();
-                let cached = state
-                    .get("name")
-                    .and_then(|seen| seen.get("path"))
-                    .is_some_and(|path| truthy(Some(path)));
-                let transcript = if cached {
-                    String::new()
-                } else {
-                    find_transcript(&session)
-                };
-                read_name(&mut state, &transcript);
+                keep_name(&mut state, ahead.as_ref(), &transcript);
                 if let Some(state_path) = known {
                     if first_open(&mut state) {
                         opening = true;
@@ -3045,6 +3124,39 @@ mod tests {
         assert_eq!(session_name(&state), "New");
         assert_eq!(label("widgets · main", "New"), "widgets · main (New)");
         assert_eq!(label("widgets\n· main", ""), "widgets · main");
+    }
+
+    #[test]
+    fn a_long_transcript_is_read_a_chunk_at_a_time_and_ahead_of_the_lock() {
+        // Names on either side of chunk boundaries, and a line too long to keep, which is skipped
+        // even when it holds a name.
+        let mut text = Vec::new();
+        text.extend(b"{\"type\":\"ai-title\",\"aiTitle\":\"Early\"}\n");
+        text.extend(vec![b'x'; CHUNK - 10]);
+        text.extend(b"\n{\"type\":\"ai-title\",\"aiTitle\":\"Across\"}\n");
+        text.extend(b"{\"type\":\"custom-title\",\"customTitle\":\"Too long\",\"pad\":\"");
+        text.extend(vec![b'y'; LINE_MAX]);
+        text.extend(b"\"}\n{\"type\":\"user\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Half");
+        let mut seen = Map::new();
+        let done = read_titles(&mut io::Cursor::new(&text), &mut seen).unwrap();
+        assert_eq!(seen.get("ai-title"), Some(&json!("Across")));
+        assert_eq!(seen.get("custom-title"), None);
+        assert_eq!(done as usize, text.len() - b"{\"type\":\"ai-title\",\"aiTitle\":\"Half".len());
+
+        // keep_name takes what was read ahead, unless the state has read further since.
+        let ahead = json!({"path": "/t", "offset": 10, "ai-title": "Ahead"});
+        let mut state = Map::new();
+        keep_name(&mut state, Some(&ahead), "/gone/t");
+        assert_eq!(session_name(&state), "", "read ahead from another transcript");
+        let mut state = Map::new();
+        keep_name(&mut state, Some(&ahead), "/t");
+        assert_eq!(session_name(&state), "Ahead");
+        let mut state = obj(json!({"name": {"path": "/t", "offset": 20, "ai-title": "Further"}}));
+        keep_name(&mut state, Some(&ahead), "");
+        assert_eq!(session_name(&state), "Further");
+        let mut state = obj(json!({"name": {"path": "/t", "offset": 5, "ai-title": "Behind"}}));
+        keep_name(&mut state, Some(&ahead), "");
+        assert_eq!(session_name(&state), "Ahead");
     }
 
     #[test]

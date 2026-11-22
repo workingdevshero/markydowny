@@ -548,6 +548,32 @@ for (const engine of engines) {
         assert.equal(state.name.offset, fs.statSync(transcript).size);
     });
 
+    test(`[${engine.name}] a transcript is read before the board's lock is taken, a chunk at a time`, { skip: engine.skip || !hasPython }, async () => {
+        const box = sandbox();
+        const dir = path.basename(box.dir);
+        // A long transcript, with lines longer than a chunk, named near its end.
+        const transcript = path.join(box.env.CLAUDE_CONFIG_DIR, 'projects', '-a-project', 's1.jsonl');
+        fs.mkdirSync(path.dirname(transcript), { recursive: true });
+        const output = `${JSON.stringify({ type: 'user', message: 'x'.repeat(3 << 20) })}\n`;
+        fs.writeFileSync(transcript, titled('ai', 'Early') + output + titled('ai', 'Late') + output);
+        // Another session holds the board's lock.
+        const holder = spawn('python3', ['-c', 'import fcntl, sys\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("locked", flush=True)\nsys.stdin.read()',
+            path.join(box.dir, '.board.md.lock')], { stdio: ['pipe', 'pipe', 'inherit'] });
+        await new Promise(resolve => holder.stdout.once('data', resolve));
+        // A hook, and a waiting add for a session with no state, which reads the whole transcript.
+        const done = Promise.all([
+            hookAsync(engine, box, 'task', { ...create('s1', 1, 'One'), transcript_path: transcript }),
+            waitingAsync(engine, box, 'add', '--session', 's1', '--key', 'k', 'Parked'),
+        ]);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Gone by the time they get the lock: what they read, they read before it.
+        fs.rmSync(transcript);
+        holder.stdin.end();
+        await done;
+        assert.match(read(box), new RegExp(`^## ${dir} \\(Late\\)$`, 'm'));
+        assert.match(waitingSection(read(box)), new RegExp(`^- ${dir} \\(Late\\): Parked <!-- markychecky:item s1/k -->$`, 'm'));
+    });
+
     test(`[${engine.name}] "waiting for your input" isn't on the board: idle sessions add nothing, and old lines go`, { skip: engine.skip }, () => {
         const box = sandbox();
         for (const type of ['idle_prompt', 'agent_needs_input', 'quota_auto_resume_stale']) {

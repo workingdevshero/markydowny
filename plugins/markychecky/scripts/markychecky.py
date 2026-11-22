@@ -242,6 +242,55 @@ def find_transcript(session_id):
     return found[0] if found else ""
 
 
+# A transcript is read a chunk at a time, and a line longer than LINE_MAX, which is a tool's
+# output rather than a name, is skipped rather than kept whole.
+CHUNK = 1 << 20
+LINE_MAX = 1 << 20
+
+
+def name_offset(seen):
+    offset = seen.get("offset")
+    return offset if isinstance(offset, int) and not isinstance(offset, bool) and offset >= 0 else 0
+
+
+def read_title(line, seen):
+    if b'"custom-title"' not in line and b'"ai-title"' not in line:
+        return
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        return
+    for kind, field in TITLES:
+        if isinstance(entry, dict) and entry.get("type") == kind and isinstance(entry.get(field), str):
+            seen[kind] = entry[field]
+
+
+def read_titles(f, seen):
+    """Reads the names in the rest of the file into seen. Returns how much of it was whole lines:
+    the last may still be being written."""
+    read = done = 0
+    line, size = [], 0  # the line so far, or None for one too long to name anything
+    while True:
+        chunk = f.read(CHUNK)
+        if not chunk:
+            return done
+        pieces = chunk.split(b"\n")
+        for i, piece in enumerate(pieces):
+            if line is not None:
+                line.append(piece)
+                size += len(piece)
+                if size > LINE_MAX:
+                    line = None
+            if i == len(pieces) - 1:
+                break
+            if line is not None:
+                read_title(b"".join(line), seen)
+            line, size = [], 0
+        read += len(chunk)
+        if len(pieces) > 1:
+            done = read - len(pieces[-1])
+
+
 def read_name(state, transcript):
     """Reads the session's name from its transcript into state["name"], from where the last read
     stopped, so a long session's transcript isn't read again on every update."""
@@ -251,29 +300,36 @@ def read_name(state, transcript):
     path = seen.get("path")
     if not isinstance(path, str) or not path:
         return
-    offset = seen.get("offset")
-    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) and offset >= 0 else 0
+    seen = dict(seen)
+    offset = name_offset(seen)
     try:
         with open(path, "rb") as f:
             if offset > os.fstat(f.fileno()).st_size:  # a new file in its place: start again
                 seen, offset = {"path": path}, 0
             f.seek(offset)
-            chunk = f.read()
+            done = read_titles(f, seen)
     except OSError:
         return
-    done = chunk.rfind(b"\n") + 1  # whole lines only: the last may still be being written
-    for line in chunk[:done].split(b"\n"):
-        if b'"custom-title"' not in line and b'"ai-title"' not in line:
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        for kind, field in TITLES:
-            if isinstance(entry, dict) and entry.get("type") == kind and isinstance(entry.get(field), str):
-                seen[kind] = entry[field]
     seen["offset"] = offset + done
     state["name"] = seen
+
+
+def read_name_ahead(state, transcript):
+    """read_name, before the board's lock is taken: the first read of a long transcript takes a
+    while, and every session's hooks wait on the lock. What it read is for keep_name."""
+    read_name(state, transcript)
+    return state.get("name")
+
+
+def keep_name(state, ahead, transcript):
+    """Under the lock, takes what read_name_ahead read, unless the state has read further since,
+    then reads what was written after it, which is a line or two."""
+    seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+    target = transcript or seen.get("path")
+    if (isinstance(ahead, dict) and target and ahead.get("path") == target
+            and (seen.get("path") != target or name_offset(ahead) >= name_offset(seen))):
+        state["name"] = dict(ahead)
+    read_name(state, transcript)
 
 
 def session_name(state):
@@ -691,6 +747,8 @@ def run_hook(command, event):
         at = now().isoformat()
         where = place(event.get("cwd"))
         marker = NOTIFY.format(session=session_id, agent=f" agent={agent}" if agent else "", at=at)
+        transcript = transcript_of(event)
+        ahead = read_name_ahead(load_state(state_path), transcript)
         opening = []
 
         def update(board):
@@ -702,7 +760,7 @@ def run_hook(command, event):
             state = load_state(state_path)
             if first_open(state):
                 opening.append(True)
-            read_name(state, transcript_of(event))
+            keep_name(state, ahead, transcript)
             save_state(state_path, state)
             line = f"- {label(where, session_name(state))}: {text} {marker}"
             board = without_notify(board, session_id, [agent])
@@ -717,6 +775,9 @@ def run_hook(command, event):
         return
     # git runs before the lock is taken, so sessions don't queue behind each other's git.
     where = (place(event.get("cwd")), github_repo(event.get("cwd"))) if command == "task" else None
+    # And so is the transcript read.
+    transcript = transcript_of(event)
+    ahead = read_name_ahead(load_state(state_path), transcript) if command == "task" else None
     first = []
 
     def update(board):
@@ -727,7 +788,7 @@ def run_hook(command, event):
             if not apply_event(state, event):
                 return board
             state["place"], state["repo"] = where
-            read_name(state, transcript_of(event))
+            keep_name(state, ahead, transcript)
             state.pop("ended", None)
             ended = None
         else:
@@ -816,14 +877,17 @@ def run_waiting(args):
         # plugin's data folder, which this command only knows from what SessionStart saved.
         data = settings["data"]
         state_path = os.path.join(data, "sessions", f"{session}.json") if data else None
+        known = state_path and os.path.isdir(os.path.dirname(state_path))
+        # The line names the session it's from, which is in its transcript, read before the lock.
+        state = load_state(state_path) if known else {}
+        seen = state.get("name") if isinstance(state.get("name"), dict) else {}
+        transcript = "" if seen.get("path") else find_transcript(session)
+        ahead = read_name_ahead(state, transcript)
         opening = []
 
         def update(board):
-            # The line names the session it's from, which is in its transcript.
-            known = state_path and os.path.isdir(os.path.dirname(state_path))
             state = load_state(state_path) if known else {}
-            seen = state.get("name") if isinstance(state.get("name"), dict) else {}
-            read_name(state, "" if seen.get("path") else find_transcript(session))
+            keep_name(state, ahead, transcript)
             if known:
                 if first_open(state):
                     opening.append(True)
