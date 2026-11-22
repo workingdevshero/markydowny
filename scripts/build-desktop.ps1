@@ -12,6 +12,9 @@
 # The MSVC C++ Build Tools (the VCTools workload, with a Windows SDK) must already be installed.
 # When cl.exe isn't on PATH, the script finds them with vswhere and loads their environment, as
 # a Developer PowerShell would: bugsplat-sys needs MSVC's compiler, linker and lib.exe on PATH.
+# BugSplat's crash reporter is an ATL program, and ATL is an optional part of the Build Tools, so
+# when it's missing the script adds it with the Visual Studio Installer (which needs an
+# administrator).
 #
 # Crash reporting is off unless BUGSPLAT_DATABASE is set. Building downloads Crashpad, so it
 # needs network access either way.
@@ -95,6 +98,31 @@ if (-not (Test-Command cl.exe)) {
         if ($line -match "^([^=]+)=(.*)$") { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process") }
     }
     if (-not (Test-Command cl.exe)) { Fail "cl.exe is still not on PATH after $vcvars" }
+}
+
+# BugSplatReporter includes atlbase.h. The hosted runners' Visual Studio has ATL; a Build Tools
+# install with just the VCTools workload doesn't, and the build then fails deep in bugsplat-sys.
+function Test-Atl { [bool]($env:INCLUDE -split ";" | Where-Object { $_ -and (Test-Path (Join-Path $_ "atlbase.h")) }) }
+if (-not (Test-Atl)) {
+    $atl = "Microsoft.VisualStudio.Component.VC.ATL"
+    $installer = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\setup.exe"
+    # Without an administrator the installer would wait on a UAC prompt nobody answers.
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $admin -or -not $env:VSINSTALLDIR -or -not $env:VCToolsInstallDir -or -not (Test-Path $installer)) {
+        Fail "ATL is missing: add the C++ ATL component ($atl) to the Visual Studio Build Tools, as an administrator"
+    }
+    Log "Adding ATL ($atl) to $env:VSINSTALLDIR..."
+    # setup.exe is a GUI program, so & wouldn't wait for it or set $LASTEXITCODE.
+    $setup = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(
+        "modify", "--installPath", "`"$($env:VSINSTALLDIR.TrimEnd('\'))`"", "--add", $atl, "--quiet", "--norestart")
+    # 3010: installed, and a restart is recommended.
+    if ($setup.ExitCode -ne 0 -and $setup.ExitCode -ne 3010) {
+        Fail "adding ATL ($atl) failed (exit code $($setup.ExitCode))"
+    }
+    # vcvars64.bat only lists ATL's folders when they exist, so add them as it would.
+    $env:INCLUDE = "$(Join-Path $env:VCToolsInstallDir 'ATLMFC\include');$env:INCLUDE"
+    $env:LIB = "$(Join-Path $env:VCToolsInstallDir 'ATLMFC\lib\x64');$env:LIB"
+    if (-not (Test-Atl)) { Fail "atlbase.h is still missing after adding $atl" }
 }
 
 $cmakeVersion = $null

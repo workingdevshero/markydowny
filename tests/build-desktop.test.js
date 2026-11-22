@@ -144,6 +144,11 @@ test('build-desktop.ps1 checks every native step, and installs the versions buil
     // and Assert-Exit would then read the previous program's exit code.
     assert.match(source, /^trap \{ Fail /m);
     assert.match(source, /try \{ Invoke-WebRequest .*\}\n\s*catch \{ Fail /);
+    // BugSplatReporter needs ATL, which a bare Build Tools install lacks: add it before the build
+    // fails deep in bugsplat-sys, and wait for the installer, a GUI program & doesn't wait for.
+    assert.match(source, /Microsoft\.VisualStudio\.Component\.VC\.ATL/);
+    assert.match(source, /Start-Process -FilePath \$installer -Wait -PassThru/);
+    assert.ok(source.indexOf('Test-Atl') < source.indexOf('& npx tauri build'));
     // Stop would turn cargo's stderr into a terminating error when the output is redirected.
     assert.match(source, /^\$ErrorActionPreference = "Continue"$/m);
     assert.match(source, /^\$ProgressPreference = "SilentlyContinue"$/m);

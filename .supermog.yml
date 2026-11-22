@@ -30,7 +30,8 @@ verify:
       dockerfile: .supermog/desktop-linux.Dockerfile
       paths: ["src-tauri/**", "js/**", "index.html", "scripts/build-desktop.sh", "scripts/build-frontend.mjs", ".supermog/desktop-linux.Dockerfile"]
     # A fresh Windows 11 VM each round, with the MSVC Build Tools and WebView2 and nothing else:
-    # the script installs Rust, Node, CMake and Ninja, and builds from scratch, which is slow.
+    # the script installs Rust, Node, CMake and Ninja (and the Build Tools' ATL, which BugSplat's
+    # reporter needs, when it runs as an administrator), and builds from scratch, which is slow.
     # The box runs one at a time, so `paths` names only what Windows alone can show: its build
     # script and its Tauri config. To see anything else on Windows, ask for a Windows round by
     # name in a comment on the pull request.
