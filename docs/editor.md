@@ -57,7 +57,7 @@ To keep the original and put your edits in a new file, or to copy a document som
 
 From then on the window shows the new file: the title takes its name, later saves write it, and live reload follows it instead of the original. In the app it's also added to **File > Open Recent**. The original file is never written: your unsaved edits go only to the new file. Cancel and nothing changes, unsaved edits and undo history included.
 
-Picking the file the document already is works like **Save**. In the app, picking a file that's open in another window or tab is refused, and nothing is written: save under another name, or close it there first. For an untitled document, Save As is the same as its first save.
+Picking the file the document already is works like **Save**. In the app, picking a file that's open in another window or tab, or in a folder another window is watching, is refused, and nothing is written: save under another name, or close it there first. For an untitled document, Save As is the same as its first save.
 
 The **Save As…** button isn't shown on narrow windows; the shortcut still works.
 

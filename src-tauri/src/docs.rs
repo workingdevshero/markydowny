@@ -250,8 +250,23 @@ impl DocumentRouter {
         self.showing.get(label).map(PathBuf::as_path)
     }
 
-    /// A window other than `label` that shows `path`, or is about to: the window opening `path`
-    /// would bring forward rather than open it again.
+    /// The file a save from `label` starts from, when `file` is what it has on screen: the
+    /// document it shows, or `file` itself while it follows a folder `file` is in (a followed
+    /// folder's files aren't recorded as shown, see [`Self::take_pending`]).
+    pub fn document_of(&self, label: &str, file: &Path) -> Option<PathBuf> {
+        if let Some(shown) = self.showing.get(label) {
+            return Some(shown.clone());
+        }
+        let file = canonical(file);
+        self.folders
+            .get(label)
+            .is_some_and(|root| is_watchable(root, &file))
+            .then_some(file)
+    }
+
+    /// A window other than `label` that shows `path`, is about to, or follows a folder it's in:
+    /// the window opening `path` would bring forward rather than open it again (see
+    /// [`Self::place`]).
     pub fn shown_elsewhere(&self, label: &str, path: &Path) -> Option<String> {
         let path = canonical(path);
         let mut others = self
@@ -259,6 +274,11 @@ impl DocumentRouter {
             .iter()
             .chain(&self.pending)
             .filter(|(other, shown)| other.as_str() != label && **shown == path)
+            .chain(
+                self.folders
+                    .iter()
+                    .filter(|(other, root)| other.as_str() != label && is_watchable(root, &path)),
+            )
             .map(|(other, _)| other.clone())
             .collect::<Vec<_>>();
         others.sort();
@@ -584,6 +604,59 @@ mod tests {
             router.shown_elsewhere("main", &tmp.path().join("new.md")),
             None
         );
+    }
+
+    #[test]
+    fn a_file_in_a_folder_another_window_follows_is_shown_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let inside = root.join("docs").join("notes.md");
+        std::fs::write(&inside, "").unwrap();
+        let outside = tmp.path().join("other.md");
+        let mut router = DocumentRouter::default();
+        router.set_folder("main", Some(&root));
+
+        assert_eq!(
+            router.shown_elsewhere("doc-1", &inside),
+            Some("main".into())
+        );
+        // A new file there too: the folder would switch to it.
+        assert_eq!(
+            router.shown_elsewhere("doc-1", &root.join("new.md")),
+            Some("main".into())
+        );
+        assert_eq!(router.shown_elsewhere("doc-1", &outside), None);
+        // Not for the window following it.
+        assert_eq!(router.shown_elsewhere("main", &inside), None);
+    }
+
+    #[test]
+    fn the_document_a_window_saves_from_includes_a_followed_folders_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let inside = root.join("notes.md");
+        let shown = tmp.path().join("shown.md");
+        for file in [&inside, &shown] {
+            std::fs::write(file, "").unwrap();
+        }
+        let mut router = DocumentRouter::default();
+        router.set_folder("main", Some(&root));
+        router.set_showing("doc-1", Some(&shown));
+
+        // Following a folder: the file on screen there.
+        assert_eq!(
+            router.document_of("main", &inside),
+            Some(canonical(&inside))
+        );
+        assert_eq!(router.document_of("main", &shown), None);
+        // Showing a file: that file, whatever is asked about.
+        assert_eq!(
+            router.document_of("doc-1", &inside),
+            Some(canonical(&shown))
+        );
+        assert_eq!(router.document_of("doc-2", &inside), None);
     }
 
     #[test]

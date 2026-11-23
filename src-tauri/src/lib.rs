@@ -449,10 +449,10 @@ fn write_document(
 /// it says. The file the window showed (`path`; `None` while untitled) is never written, unless
 /// it's the one picked: then it's an ordinary save, refused unless the file still holds `base`.
 /// From then on the window shows the saved file, which goes on File > Open Recent. A file
-/// another window shows (or is opening) is refused, as opening it would bring that window
-/// forward rather than show it twice: the reader is told, and nothing is written. Returns the
-/// saved document (its path canonical), or `None` when the panel was cancelled. See
-/// `save::save_as`.
+/// another window shows (or is opening, or follows the folder of) is refused, as opening it
+/// would bring that window forward rather than show it twice: the reader is told, and nothing
+/// is written. Returns the saved document (its path canonical), or `None` when the panel was
+/// cancelled. See `save::save_as`.
 #[tauri::command(async)]
 fn save_document_as(
     app: AppHandle,
@@ -465,11 +465,10 @@ fn save_document_as(
     let file = path.filter(|p| !p.is_empty()).map(PathBuf::from);
     let label = window.label();
     // Only a document with a file can be the file picked: an untitled one may be in a window
-    // that showed a file before.
-    let showing = match file {
-        Some(_) => state.router.lock().unwrap().showing(label).map(Path::to_path_buf),
-        None => None,
-    };
+    // that showed a file before. A followed folder's file on screen is the window's document too.
+    let showing = file
+        .as_deref()
+        .and_then(|file| state.router.lock().unwrap().document_of(label, file));
     let (name, start) = save::save_panel_start(file.as_deref(), UNTITLED_FILE_NAME, || {
         state.recent.lock().unwrap().last_folder()
     });
@@ -502,8 +501,8 @@ fn save_document_as(
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         return Err(save::SaveError::Refused {
             message: format!(
-                "{name} is open in another window. Save under another name, or close it there \
-                 first."
+                "{name} is open in another window (or in a folder it's watching). Save under \
+                 another name, or close it there first."
             ),
         });
     }

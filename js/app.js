@@ -143,6 +143,10 @@
     let editing = null;
     // While Save As is writing (saveDocumentAs), the promise of it: one at a time.
     let savingAs = null;
+    // Live reload's changes that came in while Save As was writing, applied once it's done (by
+    // then they may be about a file the document no longer is, which ignores them): until then
+    // the document stays the one Save As started from, and what it saves is what was on screen.
+    const heldChanges = [];
     let wordCountTimer = null;
     let codeMirrorLoad = null;
     let toolbarReady = false;
@@ -596,6 +600,10 @@
      * it (highlighting its edit against the content it had before). Resolves once it's shown.
      */
     async function onDocumentChanged(doc) {
+        if (savingAs) {
+            heldChanges.push(() => onDocumentChanged(doc));
+            return;
+        }
         if (!currentSource || currentSource.kind !== 'desktop') return;
         if (doc.path !== currentSource.path) {
             if (isFollowingFolder() && isInFolder(doc.path)) {
@@ -915,6 +923,19 @@
     function startWebWatch(handle, file, observe) {
         const watched = { handle, poller: null, observer: null };
         const isCurrent = () => webWatched === watched && currentSource && currentSource.kind === 'file';
+        const applyChange = (text) => {
+            if (!isCurrent()) return;
+            if (savingAs) {
+                heldChanges.push(() => applyChange(text));
+                return;
+            }
+            if (editing) {
+                dispatchEdit({ type: 'disk', content: text, text: editorText() });
+                return;
+            }
+            if (text === currentSource.markdown) return;
+            renderMarkdown(text, { ...currentSource }, { reload: true });
+        };
         watched.poller = core.createFilePoller({
             getFile: () => handle.getFile(),
             observe,
@@ -927,13 +948,7 @@
                 } catch (_) {
                     return;
                 }
-                if (!isCurrent()) return;
-                if (editing) {
-                    dispatchEdit({ type: 'disk', content: text, text: editorText() });
-                    return;
-                }
-                if (text === currentSource.markdown) return;
-                renderMarkdown(text, { ...currentSource }, { reload: true });
+                applyChange(text);
             },
             onUnavailable: () => {
                 if (isCurrent()) showMissingNotice();
@@ -2192,6 +2207,7 @@
             if (session) session.saving = null;
             renderEditControls();
         }
+        for (const apply of heldChanges.splice(0)) await apply();
     }
 
     /** Writes the document for Save As (saveDocumentAs). Never rejects: failures are reported here. */
@@ -2207,8 +2223,17 @@
             downloadText(content, core.saveAsName(source));
             if (session && editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
         } catch (err) {
-            if (err && err.kind === 'conflict' && session && editing === session) {
-                dispatchEdit({ type: 'saveConflict', content: err.content, text: editorText() });
+            if (err && err.kind === 'conflict') {
+                if (session) {
+                    if (editing === session) dispatchEdit({ type: 'saveConflict', content: err.content, text: editorText() });
+                    return;
+                }
+                // Viewing, and the file picked was this one, which changed while the panel was up:
+                // nothing was written. Show it as it is now.
+                if (currentSource === source && err.content !== source.markdown) {
+                    await renderMarkdown(err.content, { ...source, unhighlighted: false }, { reload: true });
+                }
+                alert(`${core.saveAsName(source)} changed on disk while you were saving, so it wasn't saved over. It now shows what the file holds.`);
                 return;
             }
             if (err && err.name === 'AbortError') return; // the picker was cancelled
