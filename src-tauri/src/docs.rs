@@ -3,7 +3,7 @@
 //! it can be unit tested.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
 pub const IMAGE_EXTENSIONS: &[&str] = &[
@@ -53,12 +53,15 @@ pub fn is_watchable(root: &Path, path: &Path) -> bool {
 /// `path` with symlinks and `.`/`..` resolved, so one file has one key however it was named.
 /// A file that doesn't exist yet keeps its name under its canonical folder, so it still
 /// compares against canonical roots (/var vs /private/var, Windows 8.3 short names); other
-/// paths that don't exist are kept as given.
+/// paths that don't exist, and files directly under a root (`/a.md` would gain the current
+/// drive on Windows), are kept as given.
 fn canonical(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| match (path.parent(), path.file_name()) {
-        (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => dunce::canonicalize(dir)
-            .map(|dir| dir.join(name))
-            .unwrap_or_else(|_| path.to_path_buf()),
+        (Some(dir), Some(name)) if dir.components().any(|c| matches!(c, Component::Normal(_))) => {
+            dunce::canonicalize(dir)
+                .map(|dir| dir.join(name))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
         _ => path.to_path_buf(),
     })
 }

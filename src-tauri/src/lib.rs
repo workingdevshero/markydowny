@@ -506,7 +506,14 @@ fn save_document_as(
             ),
         });
     }
-    save::save_as(showing.as_deref(), &path, !added, &base, &content, read_text)?;
+    save::save_as(
+        showing.as_deref(),
+        &path,
+        !added,
+        &base,
+        &content,
+        read_text,
+    )?;
     let path = dunce::canonicalize(&path).unwrap_or(path);
     state.router.lock().unwrap().set_showing(label, Some(&path));
     note_recent(&app, vec![path.clone()]);
