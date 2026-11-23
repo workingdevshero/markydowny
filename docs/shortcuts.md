@@ -11,6 +11,7 @@ description: Every Markydowny keyboard shortcut, on the Mac and on Windows and L
 | --- | --- | --- |
 | Edit the markdown, or go back to the rendered view (Edit / Done) | <kbd>⌘E</kbd> | <kbd>Ctrl+E</kbd> |
 | Save while editing | <kbd>⌘S</kbd> | <kbd>Ctrl+S</kbd> |
+| Save As, to a file you pick | <kbd>⇧⌘S</kbd> | <kbd>Ctrl+Shift+S</kbd> |
 | Find and replace while editing | <kbd>⌘F</kbd> | <kbd>Ctrl+F</kbd> |
 | Choose a file from the drop zone | <kbd>Enter</kbd> or <kbd>Space</kbd> | <kbd>Enter</kbd> or <kbd>Space</kbd> |
 | Close an enlarged image | <kbd>Esc</kbd> | <kbd>Esc</kbd> |

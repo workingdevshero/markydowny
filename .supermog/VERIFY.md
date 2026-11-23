@@ -197,6 +197,43 @@ document titled *Untitled* straight in the editor (no file behind it yet).
 - **macOS app.** The same, with ⌘N opening a new tab (above New Tab in the File menu) and the
   Save panel's own *Replace* prompt the only way an existing file is replaced.
 
+### Save As
+
+**Save As** writes the document to a file you pick, which the window shows from then on; the
+file it came from is never written. ⇧⌘S (Ctrl+Shift+S elsewhere) while editing or reading, and
+*Save As…* (`#saveAsButton`) next to *Save* while editing (hidden at phone width). It's enabled
+with nothing unsaved, and disabled while the *changed on disk* banner is up.
+
+- **Website, Chromium.** Open `a.md` through an Origin Private File System handle
+  (`MarkyApp.openFileHandle`, as in *Live reload*), press *Edit* and type. Stand in
+  `showSaveFilePicker` as in *New file*, returning a handle to `b.md`, and press Ctrl+Shift+S.
+  `lastSaveOptions.suggestedName` is `a.md`. `b.md` holds the edited text, `a.md` is unchanged
+  byte for byte, the title reads `b.md` and the dot clears. Type again and press Ctrl+S: `b.md`
+  is written, with no picker call. Writing `b.md` from `browser_evaluate` live-reloads it;
+  writing `a.md` changes nothing on screen. A stand-in that throws
+  `new DOMException('', 'AbortError')` leaves the title, the dot and undo (Ctrl+Z) as they were,
+  with no alert. A stand-in returning `a.md`'s own handle is an ordinary Save. Ctrl+Shift+S
+  while reading (not editing) saves the text on screen the same way. On an untitled document
+  (*New file*) it's the same as its first save, suggesting `Untitled.md`.
+  Firefox takes Ctrl+Shift+S for screenshots and Edge for Web capture; if the browser's own
+  feature opens instead, say so.
+- **Website, without the API.** With `window.showSaveFilePicker` deleted by an init script, the
+  button's tooltip says the browser can't ask where to save, and Save As downloads the text
+  under the document's name.
+- **Linux app.** File > Save As… (Ctrl+Shift+S) sits after Open Recent. Open a file (say a copy
+  of `<checkout>/README.md`), edit it, and choose it: the GTK Save dialog is filtered to
+  markdown, named after the file, in its folder. Save as a new name: the new file holds the
+  edit, the original is unchanged, the window title is the new name, Ctrl+S then writes the new
+  file with no dialog, and it's at the top of File > Open Recent. Change the new file in another
+  editor: it live-reloads; change the original: nothing happens. Cancelling the dialog leaves
+  the title, the dot and undo as they were. On an untitled document (File > New) it's the first
+  save, named `Untitled.md`. Open a second file in another window and Save As over it from the
+  first: the app says it's open in another window, and neither file nor window changes. After a
+  Save As, type, wait two seconds, force quit and relaunch: the unsaved work reopens the new
+  file, not the original.
+- **macOS app.** The same, with ⇧⌘S and File > Save As… after Open Recent in the File menu, the
+  Save panel's own *Replace* prompt, and a file open in another tab refused the same way.
+
 ### Unsaved work is kept (website)
 
 Every document with unsaved changes has a backup in IndexedDB (database `markydowny`, store

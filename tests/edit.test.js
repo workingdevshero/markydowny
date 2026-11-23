@@ -64,7 +64,7 @@ test('lineSeparator keeps CRLF files CRLF, and anything mixed as it is', () => {
     assert.equal(core.lineSeparator(''), '\n');
 });
 
-test('editorShortcut: ⌘E, ⌘S and ⌘F on a Mac, Ctrl+E, Ctrl+S and Ctrl+F elsewhere', () => {
+test('editorShortcut: ⌘E, ⌘S, ⇧⌘S and ⌘F on a Mac, Ctrl+E, Ctrl+S, Ctrl+Shift+S and Ctrl+F elsewhere', () => {
     const key = (k, mods = {}) => ({ key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...mods });
     assert.equal(core.editorShortcut(key('e', { metaKey: true }), true), 'toggle');
     assert.equal(core.editorShortcut(key('s', { metaKey: true }), true), 'save');
@@ -78,7 +78,11 @@ test('editorShortcut: ⌘E, ⌘S and ⌘F on a Mac, Ctrl+E, Ctrl+S and Ctrl+F el
     assert.equal(core.editorShortcut(key('f', { ctrlKey: true }), true), null, 'Ctrl+F is "forward a character" on a Mac');
     assert.equal(core.editorShortcut(key('f', { metaKey: true, shiftKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e', { metaKey: true }), false), null);
-    assert.equal(core.editorShortcut(key('s', { metaKey: true, shiftKey: true }), true), null, 'Save As is not Save');
+    assert.equal(core.editorShortcut(key('s', { metaKey: true, shiftKey: true }), true), 'saveAs', 'Save As is not Save');
+    assert.equal(core.editorShortcut(key('S', { metaKey: true, shiftKey: true }), true), 'saveAs', 'Shift makes the key upper case');
+    assert.equal(core.editorShortcut(key('S', { ctrlKey: true, shiftKey: true }), false), 'saveAs');
+    assert.equal(core.editorShortcut(key('S', { ctrlKey: true, shiftKey: true }), true), null, 'Ctrl+Shift+S on a Mac');
+    assert.equal(core.editorShortcut(key('S', { metaKey: true, shiftKey: true, altKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e', { metaKey: true, altKey: true }), true), null);
     assert.equal(core.editorShortcut(key('e'), true), null);
     assert.equal(core.editorShortcut(key('x', { metaKey: true }), true), null);
@@ -445,4 +449,21 @@ test('selectAllAfterReplace: any other selection is left to the editor', () => {
     assert.equal(core.selectAllAfterReplace({ anchor: 4, head: 4 }, 10, 12), null);
     // An empty document has nothing to select: its cursor is just a cursor.
     assert.equal(core.selectAllAfterReplace({ anchor: 0, head: 0 }, 0, 5), null);
+});
+
+test('saveAsAction: Save As asks where in the app and where the browser can, and downloads elsewhere', () => {
+    assert.equal(core.saveAsAction({ isDesktop: true, savePicker: false }), 'saveAs');
+    assert.equal(core.saveAsAction({ isDesktop: false, savePicker: true }), 'saveAs');
+    // Safari and Firefox: a download, as Save's fallback.
+    assert.equal(core.saveAsAction({ isDesktop: false, savePicker: false }), 'download');
+});
+
+test('saveAsName: Save As suggests the document\'s own name, or Untitled.md while untitled', () => {
+    assert.equal(core.saveAsName({ kind: 'untitled', title: core.UNTITLED_TITLE }), 'Untitled.md');
+    // A desktop document in a folder is titled "folder › name": the file's name is suggested.
+    assert.equal(core.saveAsName({ kind: 'desktop', title: 'docs › a.md', path: '/x/docs/a.md' }), 'a.md');
+    assert.equal(core.saveAsName({ kind: 'desktop', title: 'a.md', path: 'C:\\x\\a.md' }), 'a.md');
+    assert.equal(core.saveAsName({ kind: 'file', title: 'a.md', handle: { name: 'b.md' } }), 'b.md');
+    assert.equal(core.saveAsName({ kind: 'folder', title: 'notes.md' }), 'notes.md');
+    assert.equal(core.saveAsName(null), 'Untitled.md');
 });

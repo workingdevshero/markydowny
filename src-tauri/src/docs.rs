@@ -250,6 +250,21 @@ impl DocumentRouter {
         self.showing.get(label).map(PathBuf::as_path)
     }
 
+    /// A window other than `label` that shows `path`, or is about to: the window opening `path`
+    /// would bring forward rather than open it again.
+    pub fn shown_elsewhere(&self, label: &str, path: &Path) -> Option<String> {
+        let path = canonical(path);
+        let mut others = self
+            .showing
+            .iter()
+            .chain(&self.pending)
+            .filter(|(other, shown)| other.as_str() != label && **shown == path)
+            .map(|(other, _)| other.clone())
+            .collect::<Vec<_>>();
+        others.sort();
+        others.into_iter().next()
+    }
+
     /// Records the folder a window follows (`None`: none).
     pub fn set_folder(&mut self, label: &str, root: Option<&Path>) {
         match root {
@@ -532,6 +547,43 @@ mod tests {
             Placement::Showing("main".into())
         );
         assert_eq!(router.take_pending("main"), None, "no re-read is queued");
+    }
+
+    #[test]
+    fn a_file_another_window_shows_or_is_opening_is_shown_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shown = tmp.path().join("shown.md");
+        let queued = tmp.path().join("queued.md");
+        let free = tmp.path().join("free.md");
+        for file in [&shown, &queued, &free] {
+            std::fs::write(file, "").unwrap();
+        }
+        let link = tmp.path().join("link.md");
+        crate::test_support::symlink(&shown, &link);
+        let windows = labels(&["main", "doc-1"]);
+        let mut router = DocumentRouter::default();
+        router.set_showing("main", Some(&shown));
+        router.set_occupied("main", true);
+        assert_eq!(
+            router.route(queued.clone(), &windows, None),
+            Placement::Existing("doc-1".into())
+        );
+
+        assert_eq!(router.shown_elsewhere("doc-1", &shown), Some("main".into()));
+        // However it's named.
+        assert_eq!(router.shown_elsewhere("doc-1", &link), Some("main".into()));
+        // Queued for a window that hasn't read it yet.
+        assert_eq!(
+            router.shown_elsewhere("main", &queued),
+            Some("doc-1".into())
+        );
+        // The window's own document, and a file nobody shows, aren't.
+        assert_eq!(router.shown_elsewhere("main", &shown), None);
+        assert_eq!(router.shown_elsewhere("main", &free), None);
+        assert_eq!(
+            router.shown_elsewhere("main", &tmp.path().join("new.md")),
+            None
+        );
     }
 
     #[test]

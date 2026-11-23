@@ -2,7 +2,7 @@
 title: Editor
 nav: Editor
 order: 4
-description: Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.
+description: Edit the markdown source in Markydowny, save it in place with ⌘S or as a new file with Save As, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.
 ---
 
 # Editor
@@ -45,6 +45,22 @@ Where the file goes depends on how you opened it:
 
 When saving in place isn't possible the button reads **Download** instead of **Save**, so you know before you click.
 
+## Save As
+
+To keep the original and put your edits in a new file, or to copy a document somewhere else, use **Save As**: press <kbd>⇧⌘S</kbd> (<kbd>Ctrl+Shift+S</kbd>), choose **File > Save As…** in the app, or click **Save As…** next to **Save** while editing. It works with or without unsaved changes, and while you're reading too.
+
+| Where | Save As |
+| --- | --- |
+| The app | The Save panel, named after the document (`Untitled.md` for an untitled one), in the document's folder |
+| Chrome, Edge and other Chromium browsers | The browser's Save dialog, named after the document |
+| Safari and Firefox | Downloads a copy under the document's name, usually to your Downloads folder |
+
+From then on the window shows the new file: the title takes its name, later saves write it, and live reload follows it instead of the original. In the app it's also added to **File > Open Recent**. The original file is never written: your unsaved edits go only to the new file. Cancel and nothing changes, unsaved edits and undo history included.
+
+Picking the file the document already is works like **Save**. In the app, picking a file that's open in another window or tab is refused, and nothing is written: save under another name, or close it there first. For an untitled document, Save As is the same as its first save.
+
+The **Save As…** button isn't shown on narrow windows; the shortcut still works.
+
 ## Only your edits change
 
 Saving changes only the text you edited. Everything else in the file, down to the byte, stays as it was:
@@ -75,7 +91,7 @@ While you have unsaved changes, the document's title starts with a dot (•). Ma
 
 ## Unsaved work is kept
 
-You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only **Save** (<kbd>⌘S</kbd>) ever writes to your files: the backup is a copy on the side, never the file itself.
+You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only **Save** (<kbd>⌘S</kbd>) and **Save As** ever write to your files: the backup is a copy on the side, never the file itself. After **Save As**, the backup of anything still unsaved belongs to the new file.
 
 | Where | Where backups go | When they come back |
 | --- | --- | --- |
