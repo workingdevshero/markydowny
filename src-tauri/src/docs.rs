@@ -51,9 +51,16 @@ pub fn is_watchable(root: &Path, path: &Path) -> bool {
 }
 
 /// `path` with symlinks and `.`/`..` resolved, so one file has one key however it was named.
-/// Paths that don't exist are kept as given.
+/// A file that doesn't exist yet keeps its name under its canonical folder, so it still
+/// compares against canonical roots (/var vs /private/var, Windows 8.3 short names); other
+/// paths that don't exist are kept as given.
 fn canonical(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => dunce::canonicalize(dir)
+            .map(|dir| dir.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    })
 }
 
 /// Where a document should be displayed.
@@ -626,6 +633,16 @@ mod tests {
             router.shown_elsewhere("doc-1", &root.join("new.md")),
             Some("main".into())
         );
+        // Named through a symlinked folder (as /var is to /private/var on macOS).
+        #[cfg(unix)]
+        {
+            let link = tmp.path().join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert_eq!(
+                router.shown_elsewhere("doc-1", &link.join("new.md")),
+                Some("main".into())
+            );
+        }
         assert_eq!(router.shown_elsewhere("doc-1", &outside), None);
         // Not for the window following it.
         assert_eq!(router.shown_elsewhere("main", &inside), None);
