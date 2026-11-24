@@ -656,6 +656,20 @@
     }
 
     /**
+     * The selection to keep when the editor's text is replaced from outside (live reload):
+     * select all stays select all, in the same direction, whatever changed. CodeMirror's own
+     * mapping never grows a selection over text added at its edges, so a session appending to
+     * a file would otherwise end up outside it. `selection` is { anchor, head }; returns the
+     * new { anchor, head }, or null when it wasn't the whole document (the editor maps it).
+     */
+    function selectAllAfterReplace(selection, oldLength, newLength) {
+        const from = Math.min(selection.anchor, selection.head);
+        const to = Math.max(selection.anchor, selection.head);
+        if (oldLength === 0 || from !== 0 || to !== oldLength) return null;
+        return selection.anchor <= selection.head ? { anchor: 0, head: newLength } : { anchor: newLength, head: 0 };
+    }
+
+    /**
      * The smallest single replacement that turns `oldText` into `newText`: everything between
      * their common prefix and common suffix. Returns { from, to, insert } (positions in
      * `oldText`), or null when they're equal. Never splits a surrogate pair.
@@ -956,6 +970,7 @@
         nextEditorMode,
         lineSeparator,
         textChange,
+        selectAllAfterReplace,
         blockStarts,
         blockIndexAt,
         blockOffset,

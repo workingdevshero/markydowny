@@ -427,3 +427,22 @@ test('saveAction: once saved, a document saves in place like any opened file', (
     assert.equal(core.saveAction({ kind: 'folder' }, { isDesktop: false, savePicker: true }), 'download');
     assert.equal(core.saveAction(null, { isDesktop: false, savePicker: true }), 'download');
 });
+
+test('selectAllAfterReplace: select all stays select all when the file changes underneath it', () => {
+    // A session appends its section to the board: CodeMirror alone would leave it unselected.
+    const before = '# Board\n\n## One\n';
+    const after = before + '\n## Two\n';
+    assert.deepEqual(core.selectAllAfterReplace({ anchor: 0, head: before.length }, before.length, after.length), { anchor: 0, head: after.length });
+    // Shorter, and selected from the end (shift-select upwards): the direction is kept.
+    assert.deepEqual(core.selectAllAfterReplace({ anchor: before.length, head: 0 }, before.length, 7), { anchor: 7, head: 0 });
+    // Everything removed: a cursor at the start.
+    assert.deepEqual(core.selectAllAfterReplace({ anchor: 0, head: before.length }, before.length, 0), { anchor: 0, head: 0 });
+});
+
+test('selectAllAfterReplace: any other selection is left to the editor', () => {
+    assert.equal(core.selectAllAfterReplace({ anchor: 0, head: 5 }, 10, 12), null);
+    assert.equal(core.selectAllAfterReplace({ anchor: 2, head: 10 }, 10, 12), null);
+    assert.equal(core.selectAllAfterReplace({ anchor: 4, head: 4 }, 10, 12), null);
+    // An empty document has nothing to select: its cursor is just a cursor.
+    assert.equal(core.selectAllAfterReplace({ anchor: 0, head: 0 }, 0, 5), null);
+});

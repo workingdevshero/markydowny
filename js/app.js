@@ -2046,23 +2046,32 @@
      */
     function replaceEditorText(session, text) {
         const view = session.view;
+        const { selection, doc } = view.state;
+        // Select all (one range over the whole document) stays select all.
+        const selectAll = (newLength) => selection.ranges.length === 1
+            ? core.selectAllAfterReplace(selection.main, doc.length, newLength)
+            : null;
         if (core.lineSeparator(text) !== session.separator) {
-            const offset = textOffset(view.state, view.state.selection.main.head, session.separator);
+            const offset = textOffset(view.state, selection.main.head, session.separator);
             editorHost.replaceChildren();
             view.destroy();
             session.separator = core.lineSeparator(text);
             session.view = session.cm.createEditor(editorHost, text, editorOptions(session));
             scheduleWordCount();
-            const pos = Math.min(docPosition(text, offset, session.separator), session.view.state.doc.length);
-            session.view.dispatch({ selection: { anchor: pos } });
+            const length = session.view.state.doc.length;
+            const all = selectAll(length);
+            const pos = Math.min(docPosition(text, offset, session.separator), length);
+            session.view.dispatch({ selection: all || { anchor: pos } });
             return;
         }
         // CodeMirror counts a line break as one position, whatever the separator.
         const flat = (value) => (session.separator === '\r\n' ? value.split('\r\n').join('\n') : value);
         const change = core.textChange(flat(view.state.sliceDoc()), flat(text));
         if (!change) return;
+        const all = selectAll(doc.length - (change.to - change.from) + change.insert.length);
         view.dispatch({
             changes: change,
+            ...(all ? { selection: all } : {}),
             annotations: session.cm.Transaction.addToHistory.of(false),
         });
     }
