@@ -84,6 +84,36 @@ test("supermog's Linux desktop round runs this script in an image that has the s
     for (const name of packages) assert.match(image, new RegExp(`\\s${name.replace(/[.+]/g, '\\$&')}\\s`), `${name} is missing from ${dockerfile}`);
 });
 
+test("supermog's jobs run in this repo's own image, which carries the Rust and Linux packages cargo test needs (#79)", () => {
+    const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
+    const dockerfile = config.match(/^image: (\S+)$/m)[1];
+    const image = fs.readFileSync(path.join(root, dockerfile), 'utf8');
+    // Layered on supermog's own job image, and back to its user at the end (supermog#1049).
+    assert.match(image, /^ARG SUPERMOG_JOB_IMAGE\nFROM \$\{SUPERMOG_JOB_IMAGE\}$/m);
+    assert.match(image.trimEnd(), /\nUSER supermog$/);
+    // The repository is never copied in: any edit would then rebuild the image on every box.
+    assert.doesNotMatch(image, /^\s*(COPY|ADD)\s/m);
+    const packages = fs.readFileSync(script, 'utf8').match(/^LINUX_PACKAGES=\(([^)]*)\)/m)[1].split(/\s+/).filter(Boolean);
+    for (const name of [...packages, 'libayatana-appindicator3-dev']) {
+        assert.match(image, new RegExp(`\\s${name.replace(/[.+]/g, '\\$&')}\\s`), `${name} is missing from ${dockerfile}`);
+    }
+    // Rust where the job's PATH looks for it, a pinned and checksummed rustup, and a fixed toolchain
+    // that overrides rust-toolchain.toml's `stable`, so jobs don't fetch a newer one each time.
+    assert.match(image, /^ARG RUST_VERSION=\d+\.\d+\.\d+$/m);
+    assert.match(image, /RUSTUP_TOOLCHAIN=\$\{RUST_VERSION\}/);
+    assert.match(image, /RUSTUP_HOME=\/opt\/rust\/rustup/);
+    assert.match(image, /export CARGO_HOME=\/opt\/rust\/cargo;/);
+    assert.match(image, /sha256sum -c/);
+    assert.match(image, /--profile minimal --component rustfmt,clippy/);
+    assert.match(image, /rustup set auto-self-update disable/);
+    // CARGO_HOME stays out of the image's environment: the fleet mounts the crate cache at
+    // ~/.cargo/{registry,git}, and moving CARGO_HOME off it re-downloads every crate every job.
+    const instructions = image.replace(/\\\n/g, ' ').split('\n').filter((line) => /^[A-Z]+\s/.test(line));
+    const env = instructions.filter((line) => /^(ENV|ARG)\s/.test(line));
+    assert.ok(env.length > 0);
+    for (const line of env) assert.doesNotMatch(line, /CARGO_HOME/);
+});
+
 test('a pull request that changes the desktop app is one a round verifies', () => {
     const config = fs.readFileSync(path.join(root, '.supermog.yml'), 'utf8');
     const lists = [...config.matchAll(/^\s+paths: (\[.*\])$/gm)].map((m) => JSON.parse(m[1]));

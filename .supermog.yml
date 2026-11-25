@@ -4,6 +4,11 @@
 # verification serves the checkout over HTTP and drives it in a real browser. The desktop app is
 # built and driven on a desktop of the round's own, Linux, macOS or Windows (`desktop` below); its
 # Rust is also covered by CI (.github/workflows/ci.yml), which is supermog's check gate.
+
+# The container a job runs in: supermog's job image plus the pinned Rust toolchain and Tauri's
+# Linux libraries, which `cargo test` needs and the base image no longer carries (#79).
+image: .supermog/Dockerfile
+
 verify:
   # In a dot-directory so GitHub Pages' Jekyll build doesn't publish it as a page.
   notes: .supermog/VERIFY.md
