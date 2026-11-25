@@ -237,6 +237,22 @@ impl Watch {
         R: Fn(&Path) -> Option<String> + Send + 'static,
         S: Fn(Change) + Send + 'static,
     {
+        Self::start_with(scope, QUIET, MAX_WAIT, read, sink)
+    }
+
+    /// [`Watch::start`] with the debounce timing given: `quiet` and `max_wait` as in
+    /// [`Debouncer::new`]. Tests pass wider windows so a loaded machine can't split a burst.
+    fn start_with<R, S>(
+        scope: Scope,
+        quiet: Duration,
+        max_wait: Duration,
+        read: R,
+        sink: S,
+    ) -> notify::Result<(Watch, Seeded)>
+    where
+        R: Fn(&Path) -> Option<String> + Send + 'static,
+        S: Fn(Change) + Send + 'static,
+    {
         let (tx, rx) = mpsc::channel();
         let events = tx.clone();
         let filter = scope.clone();
@@ -273,7 +289,7 @@ impl Watch {
         let worker = std::thread::Builder::new()
             .name("markydowny-watch".into())
             .spawn(move || {
-                let mut debouncer = Debouncer::new(QUIET, MAX_WAIT);
+                let mut debouncer = Debouncer::new(quiet, max_wait);
                 let mut touched: Vec<PathBuf> = Vec::new();
                 loop {
                     let timeout = debouncer
@@ -467,8 +483,12 @@ mod tests {
     }
 
     fn watch(scope: Scope) -> (Harness, Seeded) {
+        watch_with(scope, QUIET, MAX_WAIT)
+    }
+
+    fn watch_with(scope: Scope, quiet: Duration, max_wait: Duration) -> (Harness, Seeded) {
         let (tx, rx) = mpsc::channel();
-        let (watch, seeded) = Watch::start(scope, read, move |c| {
+        let (watch, seeded) = Watch::start_with(scope, quiet, max_wait, read, move |c| {
             let _ = tx.send(c);
         })
         .unwrap();
@@ -573,18 +593,42 @@ mod tests {
 
     #[test]
     fn a_burst_of_writes_reloads_once() {
+        // The burst's writes are ~15 ms apart. With the app's 100 ms quiet window, a loaded
+        // machine (the writer descheduled, file system events delivered late) easily leaves a
+        // 100 ms gap mid-burst and splits it. The debounce arithmetic is covered exactly by the
+        // `debouncer_*` tests; this one checks that the watch actually coalesces real file
+        // system events, so it uses a quiet window no scheduler stall plausibly reaches.
+        let quiet = Duration::from_secs(2);
         let (_tmp, file) = setup("# start\n");
-        let (h, _) = watch(Scope::file(&file));
+        let (h, _) = watch_with(Scope::file(&file), quiet, quiet * 10);
         for n in 0..10 {
             std::fs::write(&file, format!("# burst {n}\n")).unwrap();
             std::thread::sleep(ms(15));
         }
-        let changes = h.drain(ms(1500));
-        assert!(
-            !changes.is_empty() && changes.len() <= 2,
-            "expected one or two reloads, got {changes:?}"
+        // Wait for the reload that shows the last write, however late it comes, then for
+        // anything that would follow it.
+        let mut changes = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            let Ok(change) =
+                h.rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            else {
+                break;
+            };
+            let last =
+                matches!(&change, Change::Changed { content, .. } if content == "# burst 9\n");
+            changes.push(change);
+            if last {
+                break;
+            }
+        }
+        changes.extend(h.drain(quiet * 2));
+        assert_eq!(
+            changes.len(),
+            1,
+            "expected the burst to reload once, got {changes:?}"
         );
-        assert_eq!(content_of(changes.last().cloned()), "# burst 9\n");
+        assert_eq!(content_of(changes.pop()), "# burst 9\n");
     }
 
     #[test]
