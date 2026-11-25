@@ -12,12 +12,24 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/vendor/codemirror.js
 const cm = context.MarkyCodeMirror;
 const format = require('../js/format.js');
 
+/**
+ * A new state for `text` with `selection`, its syntax tree parsed to the end. A new state is
+ * parsed for only 20 ms and 3000 characters at first, so on a loaded machine a fresh state's tree
+ * can stop short of the end. The state ensureSyntaxTree finishes keeps the tree it had; the next
+ * transaction (here, the selection) takes the finished one.
+ */
+function parsedState(text, selection = { anchor: 0 }) {
+    const state = cm.createState(text);
+    assert.ok(cm.ensureSyntaxTree(state, state.doc.length, Infinity), 'parsed to the end');
+    return state.update({ selection }).state;
+}
+
 /** formatState with the selection marked in the text: '|' for a cursor, '{' and '}' around a selection. */
 function stateAt(marked) {
     const anchor = marked.indexOf('|') !== -1 ? marked.indexOf('|') : marked.indexOf('{');
     const text = marked.replace(/[|{}]/g, '');
     const head = marked.indexOf('|') !== -1 ? anchor : marked.indexOf('}') - 1;
-    const state = cm.createState(text).update({ selection: { anchor, head } }).state;
+    const state = parsedState(text, { anchor, head });
     return { ...cm.formatState(state) };
 }
 
@@ -92,7 +104,7 @@ const DOCUMENTS = [
 test('format.js reads every line\'s block style as the syntax tree does', () => {
     for (const doc of DOCUMENTS) {
         for (let pos = 0; pos <= doc.length; pos++) {
-            const state = cm.createState(doc).update({ selection: { anchor: pos } }).state;
+            const state = parsedState(doc, { anchor: pos });
             assert.equal(format.blockStyleAt(doc, pos), cm.formatState(state).block, `${JSON.stringify(doc)} at ${pos}`);
         }
     }
@@ -110,7 +122,7 @@ const INLINE_DOCUMENTS = [
 test('an inline style the tree shows is the one its command removes', () => {
     for (const doc of INLINE_DOCUMENTS) {
         for (let pos = 0; pos <= doc.length; pos++) {
-            const state = cm.formatState(cm.createState(doc).update({ selection: { anchor: pos } }).state);
+            const state = cm.formatState(parsedState(doc, { anchor: pos }));
             for (const style of ['bold', 'italic', 'strikethrough', 'code', 'link']) {
                 let out = format.apply(style, { text: doc, selection: { anchor: pos, head: pos } });
                 // Link selects the URL first; the second press removes the link.

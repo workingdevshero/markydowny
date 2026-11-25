@@ -167,7 +167,7 @@ test('the vendored editor bundle exposes window.MarkyCodeMirror', () => {
     assert.match(bundle, /^var MarkyCodeMirror=/);
     const window = {};
     new Function('window', 'self', `${bundle}\nwindow.MarkyCodeMirror = MarkyCodeMirror;`)(window, window);
-    for (const name of ['createEditor', 'createState', 'formatState', 'EditorView', 'Transaction', 'openSearchPanel']) {
+    for (const name of ['createEditor', 'createState', 'formatState', 'ensureSyntaxTree', 'EditorView', 'Transaction', 'openSearchPanel']) {
         assert.ok(window.MarkyCodeMirror[name], `MarkyCodeMirror.${name}`);
     }
 });

@@ -946,4 +946,4 @@ function richMode(options) {
     ];
 }
 
-export { EditorView, Transaction, openSearchPanel, undoDepth };
+export { EditorView, Transaction, ensureSyntaxTree, openSearchPanel, undoDepth };
