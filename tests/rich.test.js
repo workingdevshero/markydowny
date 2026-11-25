@@ -12,6 +12,18 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/vendor/codemirror.js'), 'utf8'), context);
 const cm = context.MarkyCodeMirror;
 
+/**
+ * A new state for `text` with `selection`, its syntax tree parsed to the end. A new state is
+ * parsed for only 20 ms and 3000 characters at first, so on a loaded machine a fresh state's tree
+ * can stop short of the end. The state ensureSyntaxTree finishes keeps the tree it had; the next
+ * transaction (here, the selection) takes the finished one.
+ */
+function parsedState(text, selection = { anchor: 0 }) {
+    const state = cm.createState(text);
+    assert.ok(cm.ensureSyntaxTree(state, state.doc.length, Infinity), 'parsed to the end');
+    return state.update({ selection }).state;
+}
+
 /** The state for `marked` text, with '|' marking the cursor and '{' '}' around a selection. */
 function stateFor(marked) {
     const text = marked.replace(/[|{}]/g, '');
@@ -21,7 +33,7 @@ function stateFor(marked) {
         anchor = marked.indexOf('{');
         head = marked.indexOf('}') - 1;
     }
-    return { text, state: cm.createState(text).update({ selection: { anchor, head } }).state };
+    return { text, state: parsedState(text, { anchor, head }) };
 }
 
 /** `value`, made of this realm's arrays and objects (the bundle runs in its own). */
@@ -34,7 +46,7 @@ function rich(marked) {
 
 /** Rich mode over `text` with the cursor at `anchor` (tables are full of '|'). */
 function richAt(text, anchor, head = anchor) {
-    return summarize({ text, state: cm.createState(text).update({ selection: { anchor, head } }).state });
+    return summarize({ text, state: parsedState(text, { anchor, head }) });
 }
 
 function summarize({ text, state }) {
@@ -209,7 +221,7 @@ const TABLE = '| Name | *Qty* | Note |\n|:-----|-----:|:----:|\n| a \\| b | 2 | 
 
 test('tables: drawn whole off the cursor, as markdown on it', () => {
     const doc = `x\n\n${TABLE}\n\ny`;
-    const tablesAt = (anchor, head = anchor) => plain(cm.richTables(cm.createState(doc).update({ selection: { anchor, head } }).state));
+    const tablesAt = (anchor, head = anchor) => plain(cm.richTables(parsedState(doc, { anchor, head })));
     const [table] = tablesAt(0);
     assert.deepEqual(table, {
         from: 3,
@@ -277,6 +289,13 @@ test('headings reads the whole document, not just what was parsed first', () => 
     assert.deepEqual(plain(cm.headings(cm.createState(text))).map(h => h.text), ['First', 'Last']);
 });
 
+test('rich decorations reach past what a new state parses first', () => {
+    // Without parsedState, a new state's tree stops after 3000 characters (or 20 ms of work).
+    const text = '# First\n\n' + 'Some words in a paragraph.\n\n'.repeat(400) + '## Last';
+    const { lines } = richAt(text, 0);
+    assert.deepEqual(lines, [[1, 'cm-rich-h1'], [text.split('\n').length, 'cm-rich-h2']]);
+});
+
 test('switching modes keeps the text, selection and undo history', () => {
     const { text, state: start } = stateFor('# T|itle\n\nbody');
     let state = start.update({ changes: { from: text.length, insert: ' more' } }).state;
@@ -312,7 +331,7 @@ function tab(marked, direction = 1) {
         anchor = marked.indexOf('«');
         head = marked.indexOf('»') - 1;
     }
-    const state = cm.createState(text).update({ selection: { anchor, head } }).state;
+    const state = parsedState(text, { anchor, head });
     const spec = cm.tableCellMove(state, direction);
     if (!spec) return null;
     const next = state.update(spec).state;
