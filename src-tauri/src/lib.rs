@@ -450,9 +450,9 @@ fn write_document(
 /// it's the one picked: then it's an ordinary save, refused unless the file still holds `base`.
 /// From then on the window shows the saved file, which goes on File > Open Recent. A file
 /// another window shows (or is opening, or follows the folder of) is refused, as opening it
-/// would bring that window forward rather than show it twice: the reader is told, and nothing
-/// is written. Returns the saved document (its path canonical), or `None` when the panel was
-/// cancelled. See `save::save_as`.
+/// would bring that window forward rather than show it twice: the reader is told (in a native
+/// dialog), and nothing is written. Returns the saved document (its path canonical), or `None`
+/// when nothing was saved (the panel was cancelled, or the file was refused). See `save::save_as`.
 #[tauri::command(async)]
 fn save_document_as(
     app: AppHandle,
@@ -499,12 +499,18 @@ fn save_document_as(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        return Err(save::SaveError::Refused {
-            message: format!(
+        // Said here, in a native dialog, rather than left to the page: the webview's alert()
+        // doesn't come up on Linux. Nothing was saved, as when the panel is cancelled.
+        app.dialog()
+            .message(format!(
                 "{name} is open in another window (or in a folder it's watching). Save under \
                  another name, or close it there first."
-            ),
-        });
+            ))
+            .title("Can't save here")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::Ok)
+            .blocking_show();
+        return Ok(None);
     }
     save::save_as(
         showing.as_deref(),

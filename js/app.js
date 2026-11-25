@@ -143,9 +143,10 @@
     let editing = null;
     // While Save As is writing (saveDocumentAs), the promise of it: one at a time.
     let savingAs = null;
-    // Live reload's changes that came in while Save As was writing, applied once it's done (by
-    // then they may be about a file the document no longer is, which ignores them): until then
-    // the document stays the one Save As started from, and what it saves is what was on screen.
+    // Live reload's changes (and reports of a file gone) that came in while Save As was writing,
+    // applied in order once it's done (by then they may be about a file the document no longer
+    // is, which ignores them): until then the document stays the one Save As started from, and
+    // what it saves is what was on screen.
     const heldChanges = [];
     let wordCountTimer = null;
     let codeMirrorLoad = null;
@@ -628,6 +629,12 @@
     }
 
     function onDocumentMissing(payload) {
+        // Held with the changes, in the order they came: a change replayed after it would
+        // hide the notice for a file that's gone.
+        if (savingAs) {
+            heldChanges.push(() => onDocumentMissing(payload));
+            return;
+        }
         if (isShowingPath(payload.path)) showMissingNotice();
     }
 
