@@ -3,7 +3,7 @@
 //! it can be unit tested.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown", "mdown", "mkd", "mkdn"];
 pub const IMAGE_EXTENSIONS: &[&str] = &[
@@ -51,9 +51,19 @@ pub fn is_watchable(root: &Path, path: &Path) -> bool {
 }
 
 /// `path` with symlinks and `.`/`..` resolved, so one file has one key however it was named.
-/// Paths that don't exist are kept as given.
+/// A file that doesn't exist yet keeps its name under its canonical folder, so it still
+/// compares against canonical roots (/var vs /private/var, Windows 8.3 short names); other
+/// paths that don't exist, and files directly under a root (`/a.md` would gain the current
+/// drive on Windows), are kept as given.
 fn canonical(path: &Path) -> PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) if dir.components().any(|c| matches!(c, Component::Normal(_))) => {
+            dunce::canonicalize(dir)
+                .map(|dir| dir.join(name))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+        _ => path.to_path_buf(),
+    })
 }
 
 /// Where a document should be displayed.
@@ -248,6 +258,41 @@ impl DocumentRouter {
     /// The document a window shows (canonical), if it shows one rather than a followed folder.
     pub fn showing(&self, label: &str) -> Option<&Path> {
         self.showing.get(label).map(PathBuf::as_path)
+    }
+
+    /// The file a save from `label` starts from, when `file` is what it has on screen: the
+    /// document it shows, or `file` itself while it follows a folder `file` is in (a followed
+    /// folder's files aren't recorded as shown, see [`Self::take_pending`]).
+    pub fn document_of(&self, label: &str, file: &Path) -> Option<PathBuf> {
+        if let Some(shown) = self.showing.get(label) {
+            return Some(shown.clone());
+        }
+        let file = canonical(file);
+        self.folders
+            .get(label)
+            .is_some_and(|root| is_watchable(root, &file))
+            .then_some(file)
+    }
+
+    /// A window other than `label` that shows `path`, is about to, or follows a folder it's in:
+    /// the window opening `path` would bring forward rather than open it again (see
+    /// [`Self::place`]).
+    pub fn shown_elsewhere(&self, label: &str, path: &Path) -> Option<String> {
+        let path = canonical(path);
+        let mut others = self
+            .showing
+            .iter()
+            .chain(&self.pending)
+            .filter(|(other, shown)| other.as_str() != label && **shown == path)
+            .chain(
+                self.folders
+                    .iter()
+                    .filter(|(other, root)| other.as_str() != label && is_watchable(root, &path)),
+            )
+            .map(|(other, _)| other.clone())
+            .collect::<Vec<_>>();
+        others.sort();
+        others.into_iter().next()
     }
 
     /// Records the folder a window follows (`None`: none).
@@ -532,6 +577,106 @@ mod tests {
             Placement::Showing("main".into())
         );
         assert_eq!(router.take_pending("main"), None, "no re-read is queued");
+    }
+
+    #[test]
+    fn a_file_another_window_shows_or_is_opening_is_shown_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shown = tmp.path().join("shown.md");
+        let queued = tmp.path().join("queued.md");
+        let free = tmp.path().join("free.md");
+        for file in [&shown, &queued, &free] {
+            std::fs::write(file, "").unwrap();
+        }
+        let link = tmp.path().join("link.md");
+        crate::test_support::symlink(&shown, &link);
+        let windows = labels(&["main", "doc-1"]);
+        let mut router = DocumentRouter::default();
+        router.set_showing("main", Some(&shown));
+        router.set_occupied("main", true);
+        assert_eq!(
+            router.route(queued.clone(), &windows, None),
+            Placement::Existing("doc-1".into())
+        );
+
+        assert_eq!(router.shown_elsewhere("doc-1", &shown), Some("main".into()));
+        // However it's named.
+        assert_eq!(router.shown_elsewhere("doc-1", &link), Some("main".into()));
+        // Queued for a window that hasn't read it yet.
+        assert_eq!(
+            router.shown_elsewhere("main", &queued),
+            Some("doc-1".into())
+        );
+        // The window's own document, and a file nobody shows, aren't.
+        assert_eq!(router.shown_elsewhere("main", &shown), None);
+        assert_eq!(router.shown_elsewhere("main", &free), None);
+        assert_eq!(
+            router.shown_elsewhere("main", &tmp.path().join("new.md")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_file_in_a_folder_another_window_follows_is_shown_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let inside = root.join("docs").join("notes.md");
+        std::fs::write(&inside, "").unwrap();
+        let outside = tmp.path().join("other.md");
+        let mut router = DocumentRouter::default();
+        router.set_folder("main", Some(&root));
+
+        assert_eq!(
+            router.shown_elsewhere("doc-1", &inside),
+            Some("main".into())
+        );
+        // A new file there too: the folder would switch to it.
+        assert_eq!(
+            router.shown_elsewhere("doc-1", &root.join("new.md")),
+            Some("main".into())
+        );
+        // Named through a symlinked folder (as /var is to /private/var on macOS).
+        #[cfg(unix)]
+        {
+            let link = tmp.path().join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert_eq!(
+                router.shown_elsewhere("doc-1", &link.join("new.md")),
+                Some("main".into())
+            );
+        }
+        assert_eq!(router.shown_elsewhere("doc-1", &outside), None);
+        // Not for the window following it.
+        assert_eq!(router.shown_elsewhere("main", &inside), None);
+    }
+
+    #[test]
+    fn the_document_a_window_saves_from_includes_a_followed_folders_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let inside = root.join("notes.md");
+        let shown = tmp.path().join("shown.md");
+        for file in [&inside, &shown] {
+            std::fs::write(file, "").unwrap();
+        }
+        let mut router = DocumentRouter::default();
+        router.set_folder("main", Some(&root));
+        router.set_showing("doc-1", Some(&shown));
+
+        // Following a folder: the file on screen there.
+        assert_eq!(
+            router.document_of("main", &inside),
+            Some(canonical(&inside))
+        );
+        assert_eq!(router.document_of("main", &shown), None);
+        // Showing a file: that file, whatever is asked about.
+        assert_eq!(
+            router.document_of("doc-1", &inside),
+            Some(canonical(&shown))
+        );
+        assert_eq!(router.document_of("doc-2", &inside), None);
     }
 
     #[test]

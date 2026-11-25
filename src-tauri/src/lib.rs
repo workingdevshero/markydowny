@@ -9,8 +9,8 @@
 //! * reading files and folders by path, so relative images resolve;
 //! * scoped access to local images through Tauri's asset protocol;
 //! * live reload: each window watches the document it shows (`watch.rs`);
-//! * saving an edited document, checked and atomic, and saving a new one with the Save panel
-//!   (`save.rs`);
+//! * saving an edited document, checked and atomic, and saving a new one, or one under another
+//!   name (Save As), with the Save panel (`save.rs`);
 //! * inserting an image picked from disk, copied next to the document if asked (`images.rs`);
 //! * File > Open Recent, kept across launches (`recent.rs`);
 //! * unsaved work kept across quits and crashes, and reopened at the next launch (`backups.rs`);
@@ -54,6 +54,9 @@ const NEW_DOCUMENT_MENU_ID: &str = "new-document";
 /// The name a new document's Save panel suggests.
 const UNTITLED_FILE_NAME: &str = "Untitled.md";
 const NEW_TAB_MENU_ID: &str = "new-tab";
+/// File > Save As… (⇧⌘S), handled by the front window's page (`SAVE_AS_EVENT`).
+const SAVE_AS_MENU_ID: &str = "save-as";
+const SAVE_AS_EVENT: &str = "save-as";
 /// Open Recent entries are this prefix followed by the entry's index in the list.
 const RECENT_MENU_PREFIX: &str = "open-recent:";
 const CLEAR_RECENT_MENU_ID: &str = "clear-recent";
@@ -440,23 +443,40 @@ fn write_document(
     )
 }
 
-/// The first save of a new, untitled document: shows the Save panel (markdown files,
-/// `Untitled.md`, starting in the folder of the last opened file) and writes the document where
-/// it says. From then on the calling window shows that file, which goes on File > Open Recent.
-/// Returns the saved document (its path canonical), or `None` when the panel was cancelled.
+/// Save As (File > Save As…), and a new, untitled document's first save: shows the Save panel
+/// (markdown files, named like the calling window's document, starting in its folder; for an
+/// untitled one, `Untitled.md` in the folder of the last opened file) and saves `content` where
+/// it says. The file the window showed (`path`; `None` while untitled) is never written, unless
+/// it's the one picked: then it's an ordinary save, refused unless the file still holds `base`.
+/// From then on the window shows the saved file, which goes on File > Open Recent. A file
+/// another window shows (or is opening, or follows the folder of) is refused, as opening it
+/// would bring that window forward rather than show it twice: the reader is told (in a native
+/// dialog), and nothing is written. Returns the saved document (its path canonical), or `None`
+/// when nothing was saved (the panel was cancelled, or the file was refused). See `save::save_as`.
 #[tauri::command(async)]
-fn save_new_document(
+fn save_document_as(
     app: AppHandle,
     window: WebviewWindow,
     state: State<'_, AppState>,
+    path: Option<String>,
+    base: String,
     content: String,
 ) -> Result<Option<Document>, save::SaveError> {
+    let file = path.filter(|p| !p.is_empty()).map(PathBuf::from);
+    let label = window.label();
+    // Only a document with a file can be the file picked: an untitled one may be in a window
+    // that showed a file before. A followed folder's file on screen is the window's document too.
+    let showing = file
+        .as_deref()
+        .and_then(|file| state.router.lock().unwrap().document_of(label, file));
+    let (name, start) = save::save_panel_start(file.as_deref(), UNTITLED_FILE_NAME, || {
+        state.recent.lock().unwrap().last_folder()
+    });
     let mut dialog = app
         .dialog()
         .file()
         .add_filter("Markdown", docs::MARKDOWN_EXTENSIONS)
-        .set_file_name(UNTITLED_FILE_NAME);
-    let start = state.recent.lock().unwrap().last_folder();
+        .set_file_name(name);
     if let Some(dir) = start {
         dialog = dialog.set_directory(dir);
     }
@@ -468,13 +488,40 @@ fn save_new_document(
     })?;
     // The panel asked about replacing the name it showed, not one with ".md" added after it.
     let (path, added) = save::markdown_save_path(&picked);
-    save::save_new(&path, &content, !added)?;
-    let path = dunce::canonicalize(&path).unwrap_or(path);
-    state
+    if state
         .router
         .lock()
         .unwrap()
-        .set_showing(window.label(), Some(&path));
+        .shown_elsewhere(label, &path)
+        .is_some()
+    {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        // Said here, in a native dialog, rather than left to the page: the webview's alert()
+        // doesn't come up on Linux. Nothing was saved, as when the panel is cancelled.
+        app.dialog()
+            .message(format!(
+                "{name} is open in another window (or in a folder it's watching). Save under \
+                 another name, or close it there first."
+            ))
+            .title("Can't save here")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::Ok)
+            .blocking_show();
+        return Ok(None);
+    }
+    save::save_as(
+        showing.as_deref(),
+        &path,
+        !added,
+        &base,
+        &content,
+        read_text,
+    )?;
+    let path = dunce::canonicalize(&path).unwrap_or(path);
+    state.router.lock().unwrap().set_showing(label, Some(&path));
     note_recent(&app, vec![path.clone()]);
     Ok(Some(document_for(&path, content)))
 }
@@ -1281,7 +1328,8 @@ fn open_recent(app: &AppHandle, index: usize) {
         .show(|_| {});
 }
 
-/// The default macOS menu, plus File > New (⌘N), New Tab (⌘T), Open… (⌘O) and Open Recent. The
+/// The default macOS menu, plus File > New (⌘N), New Tab (⌘T), Open… (⌘O), Open Recent and Save
+/// As… (⇧⌘S). The
 /// Window menu's tab items are added natively, by `tabs::native`. Windows' default menu has a
 /// File menu too, where New Tab opens a window of its own.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -1296,6 +1344,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
     let recent = Submenu::new(app, "Open Recent", true)?;
+    let save_as = MenuItemBuilder::with_id(SAVE_AS_MENU_ID, "Save As…")
+        .accelerator("CmdOrCtrl+Shift+S")
+        .build(app)?;
     let quit = MenuItemBuilder::with_id(QUIT_MENU_ID, format!("Quit {}", app.package_info().name))
         .accelerator("CmdOrCtrl+Q")
         .build(app)?;
@@ -1324,13 +1375,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 submenu.insert(&open, 2)?;
                 submenu.insert(&recent, 3)?;
                 submenu.insert(&PredefinedMenuItem::separator(app)?, 4)?;
+                submenu.insert(&save_as, 5)?;
+                submenu.insert(&PredefinedMenuItem::separator(app)?, 6)?;
                 has_file_menu = true;
                 break;
             }
         }
     }
     // Tauri's default menu has no File menu on Linux, so New (Ctrl+N), Open… (Ctrl+O), Open
-    // Recent and Quit (Ctrl+Q) get one of their own there. No New Tab: tabs are native macOS tabs.
+    // Recent, Save As… (Ctrl+Shift+S) and Quit (Ctrl+Q) get one of their own there. No New Tab: tabs are native macOS tabs.
     if !has_file_menu {
         let file = Submenu::with_items(
             app,
@@ -1340,6 +1393,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 &new_document,
                 &open,
                 &recent,
+                &PredefinedMenuItem::separator(app)?,
+                &save_as,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::close_window(app, None)?,
                 &quit,
@@ -1392,7 +1447,7 @@ pub fn run() {
             watch_document,
             watch_folder,
             write_document,
-            save_new_document,
+            save_document_as,
             confirm_discard,
             write_backup,
             remove_backup,
@@ -1416,6 +1471,10 @@ pub fn run() {
                     open_with_dialog(app, preferred);
                 } else if id == NEW_DOCUMENT_MENU_ID {
                     new_document(app);
+                } else if id == SAVE_AS_MENU_ID {
+                    if let Some(label) = front_window(app) {
+                        let _ = app.emit_to(label.as_str(), SAVE_AS_EVENT, ());
+                    }
                 } else if id == QUIT_MENU_ID {
                     quit(app);
                 } else if id == NEW_TAB_MENU_ID {

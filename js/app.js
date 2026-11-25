@@ -46,6 +46,7 @@
     const editButton = $('editButton');
     const editLabel = $('editLabel');
     const saveButton = $('saveButton');
+    const saveAsButton = $('saveAsButton');
     const revertButton = $('revertButton');
     const editorHost = $('editorHost');
     const editBanner = $('editBanner');
@@ -140,6 +141,13 @@
     // While editing: { view, cm, separator, state (core.editReducer), saving (the save being
     // written, a promise, or null), words ({ doc, total }: the last document counted) }.
     let editing = null;
+    // While Save As is writing (saveDocumentAs), the promise of it: one at a time.
+    let savingAs = null;
+    // Live reload's changes (and reports of a file gone) that came in while Save As was writing,
+    // applied in order once it's done (by then they may be about a file the document no longer
+    // is, which ignores them): until then the document stays the one Save As started from, and
+    // what it saves is what was on screen.
+    const heldChanges = [];
     let wordCountTimer = null;
     let codeMirrorLoad = null;
     let toolbarReady = false;
@@ -239,6 +247,7 @@
     fullscreenButton.addEventListener('click', toggleFullscreen);
     editButton.addEventListener('click', toggleEditing);
     saveButton.addEventListener('click', saveDocument);
+    saveAsButton.addEventListener('click', saveDocumentAs);
     revertButton.addEventListener('click', () => dispatchEdit({ type: 'revert' }));
     bannerReload.addEventListener('click', () => dispatchEdit({ type: 'reload' }));
     bannerKeep.addEventListener('click', () => dispatchEdit({ type: 'keepMine', text: editorText() }));
@@ -412,6 +421,9 @@
         // Live reload: the window's watch reports changes to the document it shows.
         await tauri.event.listen('document-changed', (event) => onDocumentChanged(event.payload));
         await tauri.event.listen('document-missing', (event) => onDocumentMissing(event.payload));
+
+        // File > Save As… (⇧⌘S). The page's own shortcut may have started it already.
+        await tauri.event.listen('save-as', () => saveDocumentAs());
 
         // Quitting: unsaved work goes to its backup first, without asking. It's back next launch.
         await tauri.event.listen('flush-backups', async () => {
@@ -589,6 +601,10 @@
      * it (highlighting its edit against the content it had before). Resolves once it's shown.
      */
     async function onDocumentChanged(doc) {
+        if (savingAs) {
+            heldChanges.push(() => onDocumentChanged(doc));
+            return;
+        }
         if (!currentSource || currentSource.kind !== 'desktop') return;
         if (doc.path !== currentSource.path) {
             if (isFollowingFolder() && isInFolder(doc.path)) {
@@ -613,6 +629,12 @@
     }
 
     function onDocumentMissing(payload) {
+        // Held with the changes, in the order they came: a change replayed after it would
+        // hide the notice for a file that's gone.
+        if (savingAs) {
+            heldChanges.push(() => onDocumentMissing(payload));
+            return;
+        }
         if (isShowingPath(payload.path)) showMissingNotice();
     }
 
@@ -908,6 +930,19 @@
     function startWebWatch(handle, file, observe) {
         const watched = { handle, poller: null, observer: null };
         const isCurrent = () => webWatched === watched && currentSource && currentSource.kind === 'file';
+        const applyChange = (text) => {
+            if (!isCurrent()) return;
+            if (savingAs) {
+                heldChanges.push(() => applyChange(text));
+                return;
+            }
+            if (editing) {
+                dispatchEdit({ type: 'disk', content: text, text: editorText() });
+                return;
+            }
+            if (text === currentSource.markdown) return;
+            renderMarkdown(text, { ...currentSource }, { reload: true });
+        };
         watched.poller = core.createFilePoller({
             getFile: () => handle.getFile(),
             observe,
@@ -920,13 +955,7 @@
                 } catch (_) {
                     return;
                 }
-                if (!isCurrent()) return;
-                if (editing) {
-                    dispatchEdit({ type: 'disk', content: text, text: editorText() });
-                    return;
-                }
-                if (text === currentSource.markdown) return;
-                renderMarkdown(text, { ...currentSource }, { reload: true });
+                applyChange(text);
             },
             onUnavailable: () => {
                 if (isCurrent()) showMissingNotice();
@@ -1566,7 +1595,8 @@
 
     /**
      * ⌘E / Ctrl+E toggles editing; ⌘S / Ctrl+S saves and ⌘F / Ctrl+F opens find and replace
-     * while editing. While viewing, ⌘F is left to the browser's own find.
+     * while editing; ⇧⌘S / Ctrl+Shift+S is Save As, while viewing too. While viewing, ⌘F is
+     * left to the browser's own find.
      */
     function onEditShortcut(e) {
         const action = core.editorShortcut(e, IS_MAC);
@@ -1596,6 +1626,9 @@
             if (!editing) return;
             e.preventDefault();
             editing.cm.openSearchPanel(editing.view);
+        } else if (action === 'saveAs') {
+            e.preventDefault();
+            saveDocumentAs();
         } else if (editing) {
             e.preventDefault();
             saveDocument();
@@ -2116,7 +2149,7 @@
         try {
             const mode = saveMode();
             if (mode === 'saveAs') {
-                await saveNewDocument(session, source, content);
+                await saveToFile(session, source, content, base);
                 return;
             }
             if (isDesktop) {
@@ -2160,24 +2193,99 @@
     }
 
     /**
-     * The first save of an untitled document: the Save panel (desktop) or showSaveFilePicker
-     * (web) says where, and from then on it's that file: titled by it, saved in place and live
-     * reloaded. Cancelling the panel leaves it untitled and unsaved. Errors are writeSession's.
+     * Save As (⇧⌘S / Ctrl+Shift+S, File > Save As…, the Save As button): saves the document as a
+     * file the reader picks, which it is from then on (saveToFile). Works while viewing too, with
+     * the text on screen, and with or without unsaved changes. Not while a save is being written,
+     * or while the "changed on disk" banner waits for an answer (as Save).
      */
-    async function saveNewDocument(session, source, content) {
+    async function saveDocumentAs() {
+        const session = editing;
+        const source = currentSource;
+        if (!source || savingAs) return;
+        if (session ? session.saving || session.state.conflict !== null : typeof source.markdown !== 'string') return;
+        const writing = writeAs(session, source);
+        savingAs = writing;
+        if (session) session.saving = writing;
+        renderEditControls();
+        try {
+            await writing;
+        } finally {
+            savingAs = null;
+            if (session) session.saving = null;
+            renderEditControls();
+        }
+        for (const apply of heldChanges.splice(0)) await apply();
+    }
+
+    /** Writes the document for Save As (saveDocumentAs). Never rejects: failures are reported here. */
+    async function writeAs(session, source) {
+        const content = session ? editorText() : source.markdown;
+        const base = session ? session.state.base : source.markdown;
+        try {
+            const mode = core.saveAsAction({ isDesktop, savePicker: typeof window.showSaveFilePicker === 'function' });
+            if (mode === 'saveAs') {
+                await saveToFile(session, source, content, base);
+                return;
+            }
+            downloadText(content, core.saveAsName(source));
+            if (session && editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
+        } catch (err) {
+            if (err && err.kind === 'conflict') {
+                if (session) {
+                    if (editing === session) dispatchEdit({ type: 'saveConflict', content: err.content, text: editorText() });
+                    return;
+                }
+                // Viewing, and the file picked was this one, which changed while the panel was up:
+                // nothing was written. Show it as it is now.
+                if (currentSource === source && err.content !== source.markdown) {
+                    await renderMarkdown(err.content, { ...source, unhighlighted: false }, { reload: true });
+                }
+                alert(`${core.saveAsName(source)} changed on disk while you were saving, so it wasn't saved over. It now shows what the file holds.`);
+                return;
+            }
+            if (err && err.name === 'AbortError') return; // the picker was cancelled
+            console.error('Save failed:', err);
+            alert(`Could not save: ${err && err.message ? err.message : err}`);
+        }
+    }
+
+    /**
+     * Saves `content` as a file the reader picks: the Save panel (desktop) or showSaveFilePicker
+     * (web), suggesting the document's own name (Untitled.md while untitled) and, in the app,
+     * its folder. Save As, and an untitled document's first save. From then on it's that file:
+     * titled by it, saved in place and live reloaded, and the file it came from is left as it
+     * was. Picking the file it already is saves it in place, checked as Save is. Cancelling the
+     * panel changes nothing. `session` is the editor (null while viewing), `base` the text its
+     * changes are against. Errors are the caller's.
+     */
+    async function saveToFile(session, source, content, base) {
         if (isDesktop) {
-            const doc = await invoke('save_new_document', { content });
+            const path = source.kind === 'desktop' ? source.path : null;
+            const doc = await invoke('save_document_as', { path, base, content });
             if (!doc) return;
+            // Saved as a document of its own, not one of a folder's (the app has it so already).
+            let rewatch = doc.path !== source.path;
+            if (desktopFolder && currentSource === source) {
+                desktopFolder = null;
+                renderWatchFolderButton();
+                rewatch = true;
+            }
             Object.assign(source, { kind: 'desktop', dir: doc.dir, title: doc.name, path: doc.path });
             savedAs(session, source, content);
-            if (currentSource !== source) return;
+            if (currentSource !== source || !rewatch) return;
             setLive(true);
+            // Watches the new file instead of the old one (or the folder).
             await watchDesktopDocument(doc.path);
             return;
         }
         // Called before anything is awaited, while the key press or click still counts as the
         // reader's. The browser asks before replacing an existing file.
-        const handle = await window.showSaveFilePicker({ suggestedName: core.UNTITLED_FILE_NAME, types: SAVE_TYPES });
+        const handle = await window.showSaveFilePicker({ suggestedName: core.saveAsName(source), types: SAVE_TYPES });
+        if (source.handle && await source.handle.isSameEntry(handle)) {
+            // The file it already is: an ordinary save (nothing to write while viewing).
+            if (session) await writeSession(session, source);
+            return;
+        }
         const writable = await handle.createWritable();
         try {
             await writable.write(content);
@@ -2189,12 +2297,20 @@
         Object.assign(source, { kind: 'file', dir: '', title: handle.name, handle });
         savedAs(session, source, content);
         if (currentSource !== source) return;
+        // Watches the new file instead of the old one.
+        stopWebWatch();
         startWebWatch(handle, await handle.getFile(), webWatch.observer);
     }
 
-    /** An untitled document was saved as `source`'s file. */
+    /**
+     * The document was saved as `source`'s file (saveToFile). Its backup, if anything is still
+     * unsaved (typed while the panel was up), now names that file.
+     */
     function savedAs(session, source, content) {
-        if (editing === session) dispatchEdit({ type: 'saved', content, text: editorText() });
+        if (session && editing === session) {
+            dispatchEdit({ type: 'saved', content, text: editorText() });
+            if (session.state.dirty) writeBackup(session);
+        }
         if (currentSource === source) {
             showTitle(source.title);
             // Reopened unsaved work whose file had gone: it has one again.
@@ -2224,6 +2340,7 @@
             ? `Back to the rendered view (${IS_MAC ? '⌘E' : 'Ctrl+E'})`
             : `Edit the markdown (${IS_MAC ? '⌘E' : 'Ctrl+E'})`;
         saveButton.hidden = !on;
+        saveAsButton.hidden = !on;
         revertButton.hidden = !on;
         renderModeSwitch();
         editBanner.hidden = !(on && editing.state.conflict !== null);
@@ -2234,6 +2351,11 @@
                 ? 'This browser can\'t save in place: download a copy'
                 : `Save (${IS_MAC ? '⌘S' : 'Ctrl+S'})`;
             saveButton.disabled = !dirty || Boolean(editing.saving) || editing.state.conflict !== null;
+            // Save As saves even with nothing unsaved: a copy under another name.
+            saveAsButton.title = core.saveAsAction({ isDesktop, savePicker: typeof window.showSaveFilePicker === 'function' }) === 'download'
+                ? 'This browser can\'t ask where to save: download a copy'
+                : `Save under another name (${IS_MAC ? '⇧⌘S' : 'Ctrl+Shift+S'})`;
+            saveAsButton.disabled = Boolean(editing.saving) || editing.state.conflict !== null;
             // Dropping the changes waits for the save being written, which would write them.
             revertButton.disabled = Boolean(editing.saving) || (!dirty && editing.state.conflict === null);
             bannerReload.disabled = Boolean(editing.saving);

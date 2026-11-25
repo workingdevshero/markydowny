@@ -13,6 +13,9 @@
 //! * A new document's first save (`save_new`) writes where the Save panel said. It replaces a
 //!   file only when the panel asked about replacing that file; otherwise it creates the file,
 //!   and refuses if one is there.
+//! * Save As (`save_as`) writes where the Save panel said, as a new document's first save does,
+//!   and never touches the file the window showed, unless the panel picked that very file: then
+//!   it's an ordinary save, checked like any other.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -81,6 +84,25 @@ pub fn markdown_save_path(picked: &Path) -> (PathBuf, bool) {
     (picked.with_file_name(name), true)
 }
 
+/// What the Save panel suggests for a document with the file `file` (`None` while untitled): the
+/// file's name and its folder, or `untitled` and `last_folder` (the folder of the last opened
+/// file, asked only when it's needed).
+pub fn save_panel_start(
+    file: Option<&Path>,
+    untitled: &str,
+    last_folder: impl FnOnce() -> Option<PathBuf>,
+) -> (String, Option<PathBuf>) {
+    let name = file
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| untitled.to_string());
+    let folder = match file.and_then(Path::parent) {
+        Some(dir) if !dir.as_os_str().is_empty() => Some(dir.to_path_buf()),
+        _ => last_folder(),
+    };
+    (name, folder)
+}
+
 /// Saves a new document as `path`. An existing file there is replaced only when `replace` (the
 /// Save panel asked about replacing that very file); otherwise the file is created, and the
 /// save is refused if something is already there.
@@ -115,6 +137,28 @@ pub fn save_new(path: &Path, content: &str, replace: bool) -> Result<(), SaveErr
         return Err(failed(e));
     }
     Ok(())
+}
+
+/// Save As: saves `content` as `path`, picked in the Save panel (`replace`: the panel asked
+/// about replacing that very file). When `path` is `showing` (the document the calling window
+/// shows), that's an ordinary save, refused unless the file still holds `base`; otherwise it's
+/// like a new document's first save (`save_new`), and `showing` is left as it is.
+pub fn save_as<R>(
+    showing: Option<&Path>,
+    path: &Path,
+    replace: bool,
+    base: &str,
+    content: &str,
+    read: R,
+) -> Result<(), SaveError>
+where
+    R: Fn(&Path) -> Result<String, String>,
+{
+    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if showing.is_some_and(|shown| canonical(shown) == canonical(path)) {
+        return save_document(showing, path, base, content, read);
+    }
+    save_new(path, content, replace)
 }
 
 /// Replaces the file at `path` with `content` through a temporary file in the same folder,
@@ -362,6 +406,147 @@ mod tests {
             "{result:?}"
         );
         assert!(folder.is_dir());
+    }
+
+    #[test]
+    fn save_as_writes_the_new_file_and_leaves_the_original_byte_for_byte() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        fs::write(&a, b"# A\r\n\r\nOriginal\r\n").unwrap();
+
+        save_as(
+            Some(&a),
+            &b,
+            false,
+            "# A\r\n\r\nOriginal\r\n",
+            "# A\r\n\r\nEdited\r\n",
+            read,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&b).unwrap(), b"# A\r\n\r\nEdited\r\n");
+        assert_eq!(fs::read(&a).unwrap(), b"# A\r\n\r\nOriginal\r\n");
+        assert_eq!(entries(tmp.path()), vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn save_as_ignores_a_stale_base_for_another_file() {
+        // The original changed on disk since the editor read it: that's the original's business,
+        // not the new file's.
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        fs::write(&a, "changed elsewhere").unwrap();
+
+        save_as(Some(&a), &b, false, "what the editor read", "mine", read).unwrap();
+
+        assert_eq!(fs::read_to_string(&b).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(&a).unwrap(), "changed elsewhere");
+    }
+
+    #[test]
+    fn save_as_replaces_another_file_only_when_the_panel_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        let b = tmp.path().join("b.md");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "old b").unwrap();
+
+        let result = save_as(Some(&a), &b, false, "a", "new", read);
+        assert!(
+            matches!(result, Err(SaveError::Refused { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&b).unwrap(), "old b");
+
+        save_as(Some(&a), &b, true, "a", "new", read).unwrap();
+        assert_eq!(fs::read_to_string(&b).unwrap(), "new");
+        assert_eq!(fs::read_to_string(&a).unwrap(), "a");
+        assert_eq!(entries(tmp.path()), vec!["a.md", "b.md"]);
+    }
+
+    #[test]
+    fn save_as_the_file_already_shown_is_an_ordinary_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.md");
+        fs::write(&a, "a").unwrap();
+
+        save_as(Some(&a), &a, true, "a", "edited", read).unwrap();
+        assert_eq!(fs::read_to_string(&a).unwrap(), "edited");
+
+        // Checked like any save: a change made elsewhere isn't overwritten, even though the
+        // panel asked about replacing the file.
+        fs::write(&a, "changed elsewhere").unwrap();
+        let result = save_as(Some(&a), &a, true, "edited", "mine", read);
+        assert_eq!(
+            result,
+            Err(SaveError::Conflict {
+                content: "changed elsewhere".into()
+            })
+        );
+        assert_eq!(fs::read_to_string(&a).unwrap(), "changed elsewhere");
+        assert_eq!(entries(tmp.path()), vec!["a.md"]);
+    }
+
+    #[test]
+    fn save_as_another_name_for_the_shown_file_is_that_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("notes.md");
+        fs::write(&file, "a").unwrap();
+        let link = tmp.path().join("link.md");
+        crate::test_support::symlink(&file, &link);
+
+        // Picking the link is picking the document: checked, and the link is kept.
+        let result = save_as(Some(&file), &link, true, "stale", "b", read);
+        assert!(
+            matches!(result, Err(SaveError::Conflict { .. })),
+            "{result:?}"
+        );
+        save_as(Some(&file), &link, true, "a", "b", read).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "b");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn save_as_from_an_untitled_document_is_its_first_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("Untitled.md");
+
+        save_as(None, &file, false, "", "# New\n", read).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "# New\n");
+
+        // Like save_new, an existing file needs the panel's say-so.
+        let result = save_as(None, &file, false, "", "again", read);
+        assert!(
+            matches!(result, Err(SaveError::Refused { .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "# New\n");
+    }
+
+    #[test]
+    fn the_save_panel_suggests_the_documents_name_in_its_folder() {
+        let docs = Path::new("docs");
+        let last = || Some(PathBuf::from("recent"));
+        assert_eq!(
+            save_panel_start(Some(&docs.join("a.md")), "Untitled.md", || {
+                panic!("the document's own folder is used")
+            }),
+            ("a.md".to_string(), Some(docs.to_path_buf()))
+        );
+        // Untitled: Untitled.md, in the folder of the last opened file (if there is one).
+        assert_eq!(
+            save_panel_start(None, "Untitled.md", last),
+            ("Untitled.md".to_string(), Some(PathBuf::from("recent")))
+        );
+        assert_eq!(
+            save_panel_start(None, "Untitled.md", || None),
+            ("Untitled.md".to_string(), None)
+        );
     }
 
     #[test]

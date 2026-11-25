@@ -496,8 +496,8 @@
     // ------------------------------------------------------------------
 
     /**
-     * 'toggle' for ⌘E (Ctrl+E elsewhere), 'save' for ⌘S (Ctrl+S), 'mode' for ⌘/ (Ctrl+/),
-     * otherwise null. On a Mac Ctrl+E is left alone: it moves to the end of the line in text
+     * 'toggle' for ⌘E (Ctrl+E elsewhere), 'save' for ⌘S (Ctrl+S), 'saveAs' for ⇧⌘S
+     * (Ctrl+Shift+S), 'mode' for ⌘/ (Ctrl+/), otherwise null. On a Mac Ctrl+E is left alone: it moves to the end of the line in text
      * fields and the editor. '/' is a shifted key on some layouts, so Shift doesn't matter there.
      */
     function editorShortcut(event, isMac) {
@@ -506,7 +506,7 @@
         if (!modifier) return null;
         const key = String(event.key).toLowerCase();
         if (key === '/') return 'mode';
-        if (event.shiftKey) return null;
+        if (event.shiftKey) return key === 's' ? 'saveAs' : null;
         if (key === 'e') return 'toggle';
         if (key === 's') return 'save';
         if (key === 'f') return 'find';
@@ -779,10 +779,27 @@
      * env: { isDesktop, savePicker } (whether the browser has showSaveFilePicker).
      */
     function saveAction(source, env) {
-        if (source && source.kind === 'untitled') return env.isDesktop || env.savePicker ? 'saveAs' : 'download';
+        if (source && source.kind === 'untitled') return saveAsAction(env);
         if (env.isDesktop) return 'save';
         const handle = source && source.handle;
         return handle && typeof handle.createWritable === 'function' ? 'save' : 'download';
+    }
+
+    /**
+     * How Save As saves: 'saveAs' asks where (the desktop app's Save panel, or the browser's
+     * showSaveFilePicker), 'download' downloads a copy under the document's name (saveAsName).
+     * env: as saveAction's.
+     */
+    function saveAsAction(env) {
+        return env.isDesktop || env.savePicker ? 'saveAs' : 'download';
+    }
+
+    /** The name Save As suggests for `source`: its file's name, or Untitled.md while untitled. */
+    function saveAsName(source) {
+        if (!source || source.kind === 'untitled') return UNTITLED_FILE_NAME;
+        if (source.path) return basename(source.path);
+        if (source.handle && source.handle.name) return source.handle.name;
+        return source.title || UNTITLED_FILE_NAME;
     }
 
     // ------------------------------------------------------------------
@@ -957,6 +974,8 @@
         UNTITLED_TITLE,
         UNTITLED_FILE_NAME,
         saveAction,
+        saveAsAction,
+        saveAsName,
         BACKUP_DELAY_MS,
         fingerprint,
         backupStatus,

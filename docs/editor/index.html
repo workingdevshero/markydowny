@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- Generated from docs/editor.md by scripts/build-docs.mjs. Edit the markdown, then run npm run docs. -->
     <title>Editor · Markydowny docs</title>
-    <meta name="description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
+    <meta name="description" content="Edit the markdown source in Markydowny, save it in place with ⌘S or as a new file with Save As, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
     <link rel="canonical" href="https://markydowny.com/docs/editor/">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://markydowny.com/docs/editor/">
     <meta property="og:title" content="Editor · Markydowny docs">
-    <meta property="og:description" content="Edit the markdown source in Markydowny, save it in place with ⌘S, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
+    <meta property="og:description" content="Edit the markdown source in Markydowny, save it in place with ⌘S or as a new file with Save As, revert, handle changes made on disk while you edit, and get unsaved work back after a quit or crash.">
     <meta property="og:image" content="https://markydowny.com/og-image.png">
     <meta property="og:site_name" content="Markydowny">
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -100,6 +100,31 @@
 </tr>
 </tbody></table>
 <p>When saving in place isn&#39;t possible the button reads <strong>Download</strong> instead of <strong>Save</strong>, so you know before you click.</p>
+<h2 id="save-as"><a class="heading-anchor" href="#save-as" aria-label="Link to this section">#</a>Save As</h2>
+<p>To keep the original and put your edits in a new file, or to copy a document somewhere else, use <strong>Save As</strong>: press <kbd>⇧⌘S</kbd> (<kbd>Ctrl+Shift+S</kbd>), choose <strong>File &gt; Save As…</strong> in the app, or click <strong>Save As…</strong> next to <strong>Save</strong> while editing. It works with or without unsaved changes, and while you&#39;re reading too.</p>
+<table>
+<thead>
+<tr>
+<th>Where</th>
+<th>Save As</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>The app</td>
+<td>The Save panel, named after the document (<code>Untitled.md</code> for an untitled one), in the document&#39;s folder</td>
+</tr>
+<tr>
+<td>Chrome, Edge and other Chromium browsers</td>
+<td>The browser&#39;s Save dialog, named after the document</td>
+</tr>
+<tr>
+<td>Safari and Firefox</td>
+<td>Downloads a copy under the document&#39;s name, usually to your Downloads folder</td>
+</tr>
+</tbody></table>
+<p>From then on the window shows the new file: the title takes its name, later saves write it, and live reload follows it instead of the original. In the app it&#39;s also added to <strong>File &gt; Open Recent</strong>. The original file is never written: your unsaved edits go only to the new file. Cancel and nothing changes, unsaved edits and undo history included.</p>
+<p>Picking the file the document already is works like <strong>Save</strong>. In the app, picking a file that&#39;s open in another window or tab, or in a folder another window is watching, is refused, and nothing is written: save under another name, or close it there first. For an untitled document, Save As is the same as its first save.</p>
+<p>The <strong>Save As…</strong> button isn&#39;t shown on narrow windows; the shortcut still works.</p>
 <h2 id="only-your-edits-change"><a class="heading-anchor" href="#only-your-edits-change" aria-label="Link to this section">#</a>Only your edits change</h2>
 <p>Saving changes only the text you edited. Everything else in the file, down to the byte, stays as it was:</p>
 <ul>
@@ -118,7 +143,7 @@
 <h2 id="unsaved-changes"><a class="heading-anchor" href="#unsaved-changes" aria-label="Link to this section">#</a>Unsaved changes</h2>
 <p>While you have unsaved changes, the document&#39;s title starts with a dot (•). Markydowny asks before anything would throw them away: <strong>Done</strong>, <strong>Open another</strong>, dropping another file, or closing the window or tab. Quitting the app doesn&#39;t ask, because your changes are kept for next time.</p>
 <h2 id="unsaved-work-is-kept"><a class="heading-anchor" href="#unsaved-work-is-kept" aria-label="Link to this section">#</a>Unsaved work is kept</h2>
-<p>You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only <strong>Save</strong> (<kbd>⌘S</kbd>) ever writes to your files: the backup is a copy on the side, never the file itself.</p>
+<p>You never lose unsaved work. About a second after each change, Markydowny keeps a backup of every document with unsaved changes, untitled ones included, in its own storage. Only <strong>Save</strong> (<kbd>⌘S</kbd>) and <strong>Save As</strong> ever write to your files: the backup is a copy on the side, never the file itself. After <strong>Save As</strong>, the backup of anything still unsaved belongs to the new file.</p>
 <table>
 <thead>
 <tr>

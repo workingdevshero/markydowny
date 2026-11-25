@@ -1236,9 +1236,10 @@
 
         /* ---------- Editing ---------- */
 
-        /* Shown by app.js while a document is open; Save and Revert only while editing. */
+        /* Shown by app.js while a document is open; Save, Save As and Revert only while editing. */
         .edit-button[hidden],
         .save-button[hidden],
+        .save-as-button[hidden],
         .revert-button[hidden] {
             display: none;
         }
@@ -2110,6 +2111,11 @@
                 display: none !important;
             }
 
+            /* No room for Save As here; its shortcut still works in a narrow window. */
+            .save-as-button {
+                display: none !important;
+            }
+
             /* Only the current view shows; pressing it switches to the other. Split isn't
                offered: there's no room for two panes. */
             .mode-option[aria-checked="false"],
@@ -2311,6 +2317,7 @@
                     <span class="back-button-label">Open another</span>
                 </button>
                 <button class="btn btn-ghost revert-button" id="revertButton" type="button" title="Discard unsaved changes" hidden>Revert</button>
+                <button class="btn btn-ghost save-as-button" id="saveAsButton" type="button" hidden>Save As…</button>
                 <button class="btn btn-primary save-button" id="saveButton" type="button" hidden>Save</button>
                 <div class="mode-switch" id="modeSwitch" role="radiogroup" aria-label="Editor view" hidden>
                     <button class="mode-option" type="button" role="radio" aria-checked="true" data-mode="rich">Rich</button>

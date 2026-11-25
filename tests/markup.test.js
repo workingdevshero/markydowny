@@ -6,6 +6,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8');
+const fn = (name) => app.match(new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?\\n {4}}\\n`))[0];
 
 test('every element app.js looks up by id exists in index.html', () => {
     const ids = [...app.matchAll(/\$\('([^']+)'\)/g)].map(m => m[1]);
@@ -112,11 +113,11 @@ test('the pencil button sits in the top bar next to fullscreen, with Save and Re
     // Right before the fullscreen toggle.
     const after = topbar.slice(topbar.indexOf(button[0]) + button[0].length);
     assert.match(after, /^\s*<button[^>]*id="fullscreenButton"/);
-    for (const id of ['saveButton', 'revertButton']) {
+    for (const id of ['saveButton', 'saveAsButton', 'revertButton']) {
         assert.match(topbar, new RegExp(`<button[^>]*id="${id}"[^>]*\\shidden[\\s>]`), `${id} starts hidden`);
     }
     // .btn sets display, so hiding needs its own rules.
-    assert.match(html, /\.edit-button\[hidden\],\s*\.save-button\[hidden\],\s*\.revert-button\[hidden\]\s*\{\s*display:\s*none/);
+    assert.match(html, /\.edit-button\[hidden\],\s*\.save-button\[hidden\],\s*\.save-as-button\[hidden\],\s*\.revert-button\[hidden\]\s*\{\s*display:\s*none/);
 });
 
 test('the editor and the conflict banner sit outside the rendered markdown', () => {
@@ -306,14 +307,15 @@ test('the drop zone offers New file beside Choose File, which starts an untitled
 });
 
 test('a new document\'s first save goes through the Save panel or showSaveFilePicker, then it is that file', () => {
-    const save = app.match(/async function saveNewDocument[\s\S]*?\n {4}}\n/)[0];
-    assert.match(save, /invoke\('save_new_document', \{ content \}\)/);
-    assert.match(save, /window\.showSaveFilePicker\(\{ suggestedName: core\.UNTITLED_FILE_NAME, types: SAVE_TYPES \}\)/);
+    const save = app.match(/async function saveToFile[\s\S]*?\n {4}}\n/)[0];
+    // In the app, an untitled document has no file to name: the panel suggests Untitled.md.
+    assert.match(save, /const path = source\.kind === 'desktop' \? source\.path : null;\s*const doc = await invoke\('save_document_as', \{ path, base, content \}\);/);
+    assert.match(save, /window\.showSaveFilePicker\(\{ suggestedName: core\.saveAsName\(source\), types: SAVE_TYPES \}\)/);
     // Cancelling the panel keeps the document untitled; the picker's cancel is an AbortError,
     // which writeSession ignores.
     assert.match(save, /if \(!doc\) return;/);
     const write = app.match(/async function writeSession[\s\S]*?\n {4}}\n/)[0];
-    assert.match(write, /if \(mode === 'saveAs'\) \{\s*await saveNewDocument\(session, source, content\);/);
+    assert.match(write, /if \(mode === 'saveAs'\) \{\s*await saveToFile\(session, source, content, base\);/);
     assert.match(write, /err\.name === 'AbortError'/);
     // Afterwards it saves in place and live-reloads.
     assert.match(save, /kind: 'desktop', dir: doc\.dir, title: doc\.name, path: doc\.path/);
@@ -321,11 +323,65 @@ test('a new document\'s first save goes through the Save panel or showSaveFilePi
     assert.match(save, /kind: 'file', dir: '', title: handle\.name, handle/);
     assert.match(save, /startWebWatch\(handle, /);
     const lib = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
-    assert.match(lib, /generate_handler!\[[\s\S]*?\bsave_new_document,/);
+    assert.match(lib, /generate_handler!\[[\s\S]*?\bsave_document_as,/);
+    assert.match(lib, /save::save_panel_start\(file\.as_deref\(\), UNTITLED_FILE_NAME, \|\| \{\s*state\.recent\.lock\(\)\.unwrap\(\)\.last_folder\(\)/);
     // The app's File > New, above New Tab.
     assert.match(lib, /MenuItemBuilder::with_id\(NEW_DOCUMENT_MENU_ID, "New"\)\s*\.accelerator\("CmdOrCtrl\+N"\)/);
     assert.match(lib, /submenu\.prepend\(&new_tab\)\?;\s*submenu\.prepend\(&new_document\)\?;/);
     assert.match(lib, /&\[\s*&new_document,\s*&open,/, 'and first in the Linux File menu');
+});
+
+test('Save As saves under another name from the menu, the shortcut and the button, while viewing too', () => {
+    // A button next to Save, shown with it while editing.
+    assert.match(html, /<button class="btn btn-ghost save-as-button" id="saveAsButton" type="button" hidden>Save As…<\/button>\s*<button class="btn btn-primary save-button" id="saveButton"/);
+    assert.match(html, /\.save-as-button\[hidden\]/);
+    assert.match(app, /saveAsButton\.addEventListener\('click', saveDocumentAs\);/);
+    const controls = app.match(/function renderEditControls[\s\S]*?\n {4}}\n/)[0];
+    assert.match(controls, /saveAsButton\.hidden = !on;/);
+    // Enabled with nothing unsaved; not while a save is written or the banner waits.
+    assert.match(controls, /saveAsButton\.disabled = Boolean\(editing\.saving\) \|\| editing\.state\.conflict !== null;/);
+    // ⇧⌘S / Ctrl+Shift+S, whether or not the editor is open.
+    const shortcut = app.match(/function onEditShortcut[\s\S]*?\n {4}}\n/)[0];
+    assert.match(shortcut, /\} else if \(action === 'saveAs'\) \{\s*e\.preventDefault\(\);\s*saveDocumentAs\(\);\s*\} else if \(editing\) \{/);
+    // The app's File > Save As… reaches the front window's page.
+    assert.match(app, /listen\('save-as', \(\) => saveDocumentAs\(\)\)/);
+    const lib = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+    assert.match(lib, /MenuItemBuilder::with_id\(SAVE_AS_MENU_ID, "Save As…"\)\s*\.accelerator\("CmdOrCtrl\+Shift\+S"\)/);
+    assert.match(lib, /submenu\.insert\(&save_as, 5\)\?;/);
+    assert.match(lib, /&recent,\s*&PredefinedMenuItem::separator\(app\)\?,\s*&save_as,/, 'and in the Linux File menu');
+    assert.match(lib, /id == SAVE_AS_MENU_ID \{\s*if let Some\(label\) = front_window\(app\) \{\s*let _ = app\.emit_to\(label\.as_str\(\), SAVE_AS_EVENT, \(\)\);/);
+
+    // One at a time (the menu and the page's shortcut can both fire), and like Save, not while
+    // the banner waits for an answer.
+    const saveAs = app.match(/async function saveDocumentAs[\s\S]*?\n {4}}\n/)[0];
+    assert.match(saveAs, /if \(!source \|\| savingAs\) return;/);
+    assert.match(saveAs, /session\.saving \|\| session\.state\.conflict !== null/);
+    assert.match(saveAs, /if \(session\) session\.saving = writing;/);
+    const writeAs = app.match(/async function writeAs[\s\S]*?\n {4}}\n/)[0];
+    // While viewing, the text on screen; the base is what a same-file save is checked against.
+    assert.match(writeAs, /const content = session \? editorText\(\) : source\.markdown;/);
+    assert.match(writeAs, /const base = session \? session\.state\.base : source\.markdown;/);
+    assert.match(writeAs, /downloadText\(content, core\.saveAsName\(source\)\);/);
+    assert.match(writeAs, /err\.name === 'AbortError'\) return;/);
+
+    const save = app.match(/async function saveToFile[\s\S]*?\n {4}}\n/)[0];
+    // The picker is called before anything is awaited, while the click still counts.
+    assert.match(save, /if \(isDesktop\) \{[\s\S]*?\n {8}\}\n\s*\/\/ Called before anything is awaited[^\n]*\n[^\n]*\n\s*const handle = await window\.showSaveFilePicker\(/);
+    assert.match(fn('saveDocumentAs'), /const writing = writeAs\(session, source\);/);
+    assert.match(fn('writeAs'), /try \{\s*const mode = [^\n]*\n\s*if \(mode === 'saveAs'\) \{\s*await saveToFile\(/);
+    // Picking the file it already is: an ordinary, checked save.
+    assert.match(save, /if \(source\.handle && await source\.handle\.isSameEntry\(handle\)\) \{[\s\S]*?if \(session\) await writeSession\(session, source\);\s*return;/);
+    // The old file's watch stops; the new one's starts.
+    assert.match(save, /stopWebWatch\(\);\s*startWebWatch\(handle, /);
+    assert.ok(save.indexOf("let rewatch = doc.path !== source.path;") > 0);
+    assert.match(save, /if \(currentSource !== source \|\| !rewatch\) return;\s*setLive\(true\);[\s\S]*?await watchDesktopDocument\(doc\.path\);/);
+    // The backup of anything still unsaved names the new file at once.
+    assert.match(app, /dispatchEdit\(\{ type: 'saved', content, text: editorText\(\) \}\);\s*if \(session\.state\.dirty\) writeBackup\(session\);/);
+});
+
+test('the shortcuts page lists Save As', () => {
+    const shortcuts = fs.readFileSync(path.join(root, 'docs', 'shortcuts.md'), 'utf8');
+    assert.match(shortcuts, /\| Save As, to a file you pick \| <kbd>⇧⌘S<\/kbd> \| <kbd>Ctrl\+Shift\+S<\/kbd> \|/);
 });
 
 test('the shortcuts page lists New file', () => {
