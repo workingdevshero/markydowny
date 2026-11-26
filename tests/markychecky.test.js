@@ -15,12 +15,13 @@ const script = path.join(plugin, 'scripts', 'markychecky.py');
 const launcher = path.join(plugin, 'scripts', 'markychecky.sh');
 const startHook = path.join(plugin, 'scripts', 'session-start.sh');
 const hasPython = spawnSync('python3', ['--version']).status === 0;
-const MARKER = 'markychecky-hook-engine-3';
+const MARKER = 'markychecky-hook-engine-4';
 const appBin = process.env.MARKYDOWNY_BIN
     ? path.resolve(process.env.MARKYDOWNY_BIN)
     : path.join(root, 'src-tauri', 'target', 'debug', 'markydowny');
 // A build from before the mode would open its window rather than run the hook, one with engine 1
-// has no notify, respond or waiting, and one with engine 2 doesn't name sessions.
+// has no notify, respond or waiting, one with engine 2 doesn't name sessions, and one with engine 3
+// doesn't note when it last heard from a session.
 const hasApp = fs.existsSync(appBin) && spawnSync('grep', ['-q', '-F', MARKER, appBin]).status === 0;
 if (process.env.MARKYDOWNY_BIN && !hasApp) throw new Error(`MARKYDOWNY_BIN (${appBin}) has no markychecky mode`);
 
@@ -126,6 +127,8 @@ const waitingSection = board => {
 const titled = (kind, name) => `${JSON.stringify(kind === 'custom'
     ? { type: 'custom-title', customTitle: name, sessionId: 'x' }
     : { type: 'ai-title', aiTitle: name, sessionId: 'x' })}\n`;
+/** A time `minutes` ago, as the engines write it. */
+const ago = minutes => new Date(Date.now() - minutes * 60_000).toISOString().replace('Z', '+00:00');
 const installedApp = fs.existsSync('/Applications/Markydowny.app/Contents/MacOS/markydowny');
 
 for (const engine of engines) {
@@ -214,6 +217,94 @@ for (const engine of engines) {
         assert.match(section(board, 'new'), /New work/);
     });
 
+    test(`[${engine.name}] a session that never ends is marked idle once it's gone quiet for idle_hours, then removed`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('gone', 1, 'Watch #88', 'Watching #88'));
+        hook(engine, box, 'task', update('gone', 1, { status: 'in_progress' }));
+        hook(engine, box, 'task', create('recent', 1, 'Recent work', 'Working'));
+        hook(engine, box, 'task', update('recent', 1, { status: 'in_progress' }));
+        assert.match(read(box), /markychecky:start gone seen=\S+ -->/, 'every write notes when it heard from the session');
+        // No SessionEnd: the terminal closed. Last heard from over a day ago (and the ten minutes
+        // respond may lag by), and the other a little under a day ago.
+        fs.writeFileSync(box.board, read(box)
+            .replace(/(start gone )seen=\S+/, `$1seen=${ago(24 * 60 + 11)}`)
+            .replace(/(start recent )seen=\S+/, `$1seen=${ago(23 * 60)}`));
+        hook(engine, box, 'task', create('other', 1, 'Other work'));
+        let board = read(box);
+        assert.match(board, /markychecky:start gone seen=\S+ ended=\S+ -->/);
+        assert.match(section(board, 'gone'), /\*\*Now:\*\* idle, no word from the session since \d\d:\d\d\n\n- \[ \] \*\*Watch/);
+        assert.match(section(board, 'recent'), /\*\*Now:\*\* Working\n/, 'heard from within idle_hours, so not idle');
+        assert.doesNotMatch(board, /markychecky:start recent [^>]*ended=/);
+        // It stays, marked idle, for idle_hours, as a section that did get SessionEnd does.
+        hook(engine, box, 'task', update('other', 1, { status: 'in_progress' }));
+        assert.match(read(box), /markychecky:start gone /);
+        fs.writeFileSync(box.board, read(box).replace(/(start gone seen=\S+ )ended=\S+/, `$1ended=${ago(24 * 60 + 1)}`));
+        hook(engine, box, 'task', update('other', 1, { status: 'completed' }));
+        board = read(box);
+        assert.doesNotMatch(board, /markychecky:start gone /);
+        assert.match(board, /markychecky:start recent /);
+    });
+
+    test(`[${engine.name}] a session that stays active is never swept, however long it runs`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('long', 1, 'Long work', 'Working long'));
+        hook(engine, box, 'task', update('long', 1, { status: 'in_progress' }));
+        const seen = () => read(box).match(/start long seen=(\S+) -->/)[1];
+        // A hook soon after the last one doesn't rewrite the board just to say so.
+        const before = read(box);
+        hook(engine, box, 'respond', { session_id: 'long', hook_event_name: 'PostToolBatch' });
+        hook(engine, box, 'respond', { session_id: 'long', hook_event_name: 'UserPromptSubmit' });
+        assert.equal(read(box), before);
+        // Three days, with a hook a little under a day apart each time, and other sessions sweeping.
+        for (let day = 0; day < 3; day++) {
+            fs.writeFileSync(box.board, read(box).replace(/(start long )seen=\S+/, `$1seen=${ago(24 * 60 - 1)}`));
+            hook(engine, box, 'respond', { session_id: 'long', hook_event_name: 'PostToolBatch' });
+            assert.ok(Date.now() - Date.parse(seen()) < 60_000, 'the hook noted it heard from the session');
+            hook(engine, box, 'task', create(`other${day}`, 1, 'Other work'));
+            fs.writeFileSync(box.board, read(box).replace(/(start long )seen=\S+/, `$1seen=${ago(24 * 60 + 9)}`));
+            hook(engine, box, 'task', create(`another${day}`, 1, 'More work'));
+            assert.match(section(read(box), 'long'), /\*\*Now:\*\* Working long\n/, `day ${day}`);
+        }
+        // A notification is a hook too.
+        fs.writeFileSync(box.board, read(box).replace(/(start long )seen=\S+/, `$1seen=${ago(60)}`));
+        hook(engine, box, 'notify', notify('long', 'permission_prompt', 'Claude needs your permission to use Bash'));
+        assert.ok(Date.now() - Date.parse(seen()) < 60_000);
+    });
+
+    test(`[${engine.name}] a session marked idle that's heard from again is back`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        hook(engine, box, 'task', create('s1', 1, 'Work', 'Working'));
+        hook(engine, box, 'task', update('s1', 1, { status: 'in_progress' }));
+        fs.writeFileSync(box.board, read(box).replace(/(start s1 )seen=\S+/, `$1seen=${ago(3 * 24 * 60)}`));
+        hook(engine, box, 'task', create('s2', 1, 'Other'));
+        assert.match(section(read(box), 's1'), /\*\*Now:\*\* idle, no word/);
+        // Its user comes back to it after the weekend.
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'UserPromptSubmit' });
+        assert.match(read(box), /markychecky:start s1 seen=\S+ -->/);
+        assert.match(section(read(box), 's1'), /\*\*Now:\*\* Working\n/);
+        // And a session that did end comes back when it's resumed.
+        hook(engine, box, 'end', { session_id: 's1' });
+        hook(engine, box, 'respond', { session_id: 's1', hook_event_name: 'SessionStart' });
+        assert.match(section(read(box), 's1'), /\*\*Now:\*\* Working\n/);
+        hook(engine, box, 'task', update('s1', 1, { status: 'completed' }));
+        assert.doesNotMatch(read(box), /ended=/, 'its state isn\'t ended either');
+    });
+
+    test(`[${engine.name}] a section that isn't a session's is seen on the first sweep, and swept by the same rule`, { skip: engine.skip }, () => {
+        const box = sandbox();
+        fs.writeFileSync(box.board, '# Board\n\n<!-- markychecky:start supermog-ship -->\n## supermog · main\n\n**Now:** planning\n\n<!-- markychecky:end supermog-ship -->\n');
+        hook(engine, box, 'task', create('s1', 1, 'Work'));
+        const seen = read(box).match(/markychecky:start supermog-ship seen=(\S+) -->\n## supermog · main\n\n\*\*Now:\*\* planning\n/);
+        assert.ok(seen, read(box));
+        assert.ok(Date.now() - Date.parse(seen[1]) < 60_000, 'seen as of the upgrade');
+        fs.writeFileSync(box.board, read(box).replace(/(start supermog-ship )seen=\S+/, `$1seen=${ago(25 * 60)}`));
+        hook(engine, box, 'task', create('s1', 2, 'More'));
+        assert.match(section(read(box), 'supermog-ship'), /\*\*Now:\*\* idle, no word from the session since/);
+        fs.writeFileSync(box.board, read(box).replace(/(start supermog-ship seen=\S+ )ended=\S+/, `$1ended=${ago(25 * 60)}`));
+        hook(engine, box, 'task', create('s1', 3, 'Even more'));
+        assert.doesNotMatch(read(box), /supermog-ship/);
+    });
+
     test(`[${engine.name}] twenty sessions writing at once all keep their sections`, { skip: engine.skip }, async () => {
         const box = sandbox();
         const run = event => hookAsync(engine, box, 'task', event);
@@ -238,7 +329,7 @@ for (const engine of engines) {
         hook(engine, box, 'task', create('s1', 1, 'Only task'));
         hook(engine, box, 'task', update('s1', 1, { status: 'deleted' }));
         hook(engine, box, 'end', { session_id: 's1' });
-        assert.match(read(box), /markychecky:start s1 ended=\S+ -->/);
+        assert.match(read(box), /markychecky:start s1 seen=\S+ ended=\S+ -->/);
         assert.match(section(read(box), 's1'), /\*\*Now:\*\* idle/);
     });
 
@@ -320,7 +411,7 @@ for (const engine of engines) {
         fs.chmodSync(box.board, 0o600);
         hook(engine, box, 'task', create('s1', 1, 'Task'));
         assert.equal(fs.statSync(box.board).mode & 0o777, 0o600);
-        assert.match(read(box), /^# Mine\n\nA note\.\n\n## Waiting on you\n\n<!-- markychecky:start s1 -->/);
+        assert.match(read(box), /^# Mine\n\nA note\.\n\n## Waiting on you\n\n<!-- markychecky:start s1 seen=\S+ -->/);
     });
 
     test(`[${engine.name}] a session in a git worktree is named after the repository, not the worktree folder`, { skip: engine.skip }, () => {
@@ -769,6 +860,26 @@ test('the hooks run through the launcher, for tasks, notifications and responses
     assert.deepEqual(fs.readdirSync(path.join(plugin, 'scripts')).sort(), ['markychecky.py', 'markychecky.sh', 'session-start.sh']);
 });
 
+test('SessionStart notes that a resumed session is there, and leaves a board it has no section on alone', { skip: !hasPython || installedApp }, () => {
+    const box = sandbox();
+    box.env.PATH = `${path.join(box.dir, 'no-app')}:${process.env.PATH}`;
+    const python = engines[0];
+    hook(python, box, 'task', create('s1', 1, 'Work', 'Working'));
+    hook(python, box, 'task', update('s1', 1, { status: 'in_progress' }));
+    hook(python, box, 'end', { session_id: 's1' });
+    fs.writeFileSync(box.board, read(box).replace(/seen=\S+ ended=\S+/, `seen=${ago(60)} ended=${ago(60)}`));
+    const before = read(box);
+    sessionStart(box, 's2');
+    assert.equal(read(box), before, 'a session without a section adds nothing');
+    sessionStart(box, 's1');
+    assert.match(read(box), /markychecky:start s1 seen=\S+ -->/);
+    assert.match(section(read(box), 's1'), /\*\*Now:\*\* Working\n/);
+    // And with no board yet, it makes none.
+    const fresh = sandbox();
+    sessionStart(fresh, 's1');
+    assert.ok(!fs.existsSync(fresh.board));
+});
+
 test('the marketplace lists the plugin, and the versions agree', () => {
     const market = JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'marketplace.json'), 'utf8'));
     const manifest = JSON.parse(fs.readFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'), 'utf8'));
@@ -778,7 +889,7 @@ test('the marketplace lists the plugin, and the versions agree', () => {
     assert.equal(manifest.name, 'markychecky');
     assert.deepEqual(Object.keys(manifest.userConfig).sort(), ['file', 'idle_hours', 'open', 'waiting']);
     assert.equal(manifest.userConfig.waiting.default, true);
-    assert.equal(manifest.version, '0.5.0');
+    assert.equal(manifest.version, '0.6.0');
 });
 
 test('every place markychecky is documented says how to turn on the task list', () => {
@@ -870,6 +981,11 @@ test('both engines write byte-identical boards for the same events', both, () =>
         // Both long over: one in the engines' own form, one with an hour-only offset.
         const stamps = ['ended=2000-01-01T00:00:00.5+01:00', 'ended=2000-01-01T00+00'];
         fs.writeFileSync(box.board, read(box).replace(/ended=\S+/g, () => stamps.shift()));
+        // One that went without SessionEnd long ago, one that's never been seen, and one by hand.
+        hook(engine, box, 'task', { session_id: 'quiet', cwd, ...create('quiet', 1, 'Quiet (#2)', 'Going quiet') });
+        fs.writeFileSync(box.board, read(box).replace(/(start quiet )seen=\S+/, '$1seen=2000-01-01T00:00:00.25-05:30')
+            + '\n<!-- markychecky:start ship x=1 -->\n## ship\n\n**Now:** planning\n\n<!-- markychecky:end ship -->\n'
+            + '\n<!-- markychecky:start hand seen=2000-01-01T00:00:00+00:00 -->\nNo now line\n<!-- markychecky:end hand -->\n');
         hook(engine, box, 'task', { session_id: 's1', cwd, tool_name: 'TodoWrite', tool_input: { todos } });
         // s2 has a name, which changes; s1's transcript names nothing.
         const s2 = path.join(box.dir, 's2.jsonl');
@@ -905,10 +1021,13 @@ test('both engines write byte-identical boards for the same events', both, () =>
         const listed = waiting(engine, box, 'list').stdout;
         hook(engine, box, 'end', { session_id: 's2' });
         // The end and notification times differ between runs, not between engines.
-        const times = text => text.replace(/ended=\S+/g, 'ended=T').replace(/ended at \d\d:\d\d/g, 'ended at HH:MM').replace(/ at=\S+ -->/g, ' at=T -->');
+        const times = text => text.replace(/seen=\S+/g, 'seen=T').replace(/ended=\S+/g, 'ended=T').replace(/ended at \d\d:\d\d/g, 'ended at HH:MM').replace(/ at=\S+ -->/g, ' at=T -->');
         return times(read(box)) + times(listed);
     });
     assert.ok(!boards[0].includes('markychecky:start old'), 'the old sections were swept');
+    assert.match(boards[0], /markychecky:start quiet seen=T ended=T -->\n## widgets\n\n\*\*Now:\*\* idle, no word from the session since 05:30\n/);
+    assert.match(boards[0], /markychecky:start ship x=1 seen=T -->\n/);
+    assert.match(boards[0], /markychecky:start hand seen=T ended=T -->\nNo now line\n/);
     assert.ok(boards[0].indexOf('Arabic one') < boards[0].indexOf('Seven'), '١ sorts as 1');
     assert.match(boards[0], /- by hand  \n- widgets: /, 'the commands\' items follow a person\'s line');
     assert.match(boards[0], /markychecky:notify n2 at=T -->/);
@@ -1015,9 +1134,10 @@ test('the launcher prefers the Markydowny app, then markydowny on PATH, then Pyt
     assert.match(l.launch('waiting', 'add', '--key', 'k', 'two words').calls, /^mac-app markychecky waiting add --key k two words\n/);
 });
 
-test('the launcher only hands an app engine 3: one with engine 1 or 2 gets Python, and so does a waiting command', { skip: installedApp }, () => {
-    // Engine 2 doesn't name sessions, and puts "waiting for your input" lines on the board.
-    for (const old of ['markychecky-hook-engine-1', 'markychecky-hook-engine-2']) {
+test('the launcher only hands an app engine 4: one with engine 1, 2 or 3 gets Python, and so does a waiting command', { skip: installedApp }, () => {
+    // Engine 2 doesn't name sessions, and puts "waiting for your input" lines on the board; engine
+    // 3 never sweeps a session that went without SessionEnd.
+    for (const old of ['markychecky-hook-engine-1', 'markychecky-hook-engine-2', 'markychecky-hook-engine-3']) {
         const l = launcherBox();
         l.fake(path.join(l.bin, 'python3'), 'python');
         l.fake(path.join(l.bin, 'markydowny'), 'old-app', old);

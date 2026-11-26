@@ -114,7 +114,7 @@ EOF
 <pre><code class="language-bash">claude -p &quot;Make a task list with one task, &#39;Say hello to markychecky&#39;, mark it in progress, then mark it done.&quot;
 grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 </code></pre>
-<p>The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day.</p>
+<p>The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day. One that stops without ending (you close its terminal, say) is marked idle once nothing has been heard from it for a day, and removed a day after that.</p>
 <h4 id="5-watch-the-board"><a class="heading-anchor" href="#5-watch-the-board" aria-label="Link to this section">#</a>5. Watch the board</h4>
 <p>Open <code>~/markychecky.md</code> in Markydowny and leave it open:</p>
 <ul>
@@ -163,7 +163,7 @@ grep -A6 &#39;markychecky:start&#39; ~/markychecky.md
 <tr>
 <td><code>idle_hours</code></td>
 <td><code>24</code></td>
-<td>How long an ended session&#39;s section stays on the board</td>
+<td>How long an ended session&#39;s section stays on the board, and how long a session that stopped without ending goes unheard before it&#39;s marked idle</td>
 </tr>
 <tr>
 <td><code>waiting</code></td>

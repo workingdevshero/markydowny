@@ -69,7 +69,7 @@ The hook does the writing, not the model, so sessions never have to remember to 
 
 **Many sessions at once are safe.** Each write takes a lock, re-reads the board, replaces only its own section and swaps the file in atomically. Sections are found by hidden markers (`<!-- markychecky:start … -->`), so notes you write between sections are kept. Everything inside a section is the session's: a heading you rename still belongs to that session, but it's rewritten from the repository, branch and name on the next update.
 
-**Ended sessions** are marked idle, and removed after a day.
+**Ended sessions** are marked idle, and removed after a day. A session can also stop without ending: a closed terminal, a killed process, a crash or a reboot. Every hook notes when it last heard from its session (`seen=` in the section's marker), so a section nothing has been heard from for a day is marked idle as if the session had ended then, and removed a day after that. A session that's still working, however long it runs, is never swept. The same goes for a section that isn't a session's, written by a script, say: it counts as seen the first time the board is swept, and goes once a day passes with nothing new from it.
 
 **The first time a session writes**, the board opens in Markydowny in the background if it's installed. It doesn't take focus from your terminal.
 
@@ -101,7 +101,7 @@ Set these with `/plugin` (or `claude plugin configure markychecky`):
 |---|---|---|
 | `file` | `~/markychecky.md` | The board every session writes to |
 | `open` | `true` | Open the board in Markydowny on a session's first write (macOS) |
-| `idle_hours` | `24` | How long an ended session's section stays |
+| `idle_hours` | `24` | How long an ended session's section stays, and how long a session that stopped without ending goes unheard before it's marked idle |
 | `waiting` | `true` | Keep the "Waiting on you" section: the section itself, telling sessions about it, its commands' edits and the waiting-for-you lines |
 
 Problems are logged to `markychecky.log` in the plugin's data folder. A hook never fails your session.

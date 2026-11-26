@@ -112,7 +112,7 @@ claude -p "Make a task list with one task, 'Say hello to markychecky', mark it i
 grep -A6 'markychecky:start' ~/markychecky.md
 ```
 
-The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day.
+The board has a section for that session, with the task ticked. A session marked idle like this one is removed after a day. One that stops without ending (you close its terminal, say) is marked idle once nothing has been heard from it for a day, and removed a day after that.
 
 #### 5. Watch the board
 
@@ -154,7 +154,7 @@ Change these with `claude plugin configure markychecky`, or in `/plugin` > **Ins
 |---|---|---|
 | `file` | `~/markychecky.md` | The board every session writes to |
 | `open` | `true` | Open the board in Markydowny on a session's first write (macOS) |
-| `idle_hours` | `24` | How long an ended session's section stays on the board |
+| `idle_hours` | `24` | How long an ended session's section stays on the board, and how long a session that stopped without ending goes unheard before it's marked idle |
 | `waiting` | `true` | Keep the "Waiting on you" section at the top of the board, and tell sessions about it |
 
 ## Keep it up to date
