@@ -10,8 +10,9 @@ when the Markydowny app can't run them itself. Each gets the hook's JSON on stdi
                           notification item
   markychecky.py notify   Notification: add or refresh this session's "needs permission" or
                           "has a question for you" item in "Waiting on you"
-  markychecky.py respond  UserPromptSubmit and PostToolBatch: clear that item, once the user
-                          has answered it
+  markychecky.py respond  UserPromptSubmit, PostToolBatch and SessionStart (from
+                          session-start.sh): clear that item, once the user has answered it,
+                          and note that the session is still there (below)
 
 Sessions run these themselves, through markychecky.sh, from the context session-start.sh gives
 them:
@@ -21,9 +22,16 @@ them:
   markychecky.py waiting list                       print the section
 
 Each session owns one section, between `<!-- markychecky:start <id> -->` and
-`<!-- markychecky:end <id> -->`. A write takes a lock, re-reads the board, replaces only its own
+`<!-- markychecky:end <id> -->`. The start marker says when a hook last heard from the session
+(`seen=<time>`), and when it ended (`ended=<time>`). A write takes a lock, re-reads the board, replaces only its own
 section and swaps the file in atomically, so sessions writing at once don't lose each other's
 updates, and anything a person writes outside the sections is kept as it is.
+
+Every write sweeps the board. A section that ended more than IDLE_HOURS ago goes. A session can
+also go without SessionEnd (a closed terminal, a crash, a reboot), so a section that hasn't been
+seen for IDLE_HOURS is marked idle as if it had ended then, and goes IDLE_HOURS after that. A
+section with no `seen` (from an older version, or not a session's at all) is given one the first
+time it's swept.
 
 "Waiting on you" is the board's one shared section, a heading at the top. markychecky adds the
 heading when the board has none, and only ever edits lines that end in its own hidden marker:
@@ -35,7 +43,8 @@ Settings come from the plugin's options (CLAUDE_PLUGIN_OPTION_*), or MARKYCHECKY
   FILE        the board's path (default ~/markychecky.md)
   OPEN        "true" to open the board in Markydowny, in the background, when a session first
               writes to it (macOS, when Markydowny is installed; default true)
-  IDLE_HOURS  how long an ended session's section stays on the board (default 24)
+  IDLE_HOURS  how long an ended session's section stays on the board, and how long one that's
+              gone quiet stays before it's marked idle (default 24)
   WAITING     "false" to leave out "Waiting on you": no section, no context, no items
 
 The `waiting` commands run in the session's shell, which doesn't get the plugin's options, so
@@ -75,6 +84,10 @@ NOTIFY_RE = re.compile(
     r"<!-- markychecky:notify (?P<session>[\w.-]+)(?: agent=(?P<agent>[\w.-]+))? at=(?P<at>\S+) -->"
 )
 KEY_RE = re.compile(r"[\w.-]{1,64}")
+# How stale `seen` may get before a hook that writes nothing else refreshes it. `respond` runs after
+# every batch of tools, so it doesn't rewrite the board each time; a section is swept only once
+# its `seen` is this much older than idle_hours, so a session heard from within idle_hours stays.
+TOUCH = dt.timedelta(minutes=10)
 
 
 def setting(name, default):
@@ -365,7 +378,7 @@ def place(cwd):
     return f"{name} · {branch}" if branch and branch != "HEAD" else name
 
 
-def render_section(session_id, state, ended_at=None):
+def render_section(session_id, state, seen, ended_at=None):
     tasks = state.get("tasks", {})
     ordered = sorted(tasks.items(), key=lambda kv: (int(kv[0]) if kv[0].isdigit() else 1 << 30, kv[0]))
     doing = [t for _, t in ordered if t["status"] == "in_progress"]
@@ -378,7 +391,7 @@ def render_section(session_id, state, ended_at=None):
         now_line = "all done"
     else:
         now_line = "planning"
-    meta = f"ended={ended_at.isoformat()} " if ended_at else ""
+    meta = f"seen={seen.isoformat()} " + (f"ended={ended_at.isoformat()} " if ended_at else "")
     lines = [
         START.format(id=session_id, meta=meta),
         f"## {label(state.get('place') or 'Claude Code', session_name(state))}",
@@ -398,21 +411,93 @@ def render_section(session_id, state, ended_at=None):
     return "\n".join(lines)
 
 
+def local_hh_mm(when):
+    """HH:MM in the local time zone, or in UTC for a time the local zone can't hold."""
+    try:
+        return when.astimezone().strftime("%H:%M")
+    except (OverflowError, ValueError, OSError):
+        return when.astimezone(dt.timezone.utc).strftime("%H:%M")
+
+
+def meta_value(meta, key):
+    """The value of `key=value` in a start marker's meta, or None."""
+    for token in meta.split():
+        if token.startswith(f"{key}=") and len(token) > len(key) + 1:
+            return token[len(key) + 1:]
+    return None
+
+
+def with_meta(meta, key, value):
+    """A start marker's meta with `key=value` in place of any it had, at the end."""
+    tokens = [token for token in meta.split() if not token.startswith(f"{key}=")]
+    return "".join(f"{token} " for token in tokens + [f"{key}={value}"])
+
+
+def aware_time(text):
+    """A time with a UTC offset, or None for text that isn't one."""
+    try:
+        when = dt.datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    return when if when.tzinfo is not None and when.utcoffset() is not None else None
+
+
+def section_seen(board, session_id):
+    """(whether the session's section is on the board, and whether it needs `seen` refreshed:
+    it's marked ended, or hasn't been seen for TOUCH)."""
+    for match in SECTION_RE.finditer(board):
+        if match.group("id") == session_id:
+            meta = match.group("meta")
+            if re.search(r"ended=(\S+)", meta):
+                return True, True
+            seen = aware_time(meta_value(meta, "seen") or "")
+            return True, seen is None or seen < now() - TOUCH
+    return False, False
+
+
+def refresh(board, session_id, state, at):
+    """The board with the session's section rendered again, seen at `at` and no longer ended,
+    when it has one: any hook means the session is there. Changes the state, for the caller to
+    save."""
+    if not state.get("wrote") or not section_seen(board, session_id)[0]:
+        return board
+    state.pop("ended", None)
+    return replace_section(board, session_id, render_section(session_id, state, at))
+
+
 def sweep(board, idle_hours, keep):
-    """Removes sections whose session ended more than idle_hours ago."""
-    cutoff = now() - dt.timedelta(hours=idle_hours)
+    """Removes sections whose session ended more than idle_hours ago, and marks idle those not
+    seen for idle_hours (and TOUCH), as if they had ended now. A section without `seen` is seen
+    now."""
+    at = now()
+    cutoff = at - dt.timedelta(hours=idle_hours)
+    quiet = cutoff - TOUCH
 
     def drop(match):
         if match.group("id") == keep:
             return match.group(0)
-        ended = re.search(r"ended=(\S+)", match.group("meta"))
+        meta = match.group("meta")
+        ended = re.search(r"ended=(\S+)", meta)
         if ended:
             try:
                 if dt.datetime.fromisoformat(ended.group(1)) < cutoff:
                     return ""
             except (ValueError, TypeError):  # unreadable, or no UTC offset: leave it
                 pass
-        return match.group(0)
+            return match.group(0)
+        # No SessionEnd. One that's never been seen is seen now, and one that's gone quiet ends.
+        session_id = match.group("id")
+        body = match.group(0)[len(START.format(id=session_id, meta=meta)) + 1:]
+        seen = aware_time(meta_value(meta, "seen") or "")
+        if seen is None:
+            meta = with_meta(meta, "seen", at.isoformat())
+        elif seen < quiet:
+            meta = with_meta(meta, "ended", at.isoformat())
+            idle = f"**Now:** idle, no word from the session since {local_hh_mm(seen)}"
+            body = re.sub(r"^\*\*Now:\*\*.*", lambda _: idle, body, count=1, flags=re.M)
+        else:
+            return match.group(0)
+        return START.format(id=session_id, meta=meta) + "\n" + body
 
     def stale(match):
         # "waiting for your input" lines from before 0.5, which no longer makes them, go now.
@@ -725,17 +810,32 @@ def run_hook(command, event):
 
     if command == "respond":
         started = now()
-        if not answered(event, read_flag(flag_path), started):
+        # And whether its section needs `seen` refreshed, which is rarely: a read of the board, and
+        # of the session's state, for a section that's there to refresh.
+        try:
+            with open(os.path.expanduser(board_path), encoding="utf-8") as f:
+                stale = section_seen(f.read(), session_id)[1]
+        except OSError:
+            stale = False
+        stale = stale and bool(load_state(state_path).get("wrote"))
+        if not stale and not answered(event, read_flag(flag_path), started):
             return
 
         def update(board):
             # Again under the lock: a notification may have come in since, which this doesn't answer.
             flag = read_flag(flag_path) or {}
             done = answered(event, flag, started)
-            if not done:
+            if done:
+                save_flag(flag_path, {a: item for a, item in flag.items() if a not in done})
+                board = without_notify(board, session_id, done)
+            if not section_seen(board, session_id)[1]:
                 return board
-            save_flag(flag_path, {a: item for a, item in flag.items() if a not in done})
-            return without_notify(board, session_id, done)
+            state = load_state(state_path)
+            refreshed = refresh(board, session_id, state, now())
+            if refreshed == board:
+                return board
+            save_state(state_path, state)
+            return sweep(refreshed, idle_hours, session_id)
 
         write_board(board_path, update, data_dir())
         return
@@ -761,6 +861,7 @@ def run_hook(command, event):
             if first_open(state):
                 opening.append(True)
             keep_name(state, ahead, transcript)
+            board = refresh(board, session_id, state, now())
             save_state(state_path, state)
             line = f"- {label(where, session_name(state))}: {text} {marker}"
             board = without_notify(board, session_id, [agent])
@@ -803,7 +904,7 @@ def run_hook(command, event):
             first.append(True)
         state["wrote"] = True
         save_state(state_path, state)
-        section = render_section(session_id, state, ended_at=ended)
+        section = render_section(session_id, state, ended or now(), ended_at=ended)
         board = replace_section(board, session_id, section)
         if waiting:
             board = ensure_waiting(board)

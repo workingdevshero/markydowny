@@ -1,6 +1,6 @@
 {
   "name": "markychecky",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A live board of what every Claude Code session is doing: each session's task list in its own section of one markdown file, opened in Markydowny so you can watch your agents check things off.",
   "author": {
     "name": "Working Devs Hero"
@@ -25,7 +25,7 @@
     "idle_hours": {
       "type": "string",
       "title": "Keep ended sessions (hours)",
-      "description": "How long a session's section stays on the board after the session ends.",
+      "description": "How long a session's section stays on the board after the session ends. A session that stops without ending (a closed terminal, a crash) counts as ended once nothing has been heard from it for this long.",
       "default": "24"
     },
     "waiting": {

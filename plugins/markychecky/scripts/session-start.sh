@@ -4,6 +4,7 @@
 # - When a session can't write to the board, it tells you why and how to fix it, once, as the
 #   session starts (a systemMessage, shown to you). It's sh rather than Python so it can say that
 #   python3 is missing.
+# - It notes on the session's section of the board, when it has one, that the session is there.
 # - With "Waiting on you" on, it tells the session (additionalContext, which the model reads)
 #   about the board's "Waiting on you" section and the commands that edit it, run through
 #   markychecky.sh. Those commands run in the session's shell, which doesn't get the plugin's
@@ -111,6 +112,14 @@ if [ "$waiting" = true ] && [ -n "$session" ]; then
 - See what's there: $run list $where
 
 <key> is a short id you pick, such as release-v1 or ok-to-merge-24. The line starts with the repository, the branch and this session's name by itself, and #123-style references become links. Lines you add stay after this session ends, until they're removed; to remove another session's line, pass the <session>/<key> that list shows. If ~/.claude/CLAUDE.md also asks you to keep this section, these commands are how to do it."
+fi
+
+# Any hook means the session is there, so this one notes it on its section, as `respond` does for
+# the others: it refreshes the time the section was last seen, and brings back one marked idle (a
+# resumed session). It changes nothing else for a SessionStart. What it prints isn't for this hook:
+# when neither engine can run, the message above already says so.
+if [ -n "$session" ] && [ -f "$board" ]; then
+    printf '%s' "$event" | sh "$here/markychecky.sh" respond >/dev/null 2>&1 || true
 fi
 
 # systemMessage is shown to you; additionalContext goes to the session's model.

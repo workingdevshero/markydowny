@@ -28,9 +28,10 @@ use serde_json::{Map, Value};
 
 /// In the binary so the plugin's launcher can tell a Markydowny that has this mode, with every
 /// command the plugin runs, from an older one: one without the mode would start its window, and
-/// engine 1 has no `notify`, `respond` or `waiting`, and engine 2 doesn't name sessions and adds
-/// "waiting for your input" lines (`markychecky.sh` greps for it).
-pub const ENGINE_MARKER: &str = "markychecky-hook-engine-3";
+/// engine 1 has no `notify`, `respond` or `waiting`, engine 2 doesn't name sessions and adds
+/// "waiting for your input" lines, and engine 3 doesn't write `seen=`, so it never sweeps a
+/// session that went without SessionEnd (`markychecky.sh` greps for it).
+pub const ENGINE_MARKER: &str = "markychecky-hook-engine-4";
 
 const TITLE: &str =
     "# Markychecky\n\nWhat each Claude Code session is working on. Sessions update their own sections.\n";
@@ -39,6 +40,11 @@ const STATUSES: [&str; 3] = ["completed", "in_progress", "pending"];
 const WAITING_HEADING: &str = "## Waiting on you";
 const ITEM: &str = "<!-- markychecky:item ";
 const NOTIFY: &str = "<!-- markychecky:notify ";
+/// How stale `seen` may get before a hook that writes nothing else refreshes it, in
+/// microseconds. `respond` runs after every batch of tools, so it doesn't rewrite the board each
+/// time; a section is swept only once its `seen` is this much older than idle_hours, so a session
+/// heard from within idle_hours stays.
+const TOUCH: i64 = 10 * 60 * 1_000_000;
 
 /// The notifications that mean a session is stopped on a question for the user, each a dialog
 /// in the middle of a tool call, answered when the call's batch resolves, whether the user
@@ -159,7 +165,12 @@ fn run(args: &[String]) -> Result<()> {
 
     if command == "respond" {
         let started = now_micros();
-        if answered(event, read_flag(&flag_path).as_ref(), started).is_empty() {
+        // And whether its section needs `seen` refreshed, which is rarely: a read of the board,
+        // and of the session's state, for a section that's there to refresh.
+        let stale = fs::read_to_string(expand_user(&board_path))
+            .is_ok_and(|board| section_seen(&board, &session_id, started).1)
+            && truthy(load_state(&state_path).get("wrote"));
+        if !stale && answered(event, read_flag(&flag_path).as_ref(), started).is_empty() {
             return Ok(());
         }
         write_board(
@@ -169,12 +180,23 @@ fn run(args: &[String]) -> Result<()> {
                 // doesn't answer.
                 let mut flag = read_flag(&flag_path).unwrap_or_default();
                 let done = answered(event, Some(&flag), started);
-                if done.is_empty() {
-                    return Ok(board.to_string());
+                let mut board = board.to_string();
+                if !done.is_empty() {
+                    flag.retain(|agent, _| !done.contains(agent));
+                    save_flag(&flag_path, &flag)?;
+                    board = without_notify(&board, &session_id, Some(&done));
                 }
-                flag.retain(|agent, _| !done.contains(agent));
-                save_flag(&flag_path, &flag)?;
-                Ok(without_notify(board, &session_id, Some(&done)))
+                let now = now_micros();
+                if !section_seen(&board, &session_id, now).1 {
+                    return Ok(board);
+                }
+                let mut state = load_state(&state_path);
+                let refreshed = refresh(&board, &session_id, &mut state, now)?;
+                if refreshed == board {
+                    return Ok(board);
+                }
+                save_state(&state_path, &state)?;
+                sweep(&refreshed, idle_hours, &session_id, now)
             },
             Some(&data),
         )?;
@@ -217,12 +239,13 @@ fn run(args: &[String]) -> Result<()> {
                     opening = true;
                 }
                 keep_name(&mut state, ahead.as_ref(), &transcript);
+                let board = refresh(board, &session_id, &mut state, now_micros())?;
                 save_state(&state_path, &state)?;
                 let line = format!(
                     "- {}: {text} {marker}",
                     label(&place, &session_name(&state))
                 );
-                let board = without_notify(board, &session_id, Some(&[agent.clone()]));
+                let board = without_notify(&board, &session_id, Some(&[agent.clone()]));
                 let board = edit_waiting(&board, |mut lines| {
                     lines.push(line);
                     lines
@@ -286,7 +309,7 @@ fn run(args: &[String]) -> Result<()> {
             }
             state.insert("wrote".into(), Value::Bool(true));
             save_state(&state_path, &state)?;
-            let section = render_section(&session_id, &state, ended, local_hh_mm)?;
+            let section = render_section(&session_id, &state, now, ended, local_hh_mm)?;
             let mut board = replace_section(&board, &session_id, &section);
             if waiting {
                 board = ensure_waiting(&board);
@@ -1064,6 +1087,7 @@ fn task_order(id: &str) -> (u128, &str) {
 fn render_section(
     session_id: &str,
     state: &Map<String, Value>,
+    seen: i64,
     ended_at: Option<i64>,
     local_time: fn(i64) -> String,
 ) -> Result<String> {
@@ -1103,9 +1127,10 @@ fn render_section(
     } else {
         "planning".into()
     };
-    let meta = ended_at
+    let ended = ended_at
         .map(|e| format!("ended={} ", iso_utc(e)))
         .unwrap_or_default();
+    let meta = format!("seen={} {ended}", iso_utc(seen));
     let place = match state.get("place") {
         p if truthy(p) => py_str(p.unwrap()),
         _ => "Claude Code".into(),
@@ -1212,29 +1237,118 @@ fn ended_value(meta: &str) -> Option<&str> {
     })
 }
 
-/// Removes sections whose session ended more than idle_hours ago.
+/// The value of `key=value` in a start marker's meta, or None, as `meta_value` does: the meta
+/// split on whitespace as `str.split()` splits it.
+fn meta_value<'a>(meta: &'a str, key: &str) -> Option<&'a str> {
+    meta.split(is_space).find_map(|token| {
+        token
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+            .filter(|value| !value.is_empty())
+    })
+}
+
+/// A start marker's meta with `key=value` in place of any it had, at the end.
+fn with_meta(meta: &str, key: &str, value: &str) -> String {
+    let prefix = format!("{key}=");
+    let mut out: String = meta
+        .split(is_space)
+        .filter(|token| !token.is_empty() && !token.starts_with(&prefix))
+        .map(|token| format!("{token} "))
+        .collect();
+    out.push_str(&format!("{prefix}{value} "));
+    out
+}
+
+/// (whether the session's section is on the board, and whether it needs `seen` refreshed: it's
+/// marked ended, or hasn't been seen for TOUCH).
+fn section_seen(board: &str, session_id: &str, now: i64) -> (bool, bool) {
+    match sections(board).into_iter().find(|s| s.id == session_id) {
+        None => (false, false),
+        Some(section) if ended_value(section.meta).is_some() => (true, true),
+        Some(section) => (
+            true,
+            meta_value(section.meta, "seen")
+                .and_then(parse_iso)
+                .is_none_or(|seen| seen < now - TOUCH),
+        ),
+    }
+}
+
+/// The board with the session's section rendered again, seen at `now` and no longer ended, when
+/// it has one: any hook means the session is there. Changes the state, for the caller to save.
+fn refresh(
+    board: &str,
+    session_id: &str,
+    state: &mut Map<String, Value>,
+    now: i64,
+) -> Result<String> {
+    if !truthy(state.get("wrote")) || !section_seen(board, session_id, now).0 {
+        return Ok(board.to_string());
+    }
+    state.remove("ended");
+    let section = render_section(session_id, state, now, None, local_hh_mm)?;
+    Ok(replace_section(board, session_id, &section))
+}
+
+/// Removes sections whose session ended more than idle_hours ago, and marks idle those not seen
+/// for idle_hours (and TOUCH), as if they had ended now. A section without `seen` is seen now.
 fn sweep(board: &str, idle_hours: f64, keep: &str, now: i64) -> Result<String> {
-    // timedelta(hours=…) and the subtraction both fail on what a datetime can't hold.
+    // timedelta(hours=…) and the subtractions all fail on what a datetime can't hold.
     let span = (idle_hours * 3_600_000_000.0).round_ties_even();
     let cutoff = now as f64 - span;
-    if !idle_hours.is_finite() || !(MIN_MICROS as f64..MAX_MICROS as f64).contains(&cutoff) {
+    let quiet = cutoff - TOUCH as f64;
+    if !idle_hours.is_finite()
+        || !(MIN_MICROS as f64..MAX_MICROS as f64).contains(&cutoff)
+        || !(MIN_MICROS as f64..MAX_MICROS as f64).contains(&quiet)
+    {
         return Err(format!(
             "OverflowError: idle_hours {idle_hours} is out of range"
         ));
     }
-    let cutoff = cutoff as i64;
+    let (cutoff, quiet) = (cutoff as i64, quiet as i64);
     let mut out = String::with_capacity(board.len());
     let mut pos = 0;
     for section in sections(board) {
         out.push_str(&board[pos..section.start]);
         pos = section.end;
-        let expired = section.id != keep
-            && ended_value(section.meta)
-                .and_then(parse_iso)
-                .is_some_and(|ended| ended < cutoff);
-        if !expired {
-            out.push_str(&board[section.start..section.end]);
+        let whole = &board[section.start..section.end];
+        if section.id == keep {
+            out.push_str(whole);
+            continue;
         }
+        if let Some(ended) = ended_value(section.meta) {
+            if !parse_iso(ended).is_some_and(|ended| ended < cutoff) {
+                out.push_str(whole);
+            }
+            continue;
+        }
+        // No SessionEnd. One that's never been seen is seen now, and one that's gone quiet ends.
+        let mut body =
+            whole[START.len() + section.id.len() + 1 + section.meta.len() + 4..].to_string();
+        let meta = match meta_value(section.meta, "seen").and_then(parse_iso) {
+            None => with_meta(section.meta, "seen", &iso_utc(now)),
+            Some(seen) if seen < quiet => {
+                let idle = format!(
+                    "**Now:** idle, no word from the session since {}",
+                    local_hh_mm(seen)
+                );
+                // re.sub(r"^\*\*Now:\*\*.*", idle, body, count=1, flags=re.M)
+                let line = std::iter::once(0)
+                    .chain(body.match_indices('\n').map(|(at, _)| at + 1))
+                    .find(|&at| body[at..].starts_with("**Now:**"));
+                if let Some(at) = line {
+                    let end = body[at..].find('\n').map_or(body.len(), |n| at + n);
+                    body.replace_range(at..end, &idle);
+                }
+                with_meta(section.meta, "ended", &iso_utc(now))
+            }
+            Some(_) => {
+                out.push_str(whole);
+                continue;
+            }
+        };
+        out.push_str(&format!("{START}{} {meta}-->\n{body}", section.id));
     }
     out.push_str(&board[pos..]);
     // A notification item whose session never ended (it crashed, say) goes after idle_hours
@@ -2464,7 +2578,7 @@ mod tests {
     }
 
     fn render(state: &Map<String, Value>) -> String {
-        render_section("s1", state, None, |_| "12:34".into()).unwrap()
+        render_section("s1", state, 0, None, |_| "12:34".into()).unwrap()
     }
 
     // Task events
@@ -2554,7 +2668,7 @@ mod tests {
         state.insert("place".into(), json!("widgets · main"));
         assert_eq!(
             render(&state),
-            "<!-- markychecky:start s1 -->\n## widgets · main\n\n**Now:** Doing two\n\n\
+            "<!-- markychecky:start s1 seen=1970-01-01T00:00:00+00:00 -->\n## widgets · main\n\n**Now:** Doing two\n\n\
              - [ ] **Two**\n- [ ] Ten\n- [ ] (untitled)\n\n<!-- markychecky:end s1 -->\n"
         );
     }
@@ -2568,10 +2682,10 @@ mod tests {
             update("1", json!({"status": "completed"})),
         ]);
         assert!(render(&done).contains("**Now:** all done\n\n- [x] A\n"));
-        let ended = render_section("s1", &done, Some(0), |_| "01:00".into()).unwrap();
-        assert!(
-            ended.starts_with("<!-- markychecky:start s1 ended=1970-01-01T00:00:00+00:00 -->\n")
-        );
+        let ended = render_section("s1", &done, 0, Some(0), |_| "01:00".into()).unwrap();
+        assert!(ended.starts_with(
+            "<!-- markychecky:start s1 seen=1970-01-01T00:00:00+00:00 ended=1970-01-01T00:00:00+00:00 -->\n"
+        ));
         assert!(ended.contains("**Now:** idle, the session ended at 01:00\n"));
     }
 
@@ -2745,6 +2859,112 @@ mod tests {
         );
         assert!(sweep(&board, f64::INFINITY, "me", now).is_err());
         assert!(sweep(&board, f64::NAN, "me", now).is_err());
+    }
+
+    #[test]
+    fn sections_not_seen_for_idle_hours_are_marked_idle_then_swept() {
+        let now = parse_iso("2026-01-02T00:00:00+00:00").unwrap();
+        let section = |id: &str, meta: &str| {
+            format!("<!-- markychecky:start {id} {meta}-->\n## {id}\n\n**Now:** working\n\n- [ ] x\n\n<!-- markychecky:end {id} -->\n")
+        };
+        let board = [
+            section("quiet", "seen=2025-12-31T23:49:59+00:00 "),
+            section("edge", "seen=2025-12-31T23:50:00+00:00 "),
+            section("live", "seen=2026-01-01T23:00:00Z "),
+            section("never", ""),
+            section("naive", "seen=2025-01-01T00:00:00 "),
+            section("me", "seen=2000-01-01T00:00:00+00:00 "),
+        ]
+        .concat();
+        let swept = sweep(&board, 24.0, "me", now).unwrap();
+        let metas: Vec<_> = sections(&swept)
+            .iter()
+            .map(|s| format!("{}:{}", s.id, s.meta))
+            .collect();
+        assert_eq!(
+            metas,
+            [
+                "quiet:seen=2025-12-31T23:49:59+00:00 ended=2026-01-02T00:00:00+00:00 ",
+                "edge:seen=2025-12-31T23:50:00+00:00 ",
+                "live:seen=2026-01-01T23:00:00Z ",
+                "never:seen=2026-01-02T00:00:00+00:00 ",
+                "naive:seen=2026-01-02T00:00:00+00:00 ",
+                "me:seen=2000-01-01T00:00:00+00:00 ",
+            ],
+            "quiet for a day and TOUCH ends; anything without a readable seen is seen now"
+        );
+        let quiet = &swept[..sections(&swept)[0].end];
+        assert!(quiet.contains(&format!(
+            "\n**Now:** idle, no word from the session since {}\n\n- [ ] x\n",
+            local_hh_mm(parse_iso("2025-12-31T23:49:59+00:00").unwrap())
+        )));
+        // A sweep changes nothing more until the ended one is a day old, then removes it.
+        assert_eq!(sweep(&swept, 24.0, "me", now).unwrap(), swept);
+        let later = sweep(&swept, 24.0, "me", now + 24 * 3_600_000_000 + 1).unwrap();
+        assert!(!sections(&later).iter().any(|s| s.id == "quiet"));
+        // Other words in the marker are kept, and a body without a Now line is left alone.
+        let odd = "<!-- markychecky:start k x=1  seen=2000-01-01T00:00:00+00:00 -->\nhand\n<!-- markychecky:end k -->\n";
+        assert_eq!(
+            sweep(odd, 24.0, "me", now).unwrap(),
+            "<!-- markychecky:start k x=1 seen=2000-01-01T00:00:00+00:00 ended=2026-01-02T00:00:00+00:00 -->\nhand\n<!-- markychecky:end k -->\n"
+        );
+    }
+
+    #[test]
+    fn a_hook_refreshes_its_section_only_when_seen_is_stale_or_ended() {
+        let now = parse_iso("2026-01-02T00:00:00+00:00").unwrap();
+        let board = |meta: &str| {
+            format!(
+                "<!-- markychecky:start s1 {meta}-->\n**Now:** idle\n<!-- markychecky:end s1 -->\n"
+            )
+        };
+        assert_eq!(section_seen("", "s1", now), (false, false));
+        assert_eq!(
+            section_seen(&board("seen=2026-01-01T23:55:00+00:00 "), "s1", now),
+            (true, false)
+        );
+        assert_eq!(
+            section_seen(&board("seen=2026-01-01T23:45:00+00:00 "), "s1", now),
+            (true, true)
+        );
+        assert_eq!(section_seen(&board(""), "s1", now), (true, true));
+        assert_eq!(
+            section_seen(
+                &board("seen=2026-01-01T23:59:00+00:00 ended=2026-01-01T23:59:00+00:00 "),
+                "s1",
+                now
+            ),
+            (true, true)
+        );
+        let mut state = state_after(&[create("1", "A", "")]);
+        let ended = board("seen=2026-01-01T00:00:00+00:00 ended=2026-01-01T00:00:00+00:00 ");
+        assert_eq!(
+            refresh(&ended, "s1", &mut state, now).unwrap(),
+            ended,
+            "without wrote, nothing to render"
+        );
+        state.insert("wrote".into(), json!(true));
+        state.insert("ended".into(), json!("2026-01-01T00:00:00+00:00"));
+        let refreshed = refresh(&ended, "s1", &mut state, now).unwrap();
+        assert!(
+            refreshed.starts_with("<!-- markychecky:start s1 seen=2026-01-02T00:00:00+00:00 -->\n")
+        );
+        assert!(refreshed.contains("**Now:** planning\n"));
+        assert!(!state.contains_key("ended"));
+        assert_eq!(
+            refresh("", "s1", &mut state, now).unwrap(),
+            "",
+            "no section, none added"
+        );
+    }
+
+    #[test]
+    fn meta_words_are_read_and_replaced_as_python_splits_them() {
+        assert_eq!(meta_value("a=1 seen=x\u{1f}b ", "seen"), Some("x"));
+        assert_eq!(meta_value("seen= seen=y ", "seen"), Some("y"));
+        assert_eq!(meta_value("unseen=x ", "seen"), None);
+        assert_eq!(with_meta("", "seen", "t"), "seen=t ");
+        assert_eq!(with_meta(" seen=a\tb  seen=c ", "seen", "t"), "b seen=t ");
     }
 
     #[test]
