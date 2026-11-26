@@ -140,3 +140,8 @@ test("Jekyll (GitHub Pages) doesn't render the docs' markdown sources a second t
     const config = fs.readFileSync(path.join(root, '_config.yml'), 'utf8');
     assert.match(config, /^exclude:\n(\s+- .*\n)*\s+- docs\/\*\.md$/m);
 });
+
+test("Jekyll (GitHub Pages) doesn't publish the contributors' notes file as a page", () => {
+    const config = fs.readFileSync(path.join(root, '_config.yml'), 'utf8');
+    assert.match(config, /^exclude:\n(?:[ \t]*#.*\n|\s+- .*\n)*\s+- CLAUDE\.md$/m);
+});

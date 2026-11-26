@@ -3,3 +3,5 @@
 # left in, docs/index.md would be rendered over the committed docs/index.html.
 exclude:
   - docs/*.md
+# CLAUDE.md is notes for people and agents working on the code, not a page of the site.
+  - CLAUDE.md
